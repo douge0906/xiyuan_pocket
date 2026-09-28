@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">掌上锡院</string>
+    <!-- v2.2.14 命名简化：三个尺寸统一叫「今日课表」，用描述区分尺寸 -->
+    <string name="widget_name_small">今日课表</string>
+    <string name="widget_name_medium">今日课表</string>
+    <string name="widget_name_large">今日课表</string>
+    <string name="widget_desc_small">下一节课（2×1）</string>
+    <string name="widget_desc_medium">今日课程（2×2）</string>
+    <string name="widget_desc_large">今日课程双列（4×2）</string>
+</resources>

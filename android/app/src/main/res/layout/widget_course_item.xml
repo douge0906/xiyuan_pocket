@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 课程条目（中/大尺寸用）：白色圆角卡 + 左侧课程色指示条（仿掌上徐工）。
+     注意：色条必须用 RemoteViews 支持的 View 类型（LinearLayout），
+     裸 <View> 会导致 AppWidget inflate 失败（"载入窗口小部件时出现问题"）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="4dp"
+    android:layout_marginBottom="4dp"
+    android:background="@drawable/widget_course_item_bg">
+
+    <LinearLayout
+        android:id="@+id/item_color_bar"
+        android:layout_width="4dp"
+        android:layout_height="30dp"
+        android:background="#F8D2D7" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/item_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#1F2937" />
+
+        <TextView
+            android:id="@+id/item_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textSize="9sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#667085" />
+    </LinearLayout>
+</LinearLayout>
