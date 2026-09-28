@@ -1,0 +1,86 @@
+name: CI
+
+# 每次 push / PR 自动做两件事：
+#   ① flutter analyze  —— 静态检查（warning 会让 CI 变红，info 不会）
+#   ② flutter test     —— 单元测试
+# 目的：任何贡献者的改动都在干净的机器上先体检一遍，不依赖维护者本地环境。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch: # 也可在 Actions 页面手动触发
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Flutter（与项目锁定版本一致）
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.3
+          channel: stable
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 静态检查
+        run: flutter analyze lib
+
+      - name: 单元测试
+        run: flutter test
+
+  # 自动构建 release APK。
+  # 开源版的分发方式：由 GitHub Actions 产出构建产物（artifact），
+  # 不依赖自建服务器 / CDN（那套是给另一个 App 用的）。
+  build-apk:
+    runs-on: ubuntu-latest
+    needs: analyze-and-test # 检查与测试通过才构建
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17（Flutter 3.24 要求）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Flutter（与项目锁定版本一致）
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.3
+          channel: stable
+          cache: true
+
+      - name: 缓存 Gradle（加速后续构建）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 把 Gradle 下载源切回官方（仅 CI）
+        # 仓库里的 distributionUrl 指向 mirrors.cloud.tencent.com（国内本地构建更快），
+        # 但 GitHub runner 在国外，取国内镜像常超时/失败 → 只在 CI 环境覆盖为官方源。
+        # 本地构建不受影响。
+        run: |
+          sed -i 's#mirrors\.cloud\.tencent\.com/gradle#services.gradle.org/distributions#' \
+            android/gradle/wrapper/gradle-wrapper.properties
+          grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: 接受 Android 许可（幂等，runner 通常已接受）
+        run: yes | flutter doctor --android-licenses > /dev/null 2>&1 || true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      - name: 构建 release APK（arm64）
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: 上传 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiyuan-pocket-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 90

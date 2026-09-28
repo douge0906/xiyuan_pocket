@@ -1,0 +1,93 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+**/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ===== 锡院工具箱 追加排除（防止敏感文件与构建产物上网） =====
+# 旧构建产物备份
+build_old*/
+# APK 安装包
+*.apk
+# 敏感配置与密钥
+.env
+.env.*
+*.jks
+*.keystore
+key.properties
+# 服务端运行数据（若 server 目录随前端一起提交）
+server/users.db
+server/users.db-journal
+server/messages.json
+server/push_settings.json
+server/school_notices.json
+server/exam_papers.json
+server/papers/
+server/config.json
+server/config_secrets.py
+server/.env
+server/uploads/
+server/reports/
+server/static/uploads/
+server/*.log
+# Windows/系统
+Thumbs.db
+
+# 注意：pubspec.lock **必须提交**（应用项目锁定依赖版本，贡献者 clone 后
+# 构建结果才可复现），因此这里不做 *.lock 一刀切。
+
+# ===== 开源版追加（2026-09-22）=====
+# 运行时抓取缓存（不应入库，各自本地生成）
+campus_info.json
+school_notices.json
+*.db
+*.sqlite
+*.sqlite3
+# IDE
+.vscode/
+# 覆盖率
+coverage/
+*.lcov
+# 桌面端临时构建目录
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+macos/Flutter/ephemeral/
