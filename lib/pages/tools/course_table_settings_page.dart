@@ -43,6 +43,10 @@ class CourseTableSettingsPage extends StatefulWidget {
 class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   Map<String, dynamic> _display = CourseStorage.defaultDisplaySettings();
 
+  /// 读取显示设置的 Future 缓存：v1.1.1 修复「开关先显示默认(true)、
+  /// 读完存储再跳成实际值」的闪烁（用户反馈像抖动）。
+  Future<Map<String, dynamic>>? _future;
+
   bool get _showGridLines => _display['showGridLines'] != false;
   bool get _showOtherWeeks => _display['showOtherWeeks'] == true;
   String get _bgPath => (_display['backgroundImage'] ?? '').toString();
@@ -51,18 +55,17 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   @override
   void initState() {
     super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final s = await CourseStorage.loadDisplaySettings();
-    if (!mounted) return;
-    setState(() => _display = s);
+    _future = CourseStorage.loadDisplaySettings();
   }
 
   Future<void> _set(String key, Object value) async {
-    setState(() => _display = <String, dynamic>{..._display, key: value});
-    await CourseStorage.saveDisplaySettings(_display);
+    final next = <String, dynamic>{..._display, key: value};
+    setState(() {
+      _display = next;
+      // 立即把 Future 指向内存值：避免 FutureBuilder 重建时回读存储造成抖动
+      _future = Future<Map<String, dynamic>>.value(next);
+    });
+    await CourseStorage.saveDisplaySettings(next);
   }
 
   void _toast(String msg) {
@@ -123,7 +126,15 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
         title: const Text('课表设置',
             style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
       ),
-      body: ListView(
+      body: FutureBuilder<Map<String, dynamic>>(
+        future: _future,
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
+          }
+          // 用已加载的值渲染，避免开关先显示默认值再跳变（用户反馈的抖动）
+          _display = snap.data!;
+          return ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
           // 顶部提示条（复刻在线版）
@@ -182,30 +193,22 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                   icon: Icons.add_circle_outline_rounded,
                   title: '添加课程',
                   subtitle: '手动添加没导入到的课，可设单双周与节数',
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    widget.onAddCourse();
-                  },
+                  // v1.1.1：不再自动返回课表（用户反馈「点设置就跳回主页」很突兀）
+                  onTap: widget.onAddCourse,
                 ),
                 Divider(height: 1, color: context.borderColor),
                 _actionTile(
                   icon: Icons.schedule_rounded,
                   title: '调整上课时间',
                   subtitle: '修改每节课的开始 / 结束时间，作用于整张课表',
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    widget.onEditTime();
-                  },
+                  onTap: widget.onEditTime,
                 ),
                 Divider(height: 1, color: context.borderColor),
                 _actionTile(
                   icon: Icons.playlist_add_check_rounded,
                   title: '同步今日课程到待办',
                   subtitle: '把今天的课一次性写进待办清单',
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    widget.onSyncTodos();
-                  },
+                  onTap: widget.onSyncTodos,
                 ),
                 Divider(height: 1, color: context.borderColor),
                 _actionTile(
@@ -213,10 +216,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                   title: '清空全部课程',
                   subtitle: '删除课表里的所有课程（不可恢复）',
                   danger: true,
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    widget.onClearAll();
-                  },
+                  onTap: widget.onClearAll,
                 ),
               ],
             ),
@@ -228,6 +228,8 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
             style: TextStyle(fontSize: 12, color: context.textTertiary),
           ),
         ],
+      );
+        },
       ),
     );
   }
