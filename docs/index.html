@@ -120,11 +120,9 @@
   .center{text-align:center}
   .center .actions{justify-content:center}
   .center .meta{text-align:center}
-  .face .lead,.face .who,.face h2,.face .feature h3,.face .feature p,
-  .face .row h3,.face .row p,.face .footnote,.face .kv div{text-align:center}
-  .face .row{justify-content:center}
-  .face .row .ico{flex:0 0 auto}
-  .face .divider{margin-left:auto;margin-right:auto}
+  /* 只有「特长以上」居中：标题 / 副标题 / 版本行 / 按钮 / 更新说明 / 下载引导 */
+  .face .lead,.face .who{text-align:center}
+  .face .meta,.face .center{text-align:center}
   /* 历史版本折叠 */
   .history{margin:-10px 0 22px}
   .history>summary{
@@ -135,15 +133,15 @@
   .history>summary:hover{color:var(--text-2)}
   .history .chev{transition:transform .2s var(--ease)}
   .history[open] .chev{transform:rotate(180deg)}
-  .history-list{
-    margin-top:8px;background:var(--surface);border:1px solid var(--border);
-    border-radius:14px;overflow:hidden;text-align:left;
+  /* 极简：不用卡片框，只靠字重与细线分层 */
+  .history-list{margin:6px auto 0;max-width:520px;text-align:left}
+  .history-item{
+    display:flex;align-items:baseline;gap:10px;padding:7px 2px;
   }
-  .history-item{display:flex;gap:12px;align-items:baseline;padding:11px 15px}
   .history-item+.history-item{border-top:1px solid var(--border)}
-  .history-item .hv{font-size:13px;font-weight:600;white-space:nowrap}
-  .history-item .hd{font-size:11.5px;color:var(--text-3);white-space:nowrap}
-  .history-item .hn{font-size:12.5px;color:var(--text-2)}
+  .history-item .hv{font-size:12.5px;font-weight:600;min-width:52px}
+  .history-item .hd{font-size:11.5px;color:var(--text-3);min-width:44px}
+  .history-item .hn{font-size:12.5px;color:var(--text-2);flex:1}
   .dl-hint{
     margin-top:12px;font-size:12.5px;color:var(--text-3);
     background:rgba(31,41,55,.04);border-radius:10px;padding:8px 12px;display:inline-block;
@@ -236,13 +234,7 @@
       <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M6 9l6 6 6-6"/></svg>
       历史版本
     </summary>
-    <div class="history-list">
-      <div class="history-item"><span class="hv">v2.5.2</span><span class="hd">2026-10-04</span><span class="hn">简单优化用户体验（当前版本）</span></div>
-      <div class="history-item"><span class="hv">v2.5.1</span><span class="hd">2026-10-03</span><span class="hn">服务页管理、主题色自定义、界面统一</span></div>
-      <div class="history-item"><span class="hv">v2.4.9</span><span class="hd">2026-09-27</span><span class="hn">一卡通余额查询上线</span></div>
-      <div class="history-item"><span class="hv">v1.0.1</span><span class="hd">2026-10-04</span><span class="hn">课表设置页、网格线开关（开源版）</span></div>
-      <div class="history-item"><span class="hv">v1.0.0</span><span class="hd">2026-09-28</span><span class="hn">首个开源版本发布（MIT）</span></div>
-    </div>
+    <div class="history-list" id="historyList"></div>
   </details>
 
   <div class="stage">
@@ -370,14 +362,38 @@
 
   // 更新记录：跟随当前版本切换（两版等大，内容对应各自版本）
   var NOTES = {
-    online: { ver: 'v2.5.2', tag: '在线版' },
-    oss:    { ver: 'v1.0.1', tag: '开源版' }
+    online: {
+      ver: 'v2.5.2', tag: '在线版',
+      list: [
+        ['v2.5.2', '10-04', '简单优化用户体验（当前版本）'],
+        ['v2.5.1', '10-03', '服务页管理、主题色自定义、界面统一'],
+        ['v2.4.9', '09-27', '一卡通余额查询上线'],
+        ['v2.4.8', '09-23', '课表与成绩离线缓存']
+      ]
+    },
+    oss: {
+      ver: 'v1.0.1', tag: '开源版',
+      list: [
+        ['v1.0.1', '10-04', '课表设置页、网格线开关（当前版本）'],
+        ['v1.0.0', '09-28', '首个开源版本发布（MIT）']
+      ]
+    }
   };
+  function renderHistory(list){
+    var box = document.getElementById('historyList');
+    if (!box) return;
+    box.innerHTML = list.map(function(r){
+      return '<div class="history-item"><span class="hv">' + r[0] +
+             '</span><span class="hd">' + r[1] +
+             '</span><span class="hn">' + r[2] + '</span></div>';
+    }).join('');
+  }
   function syncSide(side){
     var d = NOTES[side];
     if (!d) return;
     document.getElementById('noticeVer').textContent = d.ver;
     document.getElementById('noticeTag').textContent = d.tag;
+    renderHistory(d.list);
   }
 
   function setSide(side){
