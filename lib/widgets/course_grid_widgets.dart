@@ -69,12 +69,17 @@ class CourseBlockRow extends StatelessWidget {
   final CourseBlock block;
   final int todayWeekday;
   final bool isDark;
+
+  /// v1.1.1：背景图开启时，格子底色必须透明，否则会把背景图整片遮住
+  /// （用户反馈「背景图只显示在最右侧一列，左侧空白」）。
+  final bool transparent;
   final void Function(int weekday, int startSlot, int endSlot) onOpenAdd;
   const CourseBlockRow({
     super.key,
     required this.block,
     required this.todayWeekday,
     required this.isDark,
+    this.transparent = false,
     required this.onOpenAdd,
   });
 
@@ -83,13 +88,14 @@ class CourseBlockRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CourseTimeCell(block: block, isDark: isDark),
+        CourseTimeCell(block: block, isDark: isDark, transparent: transparent),
         for (int d = 0; d < 7; d++)
           CourseDayCell(
             weekday: d + 1,
             block: block,
             isToday: d + 1 == todayWeekday,
             isDark: isDark,
+            transparent: transparent,
             onOpenAdd: onOpenAdd,
           ),
       ],
@@ -100,7 +106,15 @@ class CourseBlockRow extends StatelessWidget {
 class CourseTimeCell extends StatelessWidget {
   final CourseBlock block;
   final bool isDark;
-  const CourseTimeCell({super.key, required this.block, required this.isDark});
+  const CourseTimeCell({
+    super.key,
+    required this.block,
+    required this.isDark,
+    this.transparent = false,
+  });
+
+  /// 背景图开启时透出底图。
+  final bool transparent;
 
   @override
   Widget build(BuildContext context) {
@@ -113,7 +127,9 @@ class CourseTimeCell extends StatelessWidget {
     return Container(
       width: kCourseTimeColWidth,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF202020) : Colors.grey.shade50,
+        color: transparent
+            ? Colors.transparent
+            : (isDark ? const Color(0xFF202020) : Colors.grey.shade50),
         // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
       ),
       child: Column(
@@ -145,6 +161,9 @@ class CourseDayCell extends StatelessWidget {
   final CourseBlock block;
   final bool isToday;
   final bool isDark;
+
+  /// 背景图开启时透出底图（v1.1.1）。
+  final bool transparent;
   final void Function(int weekday, int startSlot, int endSlot) onOpenAdd;
   const CourseDayCell({
     super.key,
@@ -152,6 +171,7 @@ class CourseDayCell extends StatelessWidget {
     required this.block,
     required this.isToday,
     required this.isDark,
+    this.transparent = false,
     required this.onOpenAdd,
   });
 
@@ -163,7 +183,11 @@ class CourseDayCell extends StatelessWidget {
         behavior: HitTestBehavior.translucent,
         child: Container(
           decoration: BoxDecoration(
-            color: isToday ? AppTheme.primaryColor.withOpacity(0.04) : (context.surfaceColor),
+            color: transparent
+                ? Colors.transparent
+                : (isToday
+                    ? AppTheme.primaryColor.withOpacity(0.04)
+                    : (context.surfaceColor)),
             // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
           ),
         ),
@@ -339,6 +363,7 @@ class CourseWeekGrid extends StatelessWidget {
                         block: blocks[i],
                         todayWeekday: todayWeekday,
                         isDark: isDark,
+                        transparent: hasBg,
                         onOpenAdd: onOpenAdd,
                       ),
                     ),

@@ -512,10 +512,10 @@ class _NotificationPageState extends State<NotificationPage>
             ? const EdgeInsets.fromLTRB(14, 10, 14, 24)
             : const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: state.items.length,
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          color: context.borderColor,
-        ),
+        separatorBuilder: (_, __) => MsgStyle.card
+            // 圆角卡片模式：卡片自带间距，不叠分割线
+            ? const SizedBox.shrink()
+            : Divider(height: 1, color: context.borderColor),
         itemBuilder: (ctx, i) {
           final it = state.items[i];
           return InkWell(
@@ -523,8 +523,9 @@ class _NotificationPageState extends State<NotificationPage>
             // v1.1.1：圆角卡片模式也要生效（此前只有学校公告卡做了分支，
             // 频道内容漏了 -> 用户反馈「没统一所有列表」）
             child: Container(
+              // v1.1.1 统一间距：与学校公告卡一致（底部 12 + 内部 16）
               margin: MsgStyle.card
-                  ? const EdgeInsets.fromLTRB(14, 0, 14, 12)
+                  ? const EdgeInsets.only(bottom: 12)
                   : EdgeInsets.zero,
               padding: MsgStyle.card
                   ? const EdgeInsets.all(16)
@@ -536,7 +537,6 @@ class _NotificationPageState extends State<NotificationPage>
                           ? const Color(0xFF1E1E1E)
                           : Colors.white,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: context.borderColor),
                       boxShadow: const [
                         BoxShadow(
                           color: Color(0x0A000000),

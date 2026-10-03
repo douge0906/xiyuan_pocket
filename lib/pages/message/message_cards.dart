@@ -51,7 +51,6 @@ class SchoolNoticeCard extends StatelessWidget {
                     // 显式纯白：之前没给底色，叠在页面底色上看起来「整体发灰」
                     color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: context.borderColor),
                     boxShadow: [
                       BoxShadow(
                         // v2.5.2/v1.1.1 复刻「内部纯白」那版：阴影要很淡（原来 0.04/18/4 偏灰）
