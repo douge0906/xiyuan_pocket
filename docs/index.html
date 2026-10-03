@@ -116,9 +116,34 @@
   .tag.solid{background:rgba(31,41,55,.06);border-color:transparent;color:var(--primary)}
 
   h1{font-size:29px;font-weight:700;letter-spacing:.4px;line-height:1.25}
+  /* 整页居中 */
   .center{text-align:center}
   .center .actions{justify-content:center}
   .center .meta{text-align:center}
+  .face .lead,.face .who,.face h2,.face .feature h3,.face .feature p,
+  .face .row h3,.face .row p,.face .footnote,.face .kv div{text-align:center}
+  .face .row{justify-content:center}
+  .face .row .ico{flex:0 0 auto}
+  .face .divider{margin-left:auto;margin-right:auto}
+  /* 历史版本折叠 */
+  .history{margin:-10px 0 22px}
+  .history>summary{
+    list-style:none;cursor:pointer;font-size:12.5px;color:var(--text-3);
+    display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 0;
+  }
+  .history>summary::-webkit-details-marker{display:none}
+  .history>summary:hover{color:var(--text-2)}
+  .history .chev{transition:transform .2s var(--ease)}
+  .history[open] .chev{transform:rotate(180deg)}
+  .history-list{
+    margin-top:8px;background:var(--surface);border:1px solid var(--border);
+    border-radius:14px;overflow:hidden;text-align:left;
+  }
+  .history-item{display:flex;gap:12px;align-items:baseline;padding:11px 15px}
+  .history-item+.history-item{border-top:1px solid var(--border)}
+  .history-item .hv{font-size:13px;font-weight:600;white-space:nowrap}
+  .history-item .hd{font-size:11.5px;color:var(--text-3);white-space:nowrap}
+  .history-item .hn{font-size:12.5px;color:var(--text-2)}
   .dl-hint{
     margin-top:12px;font-size:12.5px;color:var(--text-3);
     background:rgba(31,41,55,.04);border-radius:10px;padding:8px 12px;display:inline-block;
@@ -206,6 +231,20 @@
     <span class="ver" id="noticeVer">v2.5.2</span>
   </div>
 
+  <details class="history">
+    <summary>
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M6 9l6 6 6-6"/></svg>
+      历史版本
+    </summary>
+    <div class="history-list">
+      <div class="history-item"><span class="hv">v2.5.2</span><span class="hd">2026-10-04</span><span class="hn">简单优化用户体验（当前版本）</span></div>
+      <div class="history-item"><span class="hv">v2.5.1</span><span class="hd">2026-10-03</span><span class="hn">服务页管理、主题色自定义、界面统一</span></div>
+      <div class="history-item"><span class="hv">v2.4.9</span><span class="hd">2026-09-27</span><span class="hn">一卡通余额查询上线</span></div>
+      <div class="history-item"><span class="hv">v1.0.1</span><span class="hd">2026-10-04</span><span class="hn">课表设置页、网格线开关（开源版）</span></div>
+      <div class="history-item"><span class="hv">v1.0.0</span><span class="hd">2026-09-28</span><span class="hn">首个开源版本发布（MIT）</span></div>
+    </div>
+  </details>
+
   <div class="stage">
     <div class="flip" id="flip">
 
@@ -221,7 +260,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
-            Download for Android
+            下载 Android
           </a>
         </div>
         <p class="meta center"><b>14 MB</b> · 更新说明：简单优化用户体验</p>
@@ -269,7 +308,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
-            Download for Android
+            下载 Android
           </a>
           <a class="btn btn-ghost" href="https://github.com/douge0906/xiyuan_pocket" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
