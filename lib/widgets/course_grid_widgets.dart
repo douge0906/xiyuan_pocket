@@ -381,8 +381,10 @@ class CourseWeekGrid extends StatelessWidget {
                   ],
                 ],
               ),
-              ...overlays,
+              // v1.1.1 逐字对齐在线版顺序：**gridLines 在 overlays 之前**
+              // （在线版 _WeekGrid 就是这个顺序，我之前写反了）。
               ...gridLines,
+              ...overlays,
             ],
           ),
         );
