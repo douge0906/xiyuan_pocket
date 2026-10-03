@@ -150,30 +150,14 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 「主题色 · 实验性」入口：右侧色点预览。
+  /// 「主题色」入口：右侧色点预览（v2.5.1：去掉「实验性」标签，与在线版一致）。
   Widget _primaryEntry(bool isDark, Color titleColor) {
     return ValueListenableBuilder<Color>(
       valueListenable: widget.primaryColor,
       builder: (ctx, current, __) => ListTile(
         contentPadding: EdgeInsets.zero,
         onTap: () => _pickPrimaryColor(current),
-        title: Row(
-          children: [
-            Text('主题色', style: TextStyle(fontSize: 14, color: titleColor)),
-            const SizedBox(width: 6),
-            // 「实验性」标记：预先告知可能有个别页面未完全适配，
-            // 避免用户以为是 bug（诚实标注好过让用户猜）。
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Text('实验性',
-                  style: TextStyle(fontSize: 10, color: Color(0xFFB45309))),
-            ),
-          ],
-        ),
+        title: Text('主题色', style: TextStyle(fontSize: 14, color: titleColor)),
         trailing: SizedBox(
           width: 24,
           child: Center(
