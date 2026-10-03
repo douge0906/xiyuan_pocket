@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>掌上锡院 · 无锡学院非官方校园助手</title>
+<meta name="description" content="掌上锡院 —— 无锡学院非官方校园助手。纯客户端、无服务器，课表 / 成绩 / 考试 / 一卡通 / 校园资讯，数据只留在你手机里。开源版免费下载。">
+<style>
+  :root{
+    --primary:#1F2937;
+    --bg:#F8F9FC;
+    --surface:#FFFFFF;
+    --border:#E5E7EB;
+    --text:#1F2937;
+    --text-2:#6B7280;
+    --text-3:#9CA3AF;
+    --radius:20px;
+    --radius-sm:12px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.65;
+    font-size:15px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px}
+
+  /* ---------- 顶部 ---------- */
+  header{padding:72px 0 40px;text-align:center}
+  .logo{
+    width:56px;height:56px;margin:0 auto 20px;
+    border:1.5px solid var(--primary);border-radius:16px;
+    display:flex;align-items:center;justify-content:center;
+    background:var(--surface);
+  }
+  .logo svg{width:28px;height:28px;stroke:var(--primary)}
+  h1{font-size:32px;font-weight:700;letter-spacing:.5px}
+  .tagline{margin-top:10px;color:var(--text-2);font-size:15.5px}
+  .meta{margin-top:14px;color:var(--text-3);font-size:13px}
+  .meta span{white-space:nowrap}
+
+  /* ---------- 按钮 ---------- */
+  .actions{margin-top:30px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:13px 22px;border-radius:14px;font-size:15px;font-weight:600;
+    text-decoration:none;border:1px solid transparent;
+    transition:opacity .15s ease;
+  }
+  .btn:hover{opacity:.86}
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-ghost{background:var(--surface);color:var(--text);border-color:var(--border)}
+  .btn svg{width:18px;height:18px;stroke:currentColor}
+  .hint{margin-top:12px;color:var(--text-3);font-size:12.5px}
+
+  /* ---------- 卡片 ---------- */
+  section{margin-top:56px}
+  h2{font-size:19px;font-weight:600;margin-bottom:16px;padding-left:2px}
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow:0 4px 20px rgba(0,0,0,.04);
+  }
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .feature{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.04);
+  }
+  .feature .ico{
+    width:34px;height:34px;border-radius:10px;
+    background:rgba(31,41,55,.10);
+    display:flex;align-items:center;justify-content:center;margin-bottom:12px;
+  }
+  .feature .ico svg{width:19px;height:19px;stroke:var(--primary)}
+  .feature h3{font-size:14.5px;font-weight:600;margin-bottom:5px}
+  .feature p{font-size:12.5px;color:var(--text-2);line-height:1.6}
+
+  /* ---------- 说明列表 ---------- */
+  .rows{padding:0}
+  .row{display:flex;gap:12px;align-items:flex-start;padding:16px}
+  .row + .row{border-top:1px solid var(--border)}
+  .row .ico{width:34px;height:34px;border-radius:10px;background:rgba(31,41,55,.10);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .row .ico svg{width:19px;height:19px;stroke:var(--primary)}
+  .row h3{font-size:14.5px;font-weight:600;margin-bottom:3px}
+  .row p{font-size:13px;color:var(--text-2)}
+
+  /* ---------- 下载卡 ---------- */
+  .download{padding:22px}
+  .download-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .download-head .t{font-size:16px;font-weight:600}
+  .download-head .s{font-size:12.5px;color:var(--text-3);margin-top:3px}
+  .kv{margin-top:16px;border-top:1px solid var(--border);padding-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px 16px}
+  .kv div{font-size:13px;color:var(--text-2);display:flex;justify-content:space-between;gap:8px}
+  .kv b{font-weight:600;color:var(--text)}
+  .note{margin-top:12px;font-size:12.5px;color:var(--text-3);line-height:1.7}
+
+  /* ---------- 页脚 ---------- */
+  footer{margin-top:64px;padding:28px 0 56px;text-align:center;color:var(--text-3);font-size:12.5px;line-height:1.9}
+  footer a{color:var(--text-2);text-decoration:underline;text-decoration-color:var(--border)}
+
+  @media (max-width:560px){
+    header{padding:52px 0 32px}
+    h1{font-size:26px}
+    .grid{grid-template-columns:1fr}
+    .kv{grid-template-columns:1fr}
+    .actions .btn{width:100%;justify-content:center}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="3" width="16" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h3"/>
+      </svg>
+    </div>
+    <h1>掌上锡院</h1>
+    <p class="tagline">无锡学院非官方校园助手 · 纯客户端 · 无服务器</p>
+    <p class="meta">
+      <span>Android arm64</span> · <span>开源版 v1.0.0</span> · <span>MIT License</span>
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="https://github.com/douge0906/xiyuan_pocket/releases/download/v1.0.0/app-release.apk">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
+        </svg>
+        下载 Android 版
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/douge0906/xiyuan_pocket" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 19c-4 1.5-4-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 4.5-1.4 4.5-4.8 0-.9-.3-1.9-.9-2.5.2-.6.2-1.7-.1-2.4 0 0-1.1-.3-3.5 1.3a9 9 0 0 0-5 0C7.1 3.1 6 3.4 6 3.4c-.3.7-.3 1.8-.1 2.4-.6.6-.9 1.6-.9 2.5 0 3.4 1.7 4.5 4.5 4.8-.4.4-.6.9-.6 1.5V21"/>
+        </svg>
+        查看源码
+      </a>
+    </div>
+    <p class="hint">下载的是<b>开源版</b>（15 MB，无服务器 · 直连学校系统 · 数据只留本机）</p>
+  </header>
+
+  <section>
+    <h2>功能</h2>
+    <div class="grid">
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg></div>
+        <h3>课程表</h3>
+        <p>教务系统一键导入或手动添加，支持单双周与自定义节次，可添加桌面小组件。</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-6"/><path d="M2 21h20"/></svg></div>
+        <h3>成绩 · 考试 · 教材</h3>
+        <p>按学期查询成绩与绩点、本学期考试安排与考场、教材预订清单，本地缓存离线可看。</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg></div>
+        <h3>一卡通 · 电费余额</h3>
+        <p>在服务页顶部直接查看校园卡余额与宿舍电费，不用再打开网页版。</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8a4 4 0 0 1 0 8"/></svg></div>
+        <h3>教务处公告 · 校园资讯</h3>
+        <p>内置内容快照，首次打开就有内容；之后联网刷新，未读的会标红点。</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></div>
+        <h3>校历 · 校园地图</h3>
+        <p>学年校历（周次与假期）与校园地图全部离线内置，地图可缩放拖动、点课程定位教室。</p>
+      </div>
+      <div class="feature">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+        <h3>上课提醒</h3>
+        <p>每节课前本地通知提醒，可设提前量；不依赖任何推送服务。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>为什么可以放心用</h2>
+    <div class="card rows">
+      <div class="row">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6"/></svg></div>
+        <div><h3>没有服务器，数据只在你手机里</h3><p>账号密码保存在系统安全存储（Android Keystore），App 直接与学校系统通信，不经过任何第三方服务器，也不上传任何个人数据。</p></div>
+      </div>
+      <div class="row">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></div>
+        <div><h3>永久开源（MIT）</h3><p>全部源码公开在 GitHub，可自行编译、审阅、二次开发。构建产物也可以直接从 Actions 里下载。</p></div>
+      </div>
+      <div class="row">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".6"/><circle cx="12" cy="12" r="9"/></svg></div>
+        <div><h3>非官方，请注意</h3><p>本应用由个人开发者与 AI 辅助设计，非无锡学院官方产品。通过非官方客户端访问教务系统可能违反学校规定，请自行判断后使用。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>下载</h2>
+    <div class="card download">
+      <div class="download-head">
+        <div>
+          <div class="t">掌上锡院 · 开源版</div>
+          <div class="s">Android 7.0 及以上 · arm64</div>
+        </div>
+        <a class="btn btn-primary" href="https://github.com/douge0906/xiyuan_pocket/releases/download/v1.0.0/app-release.apk">下载 APK</a>
+      </div>
+      <div class="kv">
+        <div><span>版本</span><b>v1.0.0</b></div>
+        <div><span>大小</span><b>15 MB</b></div>
+        <div><span>支持架构</span><b>arm64-v8a</b></div>
+        <div><span>签名</span><b>开源版（debug 签名）</b></div>
+      </div>
+      <p class="note">
+        安装时如提示「未知来源应用」，请在系统设置中允许本次安装（本 App 未上架应用商店）。
+        全部历史版本与源码见 <a href="https://github.com/douge0906/xiyuan_pocket/releases" target="_blank" rel="noopener">GitHub Releases</a>。
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>掌上锡院 · 无锡学院非官方校园助手</p>
+    <p>MIT License · <a href="https://github.com/douge0906/xiyuan_pocket" target="_blank" rel="noopener">github.com/douge0906/xiyuan_pocket</a></p>
+    <p>与无锡学院无隶属或合作关系</p>
+  </footer>
+
+</div>
+</body>
+</html>
