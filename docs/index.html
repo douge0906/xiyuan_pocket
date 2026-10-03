@@ -38,6 +38,7 @@
   /* 公告条：切换器正下方，首屏第一眼 */
   .notice{
     display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    /* 关键：子项全部垂直居中，标签不被行高顶偏 */
     background:var(--surface);border:1px solid var(--border);
     border-radius:14px;padding:10px 16px;margin-bottom:22px;
     box-shadow:0 2px 12px rgba(0,0,0,.03);
@@ -46,8 +47,9 @@
   .notice .txt{font-size:13px;color:var(--text-2)}
   .notice .txt b{color:var(--text);font-weight:600}
   .notice .ver{
-    margin-left:auto;font-size:12px;font-weight:600;color:var(--text-2);
-    background:rgba(31,41,55,.06);border-radius:999px;padding:3px 10px;white-space:nowrap;
+    margin-left:auto;font-size:12px;font-weight:600;color:var(--text-2);line-height:1.5;
+    background:rgba(31,41,55,.06);border-radius:999px;padding:3px 10px;
+    white-space:nowrap;align-self:center;display:inline-flex;align-items:center;
   }
   /* 窄屏（手机）：整条保持一行，版本号不另起一行 */
   @media (max-width:560px){
@@ -57,8 +59,9 @@
     .notice .ver{margin-left:0;flex:0 0 auto}
   }
   .notice .tag{
-    font-size:11px;font-weight:600;color:var(--text-2);
-    background:rgba(31,41,55,.06);border-radius:999px;padding:3px 9px;white-space:nowrap;
+    font-size:11px;font-weight:600;color:var(--text-2);line-height:1.5;
+    background:rgba(31,41,55,.06);border-radius:999px;padding:3px 9px;
+    white-space:nowrap;align-self:center;display:inline-flex;align-items:center;
   }
   svg{display:block}
 
@@ -130,6 +133,7 @@
   /* 只有「特长以上」居中：标题 / 副标题 / 版本行 / 按钮 / 更新说明 / 下载引导 */
   .face .lead,.face .who{text-align:center}
   .face .meta,.face .center{text-align:center}
+  .center .actions{justify-content:center}   /* 按钮行必须显式居中 */
   /* 历史版本折叠 */
   .history{margin:-10px 0 22px}
   .history>summary{
