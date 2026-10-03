@@ -44,7 +44,7 @@ class SchoolNoticeCard extends StatelessWidget {
           onTap: onTap,
           child: Container(
             padding: MsgStyle.card
-                ? const EdgeInsets.all(18)
+                ? const EdgeInsets.all(16)
                 : const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: MsgStyle.card
                 ? BoxDecoration(

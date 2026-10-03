@@ -61,7 +61,13 @@ class _NotificationPageState extends State<NotificationPage>
   final ScrollController _scrollController = ScrollController();
 
   /// 左右滑动切换列表（v1.6.0）。页面顺序与 chip 顺序一致（见 _allTabs）。
-  final PageController _tabPageController = PageController(initialPage: 1);
+  ///
+  /// v1.1.1 修复「进消息页先显示校园要闻、再跳到教务处」的抖动：
+  /// 页签是**异步**拼出来的（索引 0 = 学校公告，其后才是已订阅频道），
+  /// 原来硬编码 initialPage: 1 —— 加载前只有 1 个页签（index 1 不存在），
+  /// 加载完成后 index 1 的含义又变了，视觉上就跳了一下。
+  /// 现在默认停在第 0 页（学校公告 / 教务处），与 _currentTabIndex 的回落一致。
+  final PageController _tabPageController = PageController();
 
   // ---------------- 消息栏目样式（两套，默认纯白） ----------------
   String _messageStyle = StorageService.kMessageStylePlain;
