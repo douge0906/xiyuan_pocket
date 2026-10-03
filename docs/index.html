@@ -49,6 +49,13 @@
     margin-left:auto;font-size:12px;font-weight:600;color:var(--text-2);
     background:rgba(31,41,55,.06);border-radius:999px;padding:3px 10px;white-space:nowrap;
   }
+  /* 窄屏（手机）：整条保持一行，版本号不另起一行 */
+  @media (max-width:560px){
+    .notice{flex-wrap:nowrap;gap:8px;padding:9px 12px}
+    .notice .txt{flex:1;min-width:0;font-size:12.5px}
+    .notice .txt b{display:none}          /* 「更新记录」标题让位给内容 */
+    .notice .ver{margin-left:0;flex:0 0 auto}
+  }
   .notice .tag{
     font-size:11px;font-weight:600;color:var(--text-2);
     background:rgba(31,41,55,.06);border-radius:999px;padding:3px 9px;white-space:nowrap;
@@ -146,7 +153,11 @@
     margin-top:12px;font-size:12.5px;color:var(--text-3);
     background:rgba(31,41,55,.04);border-radius:10px;padding:8px 12px;display:inline-block;
   }
-  .lead{margin-top:10px;color:var(--text-2);font-size:14.5px}
+  .lead{
+    margin-top:10px;color:var(--text-2);font-size:14.5px;
+    max-width:560px;margin-left:auto;margin-right:auto;
+    text-wrap:balance;               /* 均衡断行：不把加粗短语拆到两行 */
+  }
   .lead b{color:var(--text);font-weight:600}
   .who{margin-top:6px;color:var(--text-3);font-size:12.5px}
 
