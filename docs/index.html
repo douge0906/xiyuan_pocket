@@ -25,7 +25,28 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
     line-height:1.65;font-size:15px;-webkit-font-smoothing:antialiased;
   }
-  .wrap{max-width:780px;margin:0 auto;padding:0 20px 64px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px 64px}
+  .layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:26px;align-items:start}
+  .side{position:sticky;top:24px}
+  .side-card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px 16px;box-shadow:0 10px 40px rgba(17,24,39,.05);
+  }
+  .side-title{font-size:13px;font-weight:600;letter-spacing:.6px;color:var(--text-3)}
+  .side-ver{font-size:22px;font-weight:700;margin-top:8px;letter-spacing:.3px}
+  .side-tag{
+    display:inline-block;margin-top:8px;font-size:11px;font-weight:600;
+    color:var(--text-2);background:rgba(31,41,55,.06);
+    border-radius:999px;padding:3px 9px;
+  }
+  .side-div{height:1px;background:var(--border);margin:14px 0}
+  .side-list{margin:0;padding-left:16px}
+  .side-list li{font-size:13px;color:var(--text-2);line-height:1.7;margin-bottom:2px}
+  .side-date{margin-top:12px;font-size:11.5px;color:var(--text-3)}
+  @media (max-width:920px){
+    .layout{grid-template-columns:1fr}
+    .side{position:static;margin-top:4px}
+  }
   svg{display:block}
 
   /* ---------- 顶部标识 ---------- */
@@ -165,6 +186,7 @@
     </div>
   </div>
 
+  <div class="layout">
   <div class="stage">
     <div class="flip" id="flip">
 
@@ -173,17 +195,17 @@
         <span class="tag solid">在线版 · 云端服务</span>
         <h1>掌上锡院</h1>
         <p class="lead">无锡学院非官方校园助手 —— 成绩、考试、课表变动<b>主动推送到你手机</b>，还有食堂速览与试卷库。</p>
-        <p class="who">Android 7.0+ · arm64 · v2.5.1</p>
+        <p class="who">Android 7.0+ · arm64 · v2.5.2</p>
 
         <div class="actions">
-          <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan_toolbox-2.5.1.apk">
+          <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan_toolbox-2.5.2.apk">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
             下载在线版
           </a>
         </div>
-        <p class="meta"><b>14 MB</b> · 更新说明：新增服务页管理、主题色自定义、界面全面统一</p>
+        <p class="meta"><b>14 MB</b> · 更新说明：简单优化用户体验</p>
 
         <div class="divider"></div>
         <h2>特长</h2>
@@ -220,10 +242,10 @@
         <span class="tag">开源版 · 纯客户端</span>
         <h1>掌上锡院</h1>
         <p class="lead">同一个 App，换成<b>没有服务器</b>的形态 —— 账密只存你手机本地，数据不出设备，全部源码公开。</p>
-        <p class="who">Android 7.0+ · arm64 · v1.0.0 · MIT License</p>
+        <p class="who">Android 7.0+ · arm64 · v1.0.1 · MIT License</p>
 
         <div class="actions">
-          <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan-pocket-v1.0.0-build1003.apk">
+          <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan-pocket-v1.0.1.apk">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
@@ -236,7 +258,7 @@
             查看源码
           </a>
         </div>
-        <p class="meta"><b>15 MB</b> · 直接与学校系统通信 · 不经任何第三方服务器</p>
+        <p class="meta"><b>15 MB</b> · 简单优化用户体验 · 直接与学校系统通信</p>
 
         <div class="divider"></div>
         <h2>为什么可以放心用</h2>
@@ -264,6 +286,20 @@
     </div>
   </div>
 
+  <aside class="side">
+    <div class="side-card">
+      <div class="side-title">更新记录及公告</div>
+      <div class="side-ver" id="sideVer">v2.5.2</div>
+      <div class="side-tag" id="sideTag">在线版</div>
+      <div class="side-div"></div>
+      <ul class="side-list" id="sideList">
+        <li>简单优化用户体验</li>
+      </ul>
+      <div class="side-date" id="sideDate">2026-10-04</div>
+    </div>
+  </aside>
+  </div>
+
   <div class="pagefoot">
     <p>掌上锡院 · 无锡学院非官方校园助手</p>
     <p>与无锡学院无隶属或合作关系 · 请遵守学校相关规定使用</p>
@@ -286,6 +322,18 @@
     pill.style.transform = 'translateX(' + (btn.offsetLeft - 3) + 'px)';
   }
 
+  // 更新记录：跟随当前版本切换（两版等大，内容对应各自版本）
+  var NOTES = {
+    online: { ver: 'v2.5.2', tag: '在线版' },
+    oss:    { ver: 'v1.0.1', tag: '开源版' }
+  };
+  function syncSide(side){
+    var d = NOTES[side];
+    if (!d) return;
+    document.getElementById('sideVer').textContent = d.ver;
+    document.getElementById('sideTag').textContent = d.tag;
+  }
+
   function setSide(side){
     if (side === current) return;
     current = side;
@@ -293,6 +341,7 @@
     flip.classList.toggle('rev', isOss);
     bOnline.classList.toggle('on', !isOss);
     bOss.classList.toggle('on', isOss);
+    syncSide(current);
     layout();
   }
 
@@ -305,6 +354,7 @@
   window.addEventListener('resize', layout);
   window.addEventListener('load', layout);
   layout();
+  syncSide(current);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
 })();
 </script>
