@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/course_model.dart';
 import '../../theme/app_theme.dart';
+import '../services/course_storage.dart';
 import '../../widgets/course_day_header.dart';
 
 // 课程表网格的展示层组件（v1.0.0 从 course_table_home_page.dart 剥离）。
@@ -111,7 +112,9 @@ class CourseTimeCell extends StatelessWidget {
       width: kCourseTimeColWidth,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF202020) : Colors.grey.shade50,
-        border: Border(right: BorderSide(color: context.borderColor)),
+        border: CourseStorage.showGridLinesCache
+            ? Border(right: BorderSide(color: context.borderColor))
+            : null,
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -161,7 +164,9 @@ class CourseDayCell extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: isToday ? AppTheme.primaryColor.withOpacity(0.04) : (context.surfaceColor),
-            border: Border(right: BorderSide(color: context.borderColor)),
+            border: CourseStorage.showGridLinesCache
+                ? Border(right: BorderSide(color: context.borderColor))
+                : null,
           ),
         ),
       ),
@@ -301,7 +306,10 @@ class CourseWeekGrid extends StatelessWidget {
                         onOpenAdd: onOpenAdd,
                       ),
                     ),
-                    if (i != blocks.length - 1)
+                    // v1.1.0：横线也只由「课表设置 → 显示网格线」控制
+                    // （读内存缓存，避免逐层传参）：关 = 完全没有网格线。
+                    if (i != blocks.length - 1 &&
+                        CourseStorage.showGridLinesCache)
                       Divider(height: dividerHeight, thickness: dividerHeight, color: context.borderColor),
                   ],
                 ],

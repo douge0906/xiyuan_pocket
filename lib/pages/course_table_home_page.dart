@@ -18,6 +18,7 @@ import '../widgets/course_day_header.dart';
 import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
 import 'course/course_import_dialogs.dart';
+import 'tools/course_table_settings_page.dart';
 import '../widgets/course_grid_widgets.dart';
 
 
@@ -151,7 +152,38 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     super.dispose();
   }
 
+  /// 读取课表显示设置（当前只有网格线开关）。
+  Future<void> _loadDisplaySettings() async {
+    final s = await CourseStorage.loadDisplaySettings();
+    if (!mounted) return;
+    final on = s['showGridLines'] != false;
+    CourseStorage.showGridLinesCache = on; // 同步给网格绘制组件（静态缓存）
+    setState(() {}); // 触发重建，让网格按新设置重绘
+  }
+
+  /// 打开「课表设置」页（v1.1.0：取代原来的「三个点」菜单）。
+  ///
+  /// 具体动作由本页回调转发；返回后**无条件重读显示设置**
+  /// （pop(true) 之类的约定曾漏过，导致开关改完不生效）。
+  Future<void> _openCourseSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CourseTableSettingsPage(
+        onAddCourse: () => showCourseFormSheet(
+          context,
+          onSave: _saveCourse,
+          onDelete: (c) =>
+              confirmDeleteCourse(context, c, onConfirmed: _deleteCourse),
+        ),
+        onEditTime: _showTimeEditDialog,
+        onSyncTodos: () => _syncTodayCoursesToTodos(manual: true),
+        onClearAll: _clearAll,
+      ),
+    ));
+    await _loadDisplaySettings();
+  }
+
   Future<void> _load() async {
+    _loadDisplaySettings(); // 读网格线开关（独立异步，不阻塞课表加载）
     final list = await CourseStorage.loadCourses();
     if (!mounted) return;
     setState(() => _courses = list);
@@ -581,34 +613,17 @@ onPressed: _loading
                 tooltip: '刷新课表',
                 onPressed: _load,
               ),
-              PopupMenuButton<String>(
+              // v1.1.0：右上角「三个点」→ 齿轮（进课表设置页）。
+              // 原菜单四项（添加课程 / 调整上课时间 / 同步今日课程到待办 / 清空全部课程）
+              // 已全部搬进设置页 —— 入口更直观，也不再和页面内「添加课程」主按钮重复。
+              IconButton(
                 key: _kMoreBtn,
-                icon: Icon(Icons.more_vert_rounded, color: isDark ? Colors.grey.shade500 : const Color(0xFF6B7280)),
-                onSelected: (v) {
-                  if (v == 'add') {
-                    showCourseFormSheet(
-                      context,
-                      onSave: _saveCourse,
-                      onDelete: (c) => confirmDeleteCourse(
-                        context,
-                        c,
-                        onConfirmed: _deleteCourse,
-                      ),
-                    );
-                  } else if (v == 'clear') {
-                    _clearAll();
-                  } else if (v == 'time') {
-                    _showTimeEditDialog();
-                  } else if (v == 'sync') {
-                    _syncTodayCoursesToTodos(manual: true);
-                  }
-                },
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'add', child: Text('添加课程')),
-                  PopupMenuItem(value: 'time', child: Text('调整上课时间')),
-                  PopupMenuItem(value: 'sync', child: Text('同步今日课程到待办')),
-                  PopupMenuItem(value: 'clear', child: Text('清空全部课程')),
-                ],
+                icon: Icon(Icons.settings_rounded,
+                    color: isDark
+                        ? Colors.grey.shade500
+                        : const Color(0xFF6B7280)),
+                tooltip: '课表设置',
+                onPressed: _openCourseSettings,
               ),
             ],
           ),

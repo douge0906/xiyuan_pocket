@@ -233,4 +233,36 @@ class CourseStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kTimeBlocks, jsonEncode(blocks));
   }
+
+  // ---------------- 课表显示设置（v1.1.0） ----------------
+
+  /// 显示设置：目前只有「网格线」一项，**默认开启**。
+  /// 用 JSON 存而不是独立 key：以后加字段不用改存储格式，缺字段自动补默认值。
+  static const String _kDisplaySettings = 'course_display_settings_v1';
+
+  /// 网格线开关的**内存缓存**：供网格绘制组件（course_grid_widgets）直接读取，
+  /// 避免「页面 → 网格 → 单元格」逐层传参。由课表页加载/刷新显示设置时同步更新。
+  static bool showGridLinesCache = true;
+
+  static Map<String, dynamic> defaultDisplaySettings() => <String, dynamic>{
+        'showGridLines': true,
+      };
+
+  static Future<Map<String, dynamic>> loadDisplaySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final base = defaultDisplaySettings();
+    final raw = prefs.getString(_kDisplaySettings);
+    if (raw == null || raw.isEmpty) return base;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      return <String, dynamic>{...base, ...j};
+    } catch (_) {
+      return base; // 损坏则回落默认值，不影响课表可用
+    }
+  }
+
+  static Future<void> saveDisplaySettings(Map<String, dynamic> s) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kDisplaySettings, jsonEncode(s));
+  }
 }
