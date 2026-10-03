@@ -260,7 +260,7 @@ class StorageService {
   }
 
   // ---------------- 消息页栏目样式（v1.1.0） ----------------
-  // 两套样式随时可切：'plain' 纯白无缝（默认）/ 'card' 圆角盒子。
+  // 两套样式随时可切：'plain' 纯白无缝（默认）/ 'card' 圆角卡片。
   static const String _kMessageStyle = 'message_style';
   static const String kMessageStylePlain = 'plain';
   static const String kMessageStyleCard = 'card';

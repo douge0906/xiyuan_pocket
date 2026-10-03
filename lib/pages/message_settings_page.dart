@@ -6,7 +6,7 @@ import '../theme/app_theme.dart';
 /// 消息栏目设置（独立页面）。
 ///
 /// 入口：消息页右上角的设置图标 → push 到本页。
-/// 目前只有「栏目样式」一项（纯白列表 / 圆角盒子），选择后**立即生效并持久化**，
+/// 目前只有「栏目样式」一项（纯白列表 / 圆角卡片），选择后**立即生效并持久化**，
 /// 返回消息页时自动按新样式渲染。
 class MessageSettingsPage extends StatefulWidget {
   const MessageSettingsPage({super.key});
@@ -69,7 +69,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                 Divider(height: 1, color: context.borderColor),
                 _option(
                   icon: Icons.crop_square_rounded,
-                  title: '圆角盒子',
+                  title: '圆角卡片',
                   subtitle: '每条消息一个白色圆角卡片，带阴影',
                   value: StorageService.kMessageStyleCard,
                 ),

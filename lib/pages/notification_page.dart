@@ -322,7 +322,7 @@ class _NotificationPageState extends State<NotificationPage>
               ),
           ),
           GestureDetector(
-            // v1.1.0：消息设置 = 切换栏目样式（纯白列表 / 圆角盒子）
+            // v1.1.0：消息设置 = 切换栏目样式（纯白列表 / 圆角卡片）
             onTap: _openStylePicker,
             child: Container(
               width: 40,
@@ -520,7 +520,7 @@ class _NotificationPageState extends State<NotificationPage>
           final it = state.items[i];
           return InkWell(
             onTap: () => _openCampusInfo(ch, it),
-            // v1.1.1：圆角盒子模式也要生效（此前只有学校公告卡做了分支，
+            // v1.1.1：圆角卡片模式也要生效（此前只有学校公告卡做了分支，
             // 频道内容漏了 -> 用户反馈「没统一所有列表」）
             child: Container(
               margin: MsgStyle.card
