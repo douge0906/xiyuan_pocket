@@ -57,15 +57,20 @@ void showCourseFormSheet(
   // 等弹窗完全关闭（含退场动画）后再释放控制器：
   // 若在调用处直接 dispose，退场动画期间 TextField 仍会读取 controller，
   // 会抛 'A TextEditingController was used after being disposed'。
-  showModalBottomSheet(
+  // v1.1.1：改为**居中弹窗**（用户要求，此前是底部上滑的 sheet）
+  showDialog<void>(
     context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
+    barrierDismissible: true,
     builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setModal) => Container(
+      builder: (ctx, setModal) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 660),
+          child: Container(
         decoration: BoxDecoration(
           color: context.surfaceColor,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: BorderRadius.circular(20),
         ),
         padding: EdgeInsets.only(
           left: 20,
@@ -354,6 +359,8 @@ void showCourseFormSheet(
         ),
       ),
     ),
+      ),
+      ),
   ).whenComplete(() {
     nameCtl.dispose();
     teacherCtl.dispose();
