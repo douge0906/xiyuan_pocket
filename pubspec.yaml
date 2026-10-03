@@ -1,7 +1,7 @@
 name: xiyuan_pocket
 description: "掌上锡院 —— 无锡学院校园生活助手"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
