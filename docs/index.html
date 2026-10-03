@@ -35,6 +35,12 @@
   }
   .wrap{max-width:820px;margin:0 auto;padding:0 20px 64px}
 
+  /* 交互元素（公告条/切换器/按钮/折叠标题）不允许被鼠标选中，
+     否则拖动时会误选中文字，页面出现蓝色高亮，很不干净 */
+  .notice,.seg,.btn,.dl-hint,.history>summary,.face .tag,.pagefoot a{
+    -webkit-user-select:none;user-select:none;
+  }
+
   /* 公告条：切换器正下方，首屏第一眼 */
   .notice{
     display:flex;align-items:center;gap:10px;flex-wrap:wrap;
