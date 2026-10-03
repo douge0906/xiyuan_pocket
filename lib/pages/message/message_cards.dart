@@ -48,13 +48,16 @@ class SchoolNoticeCard extends StatelessWidget {
                 : const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: MsgStyle.card
                 ? BoxDecoration(
+                    // 显式纯白：之前没给底色，叠在页面底色上看起来「整体发灰」
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: context.borderColor),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 18,
-                        offset: const Offset(0, 4),
+                        // v2.5.2/v1.1.1 复刻「内部纯白」那版：阴影要很淡（原来 0.04/18/4 偏灰）
+                        color: const Color(0x0A000000),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
                       ),
                     ],
                   )

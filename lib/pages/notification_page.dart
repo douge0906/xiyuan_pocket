@@ -514,9 +514,32 @@ class _NotificationPageState extends State<NotificationPage>
           final it = state.items[i];
           return InkWell(
             onTap: () => _openCampusInfo(ch, it),
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            // v1.1.1：圆角盒子模式也要生效（此前只有学校公告卡做了分支，
+            // 频道内容漏了 -> 用户反馈「没统一所有列表」）
+            child: Container(
+              margin: MsgStyle.card
+                  ? const EdgeInsets.fromLTRB(14, 0, 14, 12)
+                  : EdgeInsets.zero,
+              padding: MsgStyle.card
+                  ? const EdgeInsets.all(16)
+                  : const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              decoration: MsgStyle.card
+                  ? BoxDecoration(
+                      // 显式纯白 + 很淡的阴影（复刻「内部纯白」那版）
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF1E1E1E)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: context.borderColor),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x0A000000),
+                          blurRadius: 10,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    )
+                  : null,
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
