@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../../models/course_model.dart';
 import '../../theme/app_theme.dart';
@@ -258,7 +260,9 @@ class CourseWeekGrid extends StatelessWidget {
 
         final overlays = <Widget>[];
         for (final course in courses) {
-          if (!course.isActiveOnWeek(selectedWeek)) continue;
+          // v1.1.0：「显示非本周课程」开启时不再直接跳过非本周课程，改为淡化显示
+          final activeThisWeek = course.isActiveOnWeek(selectedWeek);
+          if (!activeThisWeek && !CourseStorage.showOtherWeeksCache) continue;
           final startIdx = blocks.indexWhere((b) => b.start == course.startSlot);
           final endIdx = blocks.lastIndexWhere((b) => b.end == course.endSlot);
           if (startIdx == -1 || endIdx == -1 || endIdx < startIdx) continue;
@@ -282,7 +286,11 @@ class CourseWeekGrid extends StatelessWidget {
               left: kCourseTimeColWidth + (wd - 1) * dayWidth,
               width: dayWidth,
               height: height,
-              child: CourseCardWidget(course: course, onTap: () => onOpenDetail(course)),
+              child: CourseCardWidget(
+                course: course,
+                onTap: () => onOpenDetail(course),
+                dimmed: !activeThisWeek,
+              ),
             ));
           }
         }
@@ -302,10 +310,22 @@ class CourseWeekGrid extends StatelessWidget {
           }
         }
 
+        // v1.1.0：课表背景图（与在线版一致）——图片铺满整表 + 底色薄膜透出，
+        // 薄膜既让背景图能看见，又保证时间列文字 / 空格依然可读。
+        final bgPath = CourseStorage.backgroundImageCache;
+        final bgFile = bgPath.isEmpty ? null : File(bgPath);
+        final hasBg = bgFile != null && bgFile.existsSync();
+
         return Container(
           color: surfaceColor,
           child: Stack(
             children: [
+              if (hasBg) ...[
+                Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
+                ColoredBox(
+                  color: surfaceColor.withOpacity(isDark ? 0.70 : 0.55),
+                ),
+              ],
               Column(
                 children: [
                   for (int i = 0; i < blocks.length; i++) ...[
@@ -338,7 +358,16 @@ class CourseWeekGrid extends StatelessWidget {
 class CourseCardWidget extends StatelessWidget {
   final Course course;
   final VoidCallback? onTap;
-  const CourseCardWidget({super.key, required this.course, this.onTap});
+
+  /// 是否为「非本周课程」（v1.1.0）：淡化显示，仅在设置里开启「显示非本周课程」时出现。
+  final bool dimmed;
+
+  const CourseCardWidget({
+    super.key,
+    required this.course,
+    this.onTap,
+    this.dimmed = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -354,7 +383,10 @@ class CourseCardWidget extends StatelessWidget {
         margin: const EdgeInsets.all(1.8),
         padding: const EdgeInsets.only(left: 3, right: 3, top: 3, bottom: 2),
         decoration: BoxDecoration(
-          color: bg,
+          // v1.1.0：非本周课程与页面底色混合 → 视觉上「退到后面」（淡化但仍可读）
+          color: dimmed
+              ? Color.lerp(bg, context.scaffoldColor, 0.62)!
+              : bg,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: isDark ? Colors.white.withOpacity(0.25) : Colors.black.withOpacity(0.30),

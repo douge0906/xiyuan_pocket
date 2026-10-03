@@ -236,7 +236,7 @@ class CourseStorage {
 
   // ---------------- 课表显示设置（v1.1.0） ----------------
 
-  /// 显示设置：目前只有「网格线」一项，**默认开启**。
+  /// 显示设置：**网格线**（默认开）、**非本周课程**（默认关）、**背景图**（默认无）。
   /// 用 JSON 存而不是独立 key：以后加字段不用改存储格式，缺字段自动补默认值。
   static const String _kDisplaySettings = 'course_display_settings_v1';
 
@@ -244,8 +244,16 @@ class CourseStorage {
   /// 避免「页面 → 网格 → 单元格」逐层传参。由课表页加载/刷新显示设置时同步更新。
   static bool showGridLinesCache = true;
 
+  /// 「显示非本周课程」开关的内存缓存（理由同 showGridLinesCache）。
+  static bool showOtherWeeksCache = false;
+
+  /// 课表背景图路径的内存缓存（空串 = 无背景图）。理由同上。
+  static String backgroundImageCache = '';
+
   static Map<String, dynamic> defaultDisplaySettings() => <String, dynamic>{
         'showGridLines': true,
+        'showOtherWeeks': false,
+        'backgroundImage': '',
       };
 
   static Future<Map<String, dynamic>> loadDisplaySettings() async {

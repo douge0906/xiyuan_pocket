@@ -33,6 +33,10 @@ dependencies:
   package_info_plus: ^8.0.0
   # 验证码识别（本地 CAS 登录需要）：解码图片后做模板匹配。
   image: ^4.5.0
+  # 课表背景图（v1.1.0，与在线版对齐）：选图 + 拷贝到文档目录持久化
+  # （image_picker 返回的是临时路径，直接存会「过几天就丢」）
+  image_picker: ^1.1.2
+  path_provider: ^2.1.5
   # 桌面小组件数据桥（v1.0.0 铺垫）：Dart ↔ 原生共享存储 + 跨平台刷新入口。
   # 锁 0.7.0，原因（实测，勿随意改版本）：
   #  - 0.4.1 的 Dart 代码用老 API `ViewConfiguration(size:)`，Flutter 3.24.3

@@ -156,8 +156,11 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   Future<void> _loadDisplaySettings() async {
     final s = await CourseStorage.loadDisplaySettings();
     if (!mounted) return;
-    final on = s['showGridLines'] != false;
-    CourseStorage.showGridLinesCache = on; // 同步给网格绘制组件（静态缓存）
+    // v1.1.0：三项显示设置同步到内存缓存（供网格绘制组件直接读取）
+    final grid = s['showGridLines'] != false;
+    CourseStorage.showGridLinesCache = grid;
+    CourseStorage.showOtherWeeksCache = s['showOtherWeeks'] == true;
+    CourseStorage.backgroundImageCache = (s['backgroundImage'] ?? '').toString();
     setState(() {}); // 触发重建，让网格按新设置重绘
   }
 
