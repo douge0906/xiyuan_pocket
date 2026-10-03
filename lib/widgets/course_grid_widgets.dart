@@ -130,7 +130,11 @@ class CourseTimeCell extends StatelessWidget {
         color: transparent
             ? Colors.transparent
             : (isDark ? const Color(0xFF202020) : Colors.grey.shade50),
-        // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
+        // v1.1.1 恢复无条件右边线：竖线是**结构线**（常驻，用来分列），
+        // 开关只控制「贯穿线 + 横线」；与在线版行为一致。
+        border: Border(
+            right: BorderSide(
+                color: isDark ? Colors.grey.shade800 : context.borderColor)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -188,7 +192,10 @@ class CourseDayCell extends StatelessWidget {
                 : (isToday
                     ? AppTheme.primaryColor.withOpacity(0.04)
                     : (context.surfaceColor)),
-            // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
+            // v1.1.1 恢复无条件右边线（常驻结构竖线，与在线版一致）
+            border: Border(
+                right: BorderSide(
+                    color: isDark ? Colors.grey.shade800 : context.borderColor)),
           ),
         ),
       ),
