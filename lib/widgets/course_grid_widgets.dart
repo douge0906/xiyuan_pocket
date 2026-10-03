@@ -343,6 +343,10 @@ class CourseWeekGrid extends StatelessWidget {
         return Container(
           color: surfaceColor,
           child: Stack(
+            // v1.1.1 关键修复（对齐在线版）：必须 StackFit.expand。
+            // 默认 StackFit.loose 时 Stack 尺寸按非定位子组件（Column）塌陷，
+            // 导致「背景图只显示一列」+「贯穿竖线完全看不见」两个症状。
+            fit: StackFit.expand,
             children: [
               if (hasBg) ...[
                 // v1.1.1 修复「背景图错位到最右边一列」：Stack 里非 Positioned 的子组件
