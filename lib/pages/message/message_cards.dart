@@ -51,7 +51,8 @@ class SchoolNoticeCard extends StatelessWidget {
                     // v1.1.1：亮白底 + 1px 灰线边框（两者都要，缺一不可）
                     color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: context.borderColor),
+                    border: Border(
+                      right: BorderSide(color: context.borderColor)),
                     boxShadow: [
                       BoxShadow(
                         // v2.5.2/v1.1.1 复刻「内部纯白」那版：阴影要很淡（原来 0.04/18/4 偏灰）
