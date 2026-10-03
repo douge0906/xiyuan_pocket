@@ -12,6 +12,7 @@ import 'school_notice_detail_page.dart';
 import '../theme/app_theme.dart';
 import '../services/campus_info_service.dart';
 import 'campus_info_detail_page.dart';
+import 'message_settings_page.dart';
 
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
@@ -73,59 +74,15 @@ class _NotificationPageState extends State<NotificationPage>
   }
 
   /// 切换栏目样式：两套随时互换，立即生效并持久化。
+  /// 消息设置：跳**独立页面**（v1.1.1）。
+  /// 选完返回时无条件重读样式 -> 消息页立即按新样式渲染。
   Future<void> _openStylePicker() async {
-    final picked = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 14),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text('消息栏目样式',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            _styleOption(ctx, StorageService.kMessageStylePlain, '纯白列表',
-                '无卡片边框，行与行之间一条细线（默认）'),
-            _styleOption(ctx, StorageService.kMessageStyleCard, '圆角盒子',
-                '每条消息一个白色圆角卡片'),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
-    if (picked == null || picked == _messageStyle) return;
-    MsgStyle.card = picked == StorageService.kMessageStyleCard;
-    setState(() => _messageStyle = picked);
-    await StorageService.saveMessageStyle(picked);
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const MessageSettingsPage(),
+    ));
+    await _loadMessageStyle();
   }
 
-  Widget _styleOption(BuildContext ctx, String value, String title,
-      String subtitle) {
-    final on = _messageStyle == value;
-    return ListTile(
-      onTap: () => Navigator.of(ctx).pop(value),
-      title: Text(title,
-          style: TextStyle(
-              fontSize: 14.5,
-              fontWeight: on ? FontWeight.w600 : FontWeight.normal)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
-      trailing: on
-          ? Icon(Icons.check_rounded, color: AppTheme.primaryColor, size: 20)
-          : null,
-    );
-  }
 
   @override
   void initState() {
@@ -810,7 +767,9 @@ class _NotificationPageState extends State<NotificationPage>
             : const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: _notices.length + 1,
         separatorBuilder: (_, i) => i < _notices.length - 1
-            ? Divider(height: 1, color: context.borderColor)
+            ? (MsgStyle.card
+                ? const SizedBox.shrink()
+                : Divider(height: 1, color: context.borderColor))
             : const SizedBox.shrink(),
         itemBuilder: (context, index) {
           if (index == _notices.length) {

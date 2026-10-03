@@ -321,7 +321,12 @@ class CourseWeekGrid extends StatelessWidget {
           child: Stack(
             children: [
               if (hasBg) ...[
-                Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
+                // v1.1.1 修复「背景图错位到最右边一列」：Stack 里非 Positioned 的子组件
+                // 会按自身尺寸参与布局，图片按原始分辨率摆 -> 偏移。必须 Positioned.fill 铺满。
+                Positioned.fill(
+                  child:
+                      Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
+                ),
                 ColoredBox(
                   color: surfaceColor.withOpacity(isDark ? 0.70 : 0.55),
                 ),
