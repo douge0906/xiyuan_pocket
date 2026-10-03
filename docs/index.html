@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>掌上锡院 · 无锡学院非官方校园助手</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231F2937'/%3E%3Cpath d='M11 9h10M11 15h10M11 21h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="掌上锡院">
+<meta property="og:title" content="掌上锡院 · 无锡学院非官方校园助手">
+<meta property="og:description" content="课表、成绩、考试变动主动推送到手机；还有食堂速览与试卷库。纯客户端、无广告，也有永久开源的 MIT 版本。">
+<meta property="og:url" content="https://down.wxxydouge.icu/">
+<meta property="og:image" content="https://down.wxxydouge.icu/static/og-cover.png">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="description" content="掌上锡院 —— 无锡学院非官方校园助手。在线版（云端推送 / 食堂速览 / 试卷库）与开源版（纯客户端 · 无服务器 · MIT）双版本，一键下载。">
 <style>
   :root{
@@ -108,6 +116,13 @@
   .tag.solid{background:rgba(31,41,55,.06);border-color:transparent;color:var(--primary)}
 
   h1{font-size:29px;font-weight:700;letter-spacing:.4px;line-height:1.25}
+  .center{text-align:center}
+  .center .actions{justify-content:center}
+  .center .meta{text-align:center}
+  .dl-hint{
+    margin-top:12px;font-size:12.5px;color:var(--text-3);
+    background:rgba(31,41,55,.04);border-radius:10px;padding:8px 12px;display:inline-block;
+  }
   .lead{margin-top:10px;color:var(--text-2);font-size:14.5px}
   .lead b{color:var(--text);font-weight:600}
   .who{margin-top:6px;color:var(--text-3);font-size:12.5px}
@@ -197,19 +212,20 @@
       <!-- ================= 正面：在线版 ================= -->
       <section class="face front">
         <span class="tag solid">在线版 · 云端服务</span>
-        <h1>掌上锡院</h1>
-        <p class="lead">无锡学院非官方校园助手 —— 成绩、考试、课表变动<b>主动推送到你手机</b>，还有食堂速览与试卷库。</p>
-        <p class="who">Android 7.0+ · arm64 · v2.5.2</p>
+        <h1 class="center">掌上锡院</h1>
+        <p class="lead center">无锡学院非官方校园助手 —— 成绩、考试、课表变动<b>主动推送到你手机</b>，还有食堂速览与试卷库。</p>
+        <p class="who center">Android 7.0+ · arm64 · v2.5.2</p>
 
-        <div class="actions">
+        <div class="actions center">
           <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan_toolbox-2.5.2.apk">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
-            下载在线版
+            Download for Android
           </a>
         </div>
-        <p class="meta"><b>14 MB</b> · 更新说明：简单优化用户体验</p>
+        <p class="meta center"><b>14 MB</b> · 更新说明：简单优化用户体验</p>
+        <p class="center"><span class="dl-hint">若浏览器提示「拦截」，点「继续下载」并允许安装未知应用即可</span></p>
 
         <div class="divider"></div>
         <h2>特长</h2>
@@ -244,16 +260,16 @@
       <!-- ================= 背面：开源版 ================= -->
       <section class="face back">
         <span class="tag">开源版 · 纯客户端</span>
-        <h1>掌上锡院</h1>
-        <p class="lead">同一个 App，换成<b>没有服务器</b>的形态 —— 账密只存你手机本地，数据不出设备，全部源码公开。</p>
-        <p class="who">Android 7.0+ · arm64 · v1.0.1 · MIT License</p>
+        <h1 class="center">掌上锡院</h1>
+        <p class="lead center">同一个 App，换成<b>没有服务器</b>的形态 —— 账密只存你手机本地，数据不出设备，全部源码公开。</p>
+        <p class="who center">Android 7.0+ · arm64 · v1.0.1 · MIT License</p>
 
-        <div class="actions">
+        <div class="actions center">
           <a class="btn btn-primary" href="https://static.wxxydouge.icu/static/xiyuan-pocket-v1.0.1.apk">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>
             </svg>
-            下载开源版
+            Download for Android
           </a>
           <a class="btn btn-ghost" href="https://github.com/douge0906/xiyuan_pocket" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
