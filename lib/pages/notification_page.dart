@@ -537,6 +537,8 @@ class _NotificationPageState extends State<NotificationPage>
                           ? const Color(0xFF1E1E1E)
                           : Colors.white,
                       borderRadius: BorderRadius.circular(14),
+                      // v1.1.1：亮白底 + 1px 灰线边框（与学校公告卡一致）
+                      border: Border.all(color: context.borderColor),
                       boxShadow: const [
                         BoxShadow(
                           color: Color(0x0A000000),

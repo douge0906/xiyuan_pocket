@@ -34,7 +34,7 @@ class SchoolNoticeCard extends StatelessWidget {
     return Padding(
       // card 样式：四周留边距 + 圆角外壳；plain：纯白无缝（默认）
       padding: MsgStyle.card
-          ? const EdgeInsets.fromLTRB(14, 0, 14, 12)
+          ? const EdgeInsets.only(bottom: 12)
           : EdgeInsets.zero,
       child: Material(
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
@@ -48,9 +48,10 @@ class SchoolNoticeCard extends StatelessWidget {
                 : const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: MsgStyle.card
                 ? BoxDecoration(
-                    // 显式纯白：之前没给底色，叠在页面底色上看起来「整体发灰」
+                    // v1.1.1：亮白底 + 1px 灰线边框（两者都要，缺一不可）
                     color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: context.borderColor),
                     boxShadow: [
                       BoxShadow(
                         // v2.5.2/v1.1.1 复刻「内部纯白」那版：阴影要很淡（原来 0.04/18/4 偏灰）
