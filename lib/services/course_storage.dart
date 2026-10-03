@@ -263,7 +263,15 @@ class CourseStorage {
     if (raw == null || raw.isEmpty) return base;
     try {
       final j = jsonDecode(raw) as Map<String, dynamic>;
-      return <String, dynamic>{...base, ...j};
+      final merged = <String, dynamic>{...base, ...j};
+      // v1.1.1 一次性迁移：网格线默认开启。老数据里没有标记时（用户此前测试
+      // 关过一次就一直关着，导致课表看不到任何网格线）统一置为开启，只做一次。
+      if (merged['_gridDefaultOn'] != true) {
+        merged['showGridLines'] = true;
+        merged['_gridDefaultOn'] = true;
+        await saveDisplaySettings(merged);
+      }
+      return merged;
     } catch (_) {
       return base; // 损坏则回落默认值，不影响课表可用
     }
