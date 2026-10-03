@@ -72,7 +72,8 @@ class SchoolNoticeCard extends StatelessWidget {
                       Text(
                         notice.title,
                         style: TextStyle(
-                          fontSize: 14,
+                          // v1.1.1 字体对齐在线版：15 / w600 / 行高 1.4（原来 14）
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                           height: 1.4,
                           color: context.textPrimary,

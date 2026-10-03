@@ -558,9 +558,10 @@ class _NotificationPageState extends State<NotificationPage>
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 14,
-                            height: 1.45,
-                            fontWeight: FontWeight.w500,
+                            // v1.1.1 字体对齐在线版：15 / w600 / 行高 1.4（原来 14/w500/1.45）
+                            fontSize: 15,
+                            height: 1.4,
+                            fontWeight: FontWeight.w600,
                             color: context.textPrimary,
                           ),
                         ),
