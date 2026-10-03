@@ -128,12 +128,10 @@
   h1{font-size:29px;font-weight:700;letter-spacing:.4px;line-height:1.25}
   /* 整页居中 */
   .center{text-align:center}
-  .center .actions{justify-content:center}
-  .center .meta{text-align:center}
   /* 只有「特长以上」居中：标题 / 副标题 / 版本行 / 按钮 / 更新说明 / 下载引导 */
   .face .lead,.face .who{text-align:center}
   .face .meta,.face .center{text-align:center}
-  .center .actions{justify-content:center}   /* 按钮行必须显式居中 */
+  .actions.center{justify-content:center}   /* 同元素选择器：class="actions center" */
   /* 历史版本折叠 */
   .history{margin:-10px 0 22px}
   .history>summary{
