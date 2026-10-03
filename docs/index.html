@@ -46,7 +46,7 @@
     display:flex;align-items:center;gap:10px;flex-wrap:wrap;
     /* 关键：子项全部垂直居中，标签不被行高顶偏 */
     background:var(--surface);border:1px solid var(--border);
-    border-radius:14px;padding:10px 16px;margin-bottom:22px;
+    border-radius:14px;padding:9px 16px;margin-bottom:12px;
     box-shadow:0 2px 12px rgba(0,0,0,.03);
   }
   .notice .dot{width:6px;height:6px;border-radius:50%;background:var(--primary);flex:0 0 auto}
@@ -114,7 +114,7 @@
   @media (max-width:720px){ .seg .hint{display:none} }
 
   /* ---------- 翻页舞台 ---------- */
-  .stage{perspective:1800px}
+  .stage{perspective:1800px;margin-top:2px}
   .flip{
     display:grid;transform-style:preserve-3d;
     transition:transform 900ms var(--ease);
@@ -145,7 +145,7 @@
   .face .meta,.face .center{text-align:center}
   .actions.center{justify-content:center}   /* 同元素选择器：class="actions center" */
   /* 历史版本折叠 */
-  .history{margin:-10px 0 22px}
+  .history{margin:-6px 0 14px}
   .history>summary{
     list-style:none;cursor:pointer;font-size:12.5px;color:var(--text-3);
     display:flex;align-items:center;justify-content:center;gap:6px;padding:4px 0;
@@ -430,6 +430,8 @@
     bOss.classList.toggle('on', isOss);
     syncSide(current);
     layout();
+    // 切版本后文字宽度变化（在线版/开源版胶囊）——强制重排，避免胶囊错位
+    requestAnimationFrame(function(){ layout(); });
   }
 
   seg.addEventListener('click', function(e){
