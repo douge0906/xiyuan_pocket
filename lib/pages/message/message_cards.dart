@@ -27,30 +27,17 @@ class SchoolNoticeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // v1.1.0：改为「无缝白底行」外壳（与频道列表统一，用户要求两版一致）：
+    // 去掉卡片圆角/边框/阴影与卡片之间的外边距，行内只留左右 20 / 上下 15 内边距，
+    // 行与行之间由列表的 1px 灰线分隔（见 notification_page 的 _buildSchoolNotices）。
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.zero,
       child: Material(
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: context.borderColor,
-                width: 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  blurRadius: 18,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [

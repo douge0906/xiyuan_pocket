@@ -479,7 +479,8 @@ class _NotificationPageState extends State<NotificationPage>
       color: AppTheme.primaryColor,
       onRefresh: () => _loadChannel(ch.id, force: true),
       child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        // v1.1.0 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: state.items.length,
         separatorBuilder: (_, __) => Divider(
           height: 1,
@@ -490,7 +491,8 @@ class _NotificationPageState extends State<NotificationPage>
           return InkWell(
             onTap: () => _openCampusInfo(ch, it),
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -733,10 +735,14 @@ class _NotificationPageState extends State<NotificationPage>
     return RefreshIndicator(
       onRefresh: () => _refreshNotices(),
       color: AppTheme.textPrimaryLight,
-      child: ListView.builder(
+      child: ListView.separated(
         controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+        // v1.1.0 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: _notices.length + 1,
+        separatorBuilder: (_, i) => i < _notices.length - 1
+            ? Divider(height: 1, color: context.borderColor)
+            : const SizedBox.shrink(),
         itemBuilder: (context, index) {
           if (index == _notices.length) {
             final endReached =
@@ -787,7 +793,9 @@ class _NotificationPageState extends State<NotificationPage>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC),
+      // v1.1.0 无缝白底：消息页整体铺白（用户要求两版统一为连续白底，
+      // 行与行之间仅靠 1px 灰线分隔，不再有卡片缝里露出的浅灰）。
+      backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
       body: SafeArea(
         child: Column(
           children: [
