@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 课程条目白底圆角（10dp），左侧色条由代码填充课程色 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#F5F6F8" />
+    <corners android:radius="10dp" />
+</shape>

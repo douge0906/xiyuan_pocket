@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动背景色：浅色品牌色（v2.2.14 去黑页） -->
+    <color name="launch_bg">#F8F9FC</color>
+    <!-- 应用主色（与 Flutter AppTheme.primaryColor 0xFF1F2937 一致） -->
+    <color name="app_primary">#1F2937</color>
+</resources>

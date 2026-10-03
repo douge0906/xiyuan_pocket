@@ -1,0 +1,87 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+// v2.2.13：release 正式签名（正式 keystore，取代 debug 签名）
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace = "icu.wxxydouge.wxxy_pocket"
+    compileSdk = 35
+    ndkVersion = "28.2.13676358"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled = true
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+                storeFile = file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+            }
+        }
+    }
+
+    defaultConfig {
+        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        applicationId = "icu.wxxydouge.wxxy_pocket"
+        // You can update the following values to match your application needs.
+        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        minSdk = 21
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+        // v1.0.4：只保留 arm64-v8a，移除 armeabi-v7a / x86 / x86_64，
+        // APK 从 ~26MB 降到 ~12MB（现代手机均为 64 位，不影响真实用户）。
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        release {
+            // 开源版（2026-09-22）：有正式签名就用正式签名。
+            //
+            // ⚠️ 仓库不含 keystore（android/key.properties 与 *.jks 均被 .gitignore
+            // 排除）。贡献者 clone 后没有这两个文件 → 自动回退 **debug 签名**，
+            // 保证 `flutter build apk --release` 任何人都能直接构建成功；
+            // 维护者本地有 key.properties → 自动用正式签名发布。
+            signingConfig = keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+
+    // 方案B：恢复 .so 以 DEFLATE 压缩进 APK，显著减小安装包体积
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}

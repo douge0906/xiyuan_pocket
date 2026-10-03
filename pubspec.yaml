@@ -1,0 +1,60 @@
+name: xiyuan_pocket
+description: "掌上锡院 —— 无锡学院校园生活助手"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^2.6.1
+  http: ^1.2.2
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.0.0
+  flutter_local_notifications:
+    path: third_party/flutter_local_notifications
+  timezone: ^0.10.0
+  permission_handler: ^11.3.1
+  url_launcher: ^6.3.0
+  dio: ^5.4.0
+  # 运行时读取真实版本号（值来自下面 flutter 段的 version，编译进 APK）——
+  # 标准做法，避免"手写副本与 pubspec 不一致"（原 lib/version.dart 已删）。
+  #
+  # ⚠️ 必须锁 8.x，别升 9.x（CI 实测踩到）：
+  #   package_info_plus 9.x 的 android/build.gradle 改用新式插件模板
+  #   （`compileSdk = flutter.compileSdkVersion`），该属性要 Flutter 3.29+；
+  #   本项目 Flutter 3.24.3 会直接报
+  #   "Could not get unknown property 'flutter' for extension 'android'"。
+  #   8.3.1 用的是硬编码 `compileSdk 34`，可正常构建。
+  #   注：光看 Min Dart SDK（9.x 标 3.3）看不出这个问题，得看 Android 模板。
+  package_info_plus: ^8.0.0
+  # 验证码识别（本地 CAS 登录需要）：解码图片后做模板匹配。
+  image: ^4.5.0
+  # 桌面小组件数据桥（v1.0.0 铺垫）：Dart ↔ 原生共享存储 + 跨平台刷新入口。
+  # 锁 0.7.0，原因（实测，勿随意改版本）：
+  #  - 0.4.1 的 Dart 代码用老 API `ViewConfiguration(size:)`，Flutter 3.24.3
+  #    已改为 logicalConstraints，AOT 编译直接失败（构建验证已踩到）。
+  #  - 0.9.3+ 要求 Dart >=3.10 / Flutter >=3.38，本项目为 3.5.3 / 3.24.3。
+  #  - 0.9.2+1 会把 androidx.work + coroutines 一并拖进来；0.7.0 原生侧只多
+  #    一个 androidx.glance:glance-appwidget:1.0.0，是兼容版本里最轻的。
+  # 存储契约：SharedPreferences("HomeWidgetPreferences")，key 原样使用。
+  home_widget: 0.7.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # 内置内容快照（首次启动写入本地缓存，消息页秒出内容；
+  # 数据来自服务器此前爬好的教务处公告 + 校园资讯，见 services/seed_data.dart）
+  assets:
+    - assets/seed/app_seed.json
+    # 校园地图（内置图片，1920×1004，见 pages/tools/campus_map_page.dart）
+    - assets/images/campus_map.jpg
+
