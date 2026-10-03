@@ -356,7 +356,9 @@ class CourseWeekGrid extends StatelessWidget {
                       Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
                 ),
                 ColoredBox(
-                  color: surfaceColor.withOpacity(isDark ? 0.70 : 0.55),
+                  // v1.1.1 薄膜加浓（0.55 -> 0.72）：真机上看背景图时时间/日期文字被图案
+                  // 干扰到几乎看不清 —— 盖住底图的同时要保证文字可读。
+                  color: surfaceColor.withOpacity(isDark ? 0.78 : 0.72),
                 ),
               ],
               Column(
