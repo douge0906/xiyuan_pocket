@@ -112,9 +112,7 @@ class CourseTimeCell extends StatelessWidget {
       width: kCourseTimeColWidth,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF202020) : Colors.grey.shade50,
-        border: CourseStorage.showGridLinesCache
-            ? Border(right: BorderSide(color: context.borderColor))
-            : null,
+        // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -164,9 +162,7 @@ class CourseDayCell extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: isToday ? AppTheme.primaryColor.withOpacity(0.04) : (context.surfaceColor),
-            border: CourseStorage.showGridLinesCache
-                ? Border(right: BorderSide(color: context.borderColor))
-                : null,
+            // 右边线由 CourseWeekGrid 的贯穿竖线统一绘制，这里不再画（否则叠成双线）。
           ),
         ),
       ),
@@ -291,6 +287,21 @@ class CourseWeekGrid extends StatelessWidget {
           }
         }
 
+        // v1.1.0：贯穿竖线（对齐在线版）—— 每天一条从上到下的完整竖线 + 时间列右边界。
+        // 此前只有「单元格右边线」，被横线打断成一段段，两版观感不一致（用户反馈）。
+        final gridLines = <Widget>[];
+        if (CourseStorage.showGridLinesCache) {
+          final lineColor = isDark ? Colors.grey.shade600 : Colors.grey.shade300;
+          for (int c = 0; c < 7; c++) {
+            gridLines.add(Positioned(
+              top: 0,
+              bottom: 0,
+              left: kCourseTimeColWidth + c * dayWidth,
+              child: Container(width: 1.0, color: lineColor),
+            ));
+          }
+        }
+
         return Container(
           color: surfaceColor,
           child: Stack(
@@ -315,6 +326,7 @@ class CourseWeekGrid extends StatelessWidget {
                 ],
               ),
               ...overlays,
+              ...gridLines,
             ],
           ),
         );
