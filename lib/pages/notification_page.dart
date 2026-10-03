@@ -4,7 +4,9 @@ import '../models/notice_channel.dart';
 import '../models/message_read_storage.dart';
 import '../models/school_notice.dart';
 import '../services/notice_channel_service.dart';
+import '../services/storage_service.dart';
 import '../services/school_notice_service.dart';
+import 'message/msg_style.dart';
 import 'message/message_cards.dart';
 import 'school_notice_detail_page.dart';
 import '../theme/app_theme.dart';
@@ -60,9 +62,75 @@ class _NotificationPageState extends State<NotificationPage>
   /// 左右滑动切换列表（v1.6.0）。页面顺序与 chip 顺序一致（见 _allTabs）。
   final PageController _tabPageController = PageController(initialPage: 1);
 
+  // ---------------- 消息栏目样式（两套，默认纯白） ----------------
+  String _messageStyle = StorageService.kMessageStylePlain;
+
+  Future<void> _loadMessageStyle() async {
+    final s = await StorageService.loadMessageStyle();
+    MsgStyle.card = s == StorageService.kMessageStyleCard;
+    if (!mounted || s == _messageStyle) return;
+    setState(() => _messageStyle = s);
+  }
+
+  /// 切换栏目样式：两套随时互换，立即生效并持久化。
+  Future<void> _openStylePicker() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 14),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text('消息栏目样式',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            _styleOption(ctx, StorageService.kMessageStylePlain, '纯白列表',
+                '无卡片边框，行与行之间一条细线（默认）'),
+            _styleOption(ctx, StorageService.kMessageStyleCard, '圆角盒子',
+                '每条消息一个白色圆角卡片'),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || picked == _messageStyle) return;
+    MsgStyle.card = picked == StorageService.kMessageStyleCard;
+    setState(() => _messageStyle = picked);
+    await StorageService.saveMessageStyle(picked);
+  }
+
+  Widget _styleOption(BuildContext ctx, String value, String title,
+      String subtitle) {
+    final on = _messageStyle == value;
+    return ListTile(
+      onTap: () => Navigator.of(ctx).pop(value),
+      title: Text(title,
+          style: TextStyle(
+              fontSize: 14.5,
+              fontWeight: on ? FontWeight.w600 : FontWeight.normal)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      trailing: on
+          ? Icon(Icons.check_rounded, color: AppTheme.primaryColor, size: 20)
+          : null,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadMessageStyle();
     _scrollController.addListener(_onScroll);
     _loadReadIds();
     _initSchoolNotices();
@@ -291,11 +359,8 @@ class _NotificationPageState extends State<NotificationPage>
               ),
           ),
           GestureDetector(
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('消息设置开发中')),
-              );
-            },
+            // v1.1.0：消息设置 = 切换栏目样式（纯白列表 / 圆角盒子）
+            onTap: _openStylePicker,
             child: Container(
               width: 40,
               height: 40,
@@ -480,7 +545,9 @@ class _NotificationPageState extends State<NotificationPage>
       onRefresh: () => _loadChannel(ch.id, force: true),
       child: ListView.separated(
         // v1.1.0 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
-        padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+        padding: MsgStyle.card
+            ? const EdgeInsets.fromLTRB(14, 10, 14, 24)
+            : const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: state.items.length,
         separatorBuilder: (_, __) => Divider(
           height: 1,
@@ -738,7 +805,9 @@ class _NotificationPageState extends State<NotificationPage>
       child: ListView.separated(
         controller: _scrollController,
         // v1.1.0 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
-        padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+        padding: MsgStyle.card
+            ? const EdgeInsets.fromLTRB(14, 10, 14, 24)
+            : const EdgeInsets.fromLTRB(0, 4, 0, 24),
         itemCount: _notices.length + 1,
         separatorBuilder: (_, i) => i < _notices.length - 1
             ? Divider(height: 1, color: context.borderColor)

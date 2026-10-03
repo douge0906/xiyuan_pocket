@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/school_notice.dart';
 import '../../theme/app_theme.dart';
+import 'msg_style.dart';
 
 /// 消息中心列表卡片。
 ///
@@ -31,13 +32,33 @@ class SchoolNoticeCard extends StatelessWidget {
     // 去掉卡片圆角/边框/阴影与卡片之间的外边距，行内只留左右 20 / 上下 15 内边距，
     // 行与行之间由列表的 1px 灰线分隔（见 notification_page 的 _buildSchoolNotices）。
     return Padding(
-      padding: EdgeInsets.zero,
+      // card 样式：四周留边距 + 圆角外壳；plain：纯白无缝（默认）
+      padding: MsgStyle.card
+          ? const EdgeInsets.fromLTRB(14, 0, 14, 12)
+          : EdgeInsets.zero,
       child: Material(
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: MsgStyle.card ? BorderRadius.circular(20) : null,
+        clipBehavior: MsgStyle.card ? Clip.antiAlias : Clip.none,
         child: InkWell(
           onTap: onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            padding: MsgStyle.card
+                ? const EdgeInsets.all(18)
+                : const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+            decoration: MsgStyle.card
+                ? BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: context.borderColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 18,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  )
+                : null,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [

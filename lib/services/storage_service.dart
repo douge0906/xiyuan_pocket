@@ -258,4 +258,20 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kCardBalanceCache);
   }
+
+  // ---------------- 消息页栏目样式（v1.1.0） ----------------
+  // 两套样式随时可切：'plain' 纯白无缝（默认）/ 'card' 圆角盒子。
+  static const String _kMessageStyle = 'message_style';
+  static const String kMessageStylePlain = 'plain';
+  static const String kMessageStyleCard = 'card';
+
+  static Future<String> loadMessageStyle() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kMessageStyle) ?? kMessageStylePlain;
+  }
+
+  static Future<void> saveMessageStyle(String style) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kMessageStyle, style);
+  }
 }
