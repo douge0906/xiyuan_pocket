@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../models/message.dart';
 import '../models/message_read_storage.dart';
+import 'message_channel_service.dart';
 import 'message_source.dart';
-import 'notice_channel_service.dart';
 import 'sources/cached_source.dart';
 import 'sources/campus_source.dart';
 import 'sources/jwc_source.dart';
@@ -102,16 +102,18 @@ class MessageRepository extends ChangeNotifier {
 
   // ---------------- 源注册表 ----------------
 
-  /// 注册全部消息源：教务处 + 用户订阅的校园资讯栏目。
+  /// 注册全部**已订阅**的消息源。
   ///
   /// 【所有源一律平等】教务处也在**订阅集合**里 —— 它只是默认订阅，
   /// 用户一样可以关掉。所以这里读的是 [subscribedIds]，不含"内置特权"。
+  ///
+  /// 返回 `[]` 是完全合法的状态（用户把所有栏目都关掉了），
+  /// 页面必须能显示「还没订阅任何栏目」的空态，不能崩。
   Future<List<MessageSource>> registerSources({Set<String>? subscribedIds}) async {
-    final ids = subscribedIds ?? await NoticeChannelService.loadSubscribed();
-    final catalog = await NoticeChannelService.loadCatalog();
+    final ids = subscribedIds ?? await MessageChannelService.loadSubscribed();
     _sources.clear();
-    _addSource(_jwc);
-    for (final ch in catalog.channels) {
+    if (ids.contains(kJwcChannelId)) _addSource(_jwc);
+    for (final ch in MessageChannelService.campusChannels) {
       if (!ids.contains(ch.id)) continue;
       _addSource(CampusSource(columnId: ch.id, columnName: ch.name));
     }

@@ -5,6 +5,19 @@ import '../message_detail_cache.dart';
 import '../message_source.dart';
 import 'cached_source.dart';
 
+/// 教务处的渠道描述符 —— 独立成常量，让「订阅目录」与「消息源」共用同一份
+/// 定义，不必两处各写一遍（写两遍就一定会漂）。
+const MessageChannel kJwcChannel = MessageChannel(
+  id: kJwcChannelId,
+  name: '教务处',
+  desc: '教务处通知公告',
+  defaultSubscribed: true,
+  badge: '教务处',
+  // 教务处保留「发布日期 ≥ 基准线才算新公告」的未读语义：
+  // 早于用户首次打开公告页那天的旧公告，不该永远挂着红点。
+  usesUnreadBaseline: true,
+);
+
 /// 教务处公告源 —— 默认订阅、排在第一位。
 ///
 /// 本类**只回答「怎么抓」**（[fetchIncremental] / [fetchFull] / [fetchDetail]），
@@ -17,16 +30,7 @@ class JwcSource extends CachedMessageSource {
   JwcSource();
 
   @override
-  MessageChannel get channel => const MessageChannel(
-        id: kJwcChannelId,
-        name: '教务处',
-        desc: '教务处通知公告',
-        defaultSubscribed: true,
-        badge: '教务处',
-        // 教务处保留「发布日期 ≥ 基准线才算新公告」的未读语义：
-        // 早于用户首次打开公告页那天的旧公告，不该永远挂着红点。
-        usesUnreadBaseline: true,
-      );
+  MessageChannel get channel => kJwcChannel;
 
   @override
   String get displayName => '教务处';
