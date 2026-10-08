@@ -223,6 +223,46 @@
     h1{font-size:24px}
     .actions .btn{width:100%;justify-content:center}
   }
+
+  /* ---------- 界面预览（在线版 / 开源版共用同一套） ---------- */
+  .shots{margin-top:32px}
+  .shots-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+  .shots-head h2{margin-bottom:0}
+  .shots-hint{
+    display:flex;align-items:center;gap:4px;
+    font-size:11.5px;color:var(--text-3);white-space:nowrap;
+  }
+  .shots-hint svg{width:13px;height:13px}
+  /* 横向滚动轨道：抓屏对齐，隐藏滚动条，保留惯性滑动 */
+  .shots-track{
+    display:flex;gap:16px;padding:18px 2px 22px;
+    overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;-ms-overflow-style:none;
+  }
+  .shots-track::-webkit-scrollbar{display:none}
+  .shot{
+    flex:0 0 auto;margin:0;scroll-snap-align:center;
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+  }
+  /* 手机样机：圆角 + 细描边 + 柔和投影，与全站卡片语言一致 */
+  .phone{
+    border-radius:20px;overflow:hidden;background:var(--surface);
+    border:1px solid var(--border);
+    box-shadow:0 8px 26px rgba(17,24,39,.09);
+    transition:transform 320ms var(--ease),box-shadow 320ms var(--ease);
+  }
+  .phone img{display:block;height:392px;width:auto;max-width:none}
+  .shot figcaption{font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:.3px}
+  /* 只有真正支持悬停的设备才做上浮，避免触屏上「粘住」 */
+  @media (hover:hover){
+    .shot:hover .phone{transform:translateY(-5px);box-shadow:0 16px 36px rgba(17,24,39,.15)}
+  }
+  @media (max-width:560px){
+    .shots{margin-top:26px}
+    .shots-track{gap:12px;padding:14px 2px 18px}
+    .phone img{height:318px}
+  }
 </style>
 </head>
 <body>
@@ -366,6 +406,46 @@
     </div>
   </div>
 
+  <!-- ================= 界面预览（在线版 / 开源版暂共用同一套） ================= -->
+  <section class="shots">
+    <div class="shots-head">
+      <h2>界面预览</h2>
+      <span class="shots-hint">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        左右滑动
+      </span>
+    </div>
+    <div class="shots-track">
+      <figure class="shot">
+        <div class="phone"><img src="shots/01-schedule.jpg" alt="课表" loading="lazy"></div>
+        <figcaption>课表</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/02-today.jpg" alt="今日概览" loading="lazy"></div>
+        <figcaption>今日概览</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/03-message.jpg" alt="消息通知" loading="lazy"></div>
+        <figcaption>消息通知</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/04-grade.jpg" alt="成绩查询" loading="lazy"></div>
+        <figcaption>成绩查询</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/05-textbook.jpg" alt="我的教材" loading="lazy"></div>
+        <figcaption>我的教材</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/06-service.jpg" alt="服务" loading="lazy"></div>
+        <figcaption>服务</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><img src="shots/07-login.jpg" alt="统一身份认证" loading="lazy"></div>
+        <figcaption>统一身份认证</figcaption>
+      </figure>
+    </div>
+  </section>
 
   <div class="pagefoot">
     <p>掌上锡院 · 无锡学院非官方校园助手</p>
