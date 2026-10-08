@@ -40,6 +40,16 @@ class FakeSource extends CachedMessageSource {
 
   int archiveUpdatedCallbacks = 0;
 
+  /// 抓增量**之前**先跑一下（测试用来"取现场"）。
+  ///
+  /// 用途：验证「铺档案」那一趟真的跑在联网那趟**之前** ——
+  /// 在 `fetchIncremental` 里读 `repo.stateOf(id).items.length`，
+  /// 铺过就是档案条数，没铺就是 0。
+  void Function()? beforeIncremental;
+
+  /// 让增量"慢慢来"，用来测计时与更新条会不会在等待期间一直亮着。
+  Duration incrementalDelay = Duration.zero;
+
   FakeSource(this.channel) {
     onArchiveUpdated = () => archiveUpdatedCallbacks++;
   }
@@ -52,7 +62,11 @@ class FakeSource extends CachedMessageSource {
 
   @override
   Future<List<Message>?> fetchIncremental() async {
+    beforeIncremental?.call();
     incrementalCalls++;
+    if (incrementalDelay > Duration.zero) {
+      await Future<void>.delayed(incrementalDelay);
+    }
     if (throwOnIncremental) throw const CampusFetchException('fake://inc');
     return nextIncremental;
   }
@@ -749,6 +763,217 @@ void main() {
 
       expect(repo.loadedCounts.map((e) => e.name).toList(), ['源A', '源B']);
       expect(repo.loadedTotal, 40, reason: '每源各 20 条（b 的 50 条被设置截到 20）');
+
+      repo.dispose();
+    });
+  });
+
+  group('【总的更新】一次性更新全部源', () {
+    const aId = 'a';
+    const bId = 'b';
+    late FakeSource a;
+    late FakeSource b;
+    late MessageRepository repo;
+
+    setUp(() async {
+      await StorageService.saveMessageSyncCount(20);
+      a = FakeSource(const MessageChannel(id: aId, name: '源A'));
+      b = FakeSource(const MessageChannel(id: bId, name: '源B'));
+      repo = MessageRepository();
+      repo.debugRegisterSource(a);
+      repo.debugRegisterSource(b);
+    });
+
+    tearDown(() => repo.dispose());
+
+    test('🔴 联网更新之前，**所有**页签的内容都已经铺好了', () async {
+      // 需求原文：「不要点一个更新一个」。用户切到第 2 个页签时必须
+      // 立刻有内容，而不是现等一次网络。
+      await MessageArchive.save(aId, msgs(aId, 1, 20));
+      await MessageArchive.save(bId, msgs(bId, 1, 20));
+
+      final seen = <String, int>{};
+      a.beforeIncremental = () => seen[aId] = repo.stateOf(aId).items.length;
+      b.beforeIncremental = () => seen[bId] = repo.stateOf(bId).items.length;
+
+      await repo.syncAll();
+
+      expect(seen[aId], 20, reason: '联网之前第 1 个页签就该有内容');
+      expect(seen[bId], 20,
+          reason: '🔴 第 2 个页签也要铺好 —— 不能等轮到它才加载');
+      expect(a.fullCalls + b.fullCalls, 0, reason: '档案够用，不该全量重爬');
+      expect(a.incrementalCalls, 1);
+      expect(b.incrementalCalls, 1);
+    });
+
+    test('铺档案那趟**不联网**（各源只发一次请求）', () async {
+      await MessageArchive.save(aId, msgs(aId, 1, 20));
+      await MessageArchive.save(bId, msgs(bId, 1, 20));
+
+      await repo.syncAll();
+
+      // 只做了「一眼看有没有新的」那一次；若铺档案顺手也去抓，
+      // 这里会是 2（每源多一次），对校方站点就是白打一倍请求。
+      expect(a.incrementalCalls, 1);
+      expect(b.incrementalCalls, 1);
+      expect(a.fullCalls, 0);
+      expect(b.fullCalls, 0);
+    });
+
+    test('空档案不铺，留给联网那趟去抓（且只抓一次）', () async {
+      await MessageArchive.save(aId, msgs(aId, 1, 20));
+      b.nextFull = msgs(bId, 1, 20); // b 是全新安装：档案为空
+
+      await repo.syncAll();
+
+      expect(a.fullCalls, 0, reason: 'a 有档案，走增量');
+      expect(a.incrementalCalls, 1);
+      expect(b.fullCalls, 1, reason: 'b 档案为空 → 兜底全量抓一次');
+      expect(b.incrementalCalls, 0,
+          reason: '🔴 不能在「铺档案」那趟先白抓一次，再由联网那趟抓一次');
+      expect(repo.stateOf(bId).items.length, 20);
+    });
+
+    test('两个页签的加载完成提示只弹一次（不是每源弹一次）', () async {
+      await MessageArchive.save(aId, msgs(aId, 1, 20));
+      await MessageArchive.save(bId, msgs(bId, 1, 20));
+
+      await repo.syncAll();
+
+      // loadSeq 是「非静默加载完成」的次数；界面靠它弹提示。
+      // 铺档案是 silent 的，所以这里应当是 2（两个源各一次联网更新），
+      // 而不是 4（每源两次）—— 否则提示会连着闪两轮。
+      expect(repo.loadSeq, 2);
+      expect(repo.loadedCounts.map((e) => e.name).toList(), ['源A', '源B']);
+      expect(repo.loadedTotal, 40);
+    });
+
+    test('没有任何源 → 直接收工，不亮更新条（不能闪一下 0/0）', () async {
+      final empty = MessageRepository();
+
+      final done = await empty.refreshAll(mode: FetchMode.full);
+      expect(done, 0);
+      expect(empty.refreshProgress, isNull);
+      expect(empty.isBusy, isFalse);
+
+      empty.dispose();
+    });
+  });
+
+  group('更新条与计时', () {
+    setUp(() async {
+      // 目标 = 档案条数 ⇒ `_needsFill` 为假 ⇒ 走**增量**那条路。
+      // 不显式设的话默认 40 > 档案 20，会变成「补齐」，链路就不是这里要测的了。
+      await StorageService.saveMessageSyncCount(20);
+    });
+
+    test('更新条在整批期间一直亮着，跑完立刻灭', () async {
+      final a = FakeSource(const MessageChannel(id: 'a', name: '源A'));
+      await MessageArchive.save('a', msgs('a', 1, 20));
+      a.incrementalDelay = const Duration(milliseconds: 800);
+      final repo = MessageRepository();
+      repo.debugRegisterSource(a);
+
+      final f = repo.refreshAll(mode: FetchMode.incremental);
+
+      // ⚠️ 这里**不能**断言「第一个源还没进入 loading 就已经为忙」——
+      // `refreshAll` 是 async，"记进度" 到 "第一个源置 loading" 之间没有任何
+      // await，中间那一刻界面渲染不出来。写那种断言是自我安慰，变异测试
+      // 一下就会露（实测：把 isBusy 改成只看 isLoading，那条断言照样过）。
+      expect(repo.isBusy, isTrue);
+      expect(repo.refreshProgress, (done: 0, total: 1));
+
+      await waitUntil(() => repo.busyElapsed.inMilliseconds >= 500,
+          timeout: const Duration(seconds: 3));
+      expect(repo.isBusy, isTrue, reason: '整批期间更新条必须一直亮着');
+
+      await f;
+      expect(repo.isBusy, isFalse, reason: '跑完必须立刻灭');
+      expect(repo.refreshProgress, isNull, reason: '进度也要清掉');
+
+      repo.dispose();
+    });
+
+    test('单源加载也走同一条更新条（不是只有批量才亮）', () async {
+      final a = FakeSource(const MessageChannel(id: 'a', name: '源A'));
+      await MessageArchive.save('a', msgs('a', 1, 20));
+      a.incrementalDelay = const Duration(milliseconds: 500);
+      final repo = MessageRepository();
+      repo.debugRegisterSource(a);
+
+      final f = repo.load('a', mode: FetchMode.incremental);
+      // 没有批量进度 —— 界面会画成不确定进度（来回扫），但计时照走。
+      expect(repo.isBusy, isTrue);
+      expect(repo.refreshProgress, isNull, reason: '单源加载没有 done/total');
+
+      await waitUntil(() => repo.busyElapsed.inMilliseconds >= 300,
+          timeout: const Duration(seconds: 3));
+      await f;
+      expect(repo.isBusy, isFalse);
+
+      repo.dispose();
+    });
+
+    test('🔴 计时要真的在走：请求挂住 1.2 秒，秒表就得走到 1 秒以上', () async {
+      final a = FakeSource(const MessageChannel(id: 'a', name: '源A'));
+      await MessageArchive.save('a', msgs('a', 1, 20));
+      a.incrementalDelay = const Duration(milliseconds: 1200);
+      final repo = MessageRepository();
+      repo.debugRegisterSource(a);
+
+      final f = repo.load('a', mode: FetchMode.incremental);
+      await waitUntil(() => repo.busyElapsed.inMilliseconds >= 1000,
+          timeout: const Duration(seconds: 3));
+
+      expect(repo.busyElapsed.inMilliseconds, greaterThanOrEqualTo(1000),
+          reason: '秒表要在等待期间一直往前跑');
+      expect(repo.isBusy, isTrue, reason: '这段时间更新条应当还亮着');
+
+      await f;
+      repo.dispose();
+    });
+
+    test('忙完自动归零（不用谁去手动停表）', () async {
+      final a = FakeSource(const MessageChannel(id: 'a', name: '源A'));
+      await MessageArchive.save('a', msgs('a', 1, 20));
+      final repo = MessageRepository();
+      repo.debugRegisterSource(a);
+
+      await repo.load('a', mode: FetchMode.archive);
+      expect(repo.busyElapsed, greaterThan(Duration.zero),
+          reason: '刚忙过，秒表上应当有数');
+      expect(repo.isBusy, isFalse);
+
+      // 收工是靠秒表自己每秒看一眼判定的，所以最多等一拍。
+      await waitUntil(() => repo.busyElapsed == Duration.zero,
+          timeout: const Duration(seconds: 3));
+
+      repo.dispose();
+    });
+
+    test('一串串行的源属于**同一次**更新，计时不重开', () async {
+      final a = FakeSource(const MessageChannel(id: 'a', name: '源A'));
+      final b = FakeSource(const MessageChannel(id: 'b', name: '源B'));
+      await MessageArchive.save('a', msgs('a', 1, 20));
+      await MessageArchive.save('b', msgs('b', 1, 20));
+      a.incrementalDelay = const Duration(milliseconds: 700);
+      b.incrementalDelay = const Duration(milliseconds: 700);
+      final repo = MessageRepository();
+      repo.debugRegisterSource(a);
+      repo.debugRegisterSource(b);
+
+      final f = repo.refreshAll(mode: FetchMode.incremental);
+      await waitUntil(() => a.incrementalCalls == 1);
+      final afterFirst = repo.busyElapsed;
+      await waitUntil(() => b.incrementalCalls == 1);
+      await waitUntil(() => repo.busyElapsed > afterFirst,
+          timeout: const Duration(seconds: 3));
+      await f;
+
+      // 两个源各 700ms ⇒ 合计 ≥1.4s。若每个源都把秒表重开，
+      // 秒数就会永远停在 0~1 秒 —— 用户看到的「计时」就是假的。
+      expect(repo.busyElapsed.inMilliseconds, greaterThanOrEqualTo(1300),
+          reason: '计时必须连着算，不能每换一个源就跳回 0');
 
       repo.dispose();
     });

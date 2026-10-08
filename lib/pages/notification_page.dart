@@ -142,11 +142,15 @@ class _NotificationPageState extends State<NotificationPage>
     return (headline: '共 $total 条', detail: parts.join(' · '));
   }
 
-  /// 首屏：读设置 → 读已读状态 → 读订阅集合 → 注册源 → 选中第一个页签。
+  /// 首屏：读设置 → 读已读状态 → 读订阅集合 → 注册源 → **一次性更新全部源**。
   ///
-  /// 🔴 [MessageRepository.initSettings] 必须在 [MessageRepository.setActive]
-  /// **之前**跑完：`setActive` 按「每次进入自动更新」决定第一次加载走不走网络，
-  /// 设置还没读进来时它会拿着默认值做决定（关掉开关的用户照样被联网）。
+  /// 🔴 [MessageRepository.initSettings] 必须在加载**之前**跑完：
+  /// 「每次进入自动更新」决定要不要联网，设置还没读进来时它会拿着默认值
+  /// 做决定（关掉开关的用户照样被联网）。
+  ///
+  /// 🔴 这里用 `loadIfNeeded: false` + [MessageRepository.syncAll]：
+  /// 选中第一个页签只是**定页签**，加载由批量更新统一负责 ——
+  /// 两边都加载的话第一个源会被白跑两趟。
   Future<void> _boot() async {
     await _repo.initSettings();
     await _repo.initReadState();
@@ -159,8 +163,23 @@ class _NotificationPageState extends State<NotificationPage>
       _booting = false;
     });
     final tabs = _tabs;
-    if (tabs.isNotEmpty) _repo.setActive(tabs.first.id);
+    if (tabs.isEmpty) return;
+    // 只定页签，不单独加载 —— 下面的批量更新会把**所有**页签都铺好。
+    _repo.setActive(tabs.first.id, loadIfNeeded: false);
+    unawaited(_refreshFromEntry());
   }
+
+  /// 进页面时的更新。
+  ///
+  /// - 「每次进入自动更新」开（默认）→ [MessageRepository.syncAll]：
+  ///   铺档案 + 串行联网更新全部源，界面出一条总的更新条。
+  /// - 关 → 只读档案（[FetchMode.archive]），**档案为空才兜底抓一次**
+  ///   （否则全新安装的用户面对一个空页面，且怎么点都没有内容）。
+  ///
+  /// 两条路都会亮同一条更新条、走同一套计时 —— 只是抓不抓网络不同。
+  Future<void> _refreshFromEntry() => _repo.autoRefresh
+      ? _repo.syncAll()
+      : _repo.refreshAll(mode: FetchMode.archive);
 
   @override
   void dispose() {
@@ -211,6 +230,10 @@ class _NotificationPageState extends State<NotificationPage>
     if (!mounted) return;
     setState(() => _subscribedIds = picked);
     _syncActiveTab();
+    // 新勾上的栏目还是空的（从没加载过）—— 顺手走一次总的更新，别让用户
+    // 切过去看到一个转圈。取消订阅不会走到这里造成多余请求：注册表里已经
+    // 没有那个源了。
+    unawaited(_refreshFromEntry());
   }
 
   /// 让「当前页签」始终有效：被取消订阅后落到第一个栏目。
@@ -462,8 +485,11 @@ class _NotificationPageState extends State<NotificationPage>
 
     return RefreshIndicator(
       color: AppTheme.primaryColor,
-      // 下拉刷新 = **增量**（只问一句「有没有新的」），不是全量重爬。
-      onRefresh: () => _repo.load(ch.id, mode: FetchMode.incremental),
+      // 下拉刷新 = **更新全部**（不是只更新当前这一个页签）。
+      // 理由：更新条只有一条、进度是「N 个源里的第几个」，单刷一个源时
+      // 那条进度只会显示 1/1 —— 与「总的更新」这个概念自相矛盾。
+      // 另外它**不受「每次进入自动更新」影响** —— 那是用户的明确动作。
+      onRefresh: () => _repo.syncAll(),
       child: ListView.separated(
         // 内容不足一屏时也要能下拉刷新
         physics: const AlwaysScrollableScrollPhysics(),
@@ -609,100 +635,204 @@ class _NotificationPageState extends State<NotificationPage>
         ),
       );
 
-  // ---------------- 加载条 / 累计条数提示 ----------------
+  // ---------------- 总的更新条 / 轻量提示 ----------------
 
-  /// 顶部加载条 —— **每次加载都会出现**（这正是本轮要找回的东西）。
+  /// **一条**总的更新条，浮在列表底部（**不占布局**，出现消失都不抖）。
   ///
-  /// 高度**恒定 4px**（含 1px 间隔），不加载时它是一条空槽：
-  /// 所以「出现 / 消失」都不会让下面的列表往上蹿一格。
-  /// 之前它是在 `Column` 里按需插入/移除的，于是每次加载列表都要跳一下 ——
-  /// 这种抖动比进度条本身更容易被看成 bug。
+  /// 为什么不放在顶部：它要带文字（`正在更新 3/5 · 12s`）。顶部的文字条会
+  /// 把下面的列表整体推下去，每次更新都蹿一格；底部浮层则完全不动布局，
+  /// 而且能和「更新完成」的提示**共用同一个位置**，视觉上是同一条东西
+  /// 从「进行中」变成「已完成」，而不是两个东西一进一出。
   ///
-  /// 两种形态：
-  /// - 强刷全部源（改了同步条数）→ **确定性**进度，按 `done / total` 走
-  /// - 单个源加载 → 不确定进度（来回跑），因为单源内部无法报告细粒度进度
-  Widget _buildLoadingBar() {
-    final p = _repo.refreshProgress;
-    final active = p != null || _repo.isLoading;
-    // total 为 0 时按「已跑完」画（否则会除零 → NaN → 进度条不显示）。
-    final double? value =
-        p == null ? null : (p.total <= 0 ? 1.0 : p.done / p.total);
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: 3,
-          child: active
-              ? LinearProgressIndicator(
-                  value: value,
-                  minHeight: 3,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    AppTheme.primaryColor,
-                  ),
-                )
-              : const SizedBox.expand(),
-        ),
-        const SizedBox(height: 1),
-      ],
-    );
-  }
-
-  /// 「累计加载条数」渐隐提示：浮在列表底部，**不占布局**。
-  Widget _buildCountNotice() {
+  /// 两个状态共用外层容器，靠 [AnimatedOpacity] / [AnimatedSlide] 过渡。
+  Widget _buildStatusBar() {
+    final busy = _repo.isBusy;
     final data = _noticeData;
+    final showNotice = !busy && _noticeVisible && data != null;
+
     return AnimatedOpacity(
-      opacity: (_noticeVisible && data != null) ? 1 : 0,
-      duration: const Duration(milliseconds: 450),
+      opacity: (busy || showNotice) ? 1 : 0,
+      duration: const Duration(milliseconds: 320),
       curve: Curves.easeOut,
       child: AnimatedSlide(
-        offset: (_noticeVisible && data != null)
-            ? Offset.zero
-            : const Offset(0, 0.35),
-        duration: const Duration(milliseconds: 450),
+        offset: (busy || showNotice) ? Offset.zero : const Offset(0, 0.4),
+        duration: const Duration(milliseconds: 320),
         curve: Curves.easeOut,
-        child: data == null
-            ? const SizedBox.shrink()
-            : Center(child: _noticePill(data)),
+        child: busy
+            ? Center(child: _syncPill())
+            : (data == null
+                ? const SizedBox.shrink()
+                : Center(child: _noticePill(data))),
       ),
     );
   }
 
-  /// 提示气泡：半透明深底 + 白字 —— 两种主题下都清楚，不必各写一套配色。
-  Widget _noticePill(({String headline, String? detail}) data) => Container(
-        constraints: const BoxConstraints(maxWidth: 340),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.78),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              data.headline,
-              style: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+  /// 状态一：**更新中**。左侧小进度环 + 文案 + 计时，底下一条细进度。
+  ///
+  /// 宽度**固定**：`正在更新 3/5` 的位数会变（1/5 → 10/5 之类），
+  /// 让它自适应宽度的话下面那条细进度会跟着一会儿长一会儿短，很跳。
+  Widget _syncPill() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final p = _repo.refreshProgress;
+    // 没有批量进度（单源加载）→ 不确定进度。total<=0 按跑完画，免得除零。
+    final double? value =
+        p == null ? null : (p.total <= 0 ? 1.0 : (p.done / p.total).clamp(0, 1));
+    final label = p == null ? '更新中' : '更新中 ${p.done}/${p.total}';
+
+    return Container(
+      width: 214,
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xF21E1E1E) : const Color(0xF2FFFFFF),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: context.borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.30 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              _progressRing(value),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: context.textPrimary,
+                  ),
+                ),
               ),
-            ),
-            if (data.detail != null) ...[
-              const SizedBox(height: 3),
+              const SizedBox(width: 6),
               Text(
-                data.detail!,
-                textAlign: TextAlign.center,
+                _formatElapsed(_repo.busyElapsed),
                 style: TextStyle(
                   fontSize: 11.5,
-                  height: 1.35,
-                  color: Colors.white.withOpacity(0.75),
+                  // 等宽数字：秒数从 9s → 10s 时宽度不变，不会把左边的
+                  // 文案挤得抖一下。
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: context.textTertiary,
                 ),
               ),
             ],
-          ],
+          ),
+          const SizedBox(height: 8),
+          // 内嵌细进度条：**确定性**时按 done/total 填充，否则来回扫。
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: SizedBox(
+              height: 3,
+              child: LinearProgressIndicator(
+                value: value,
+                minHeight: 3,
+                backgroundColor: AppTheme.primaryColor.withOpacity(0.12),
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 左侧那个小环：有 `value` 就是**确定性**进度环（数值变化带补间动画），
+  /// 没有就是不确定的转圈。
+  Widget _progressRing(double? value) {
+    const size = 15.0;
+    if (value == null) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
         ),
       );
+    }
+    // 直接给 CircularProgressIndicator 换 value 是**瞬变**的，
+    // 五个源就是五次硬跳；补间一下才像「在走」。
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: value),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      builder: (_, v, __) => SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          value: v,
+          strokeCap: StrokeCap.round,
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
+        ),
+      ),
+    );
+  }
+
+  /// `12s` / `1:05` / `12:03`。
+  static String _formatElapsed(Duration d) {
+    final s = d.inSeconds;
+    if (s < 60) return '${s}s';
+    final m = s ~/ 60;
+    final r = s % 60;
+    if (m < 60) return '$m:${r.toString().padLeft(2, '0')}';
+    return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// 状态二：**更新完成**的轻量提示。
+  ///
+  /// 刻意做得比「更新中」轻：一行、字号更小、浅底 + 细边 + 几乎没有阴影。
+  /// 它的职责只是「告诉用户拿到了多少条」，不该像弹窗一样抢注意力。
+  Widget _noticePill(({String headline, String? detail}) data) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 340),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xE61E1E1E) : const Color(0xE6FFFFFF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_rounded, size: 13, color: AppTheme.primaryColor),
+          const SizedBox(width: 5),
+          Text(
+            data.headline,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              color: context.textSecondary,
+            ),
+          ),
+          if (data.detail != null) ...[
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                data.detail!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11.5, color: context.textTertiary),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -721,7 +851,7 @@ class _NotificationPageState extends State<NotificationPage>
                 const SizedBox(height: 12),
                 _buildFilterChips(),
                 _buildSearchBox(isDark),
-                _buildLoadingBar(),
+                const SizedBox(height: 4),
                 Expanded(
                   child: _booting
                       ? const Center(
@@ -738,12 +868,13 @@ class _NotificationPageState extends State<NotificationPage>
                 ),
               ],
             ),
-            // 浮层：`IgnorePointer` 保证它绝不抢列表的点击（它只是个提示）。
+            // 浮层：`IgnorePointer` 保证它绝不抢列表的点击 —— 它只是个状态条，
+            // 更新中也不该挡着用户去点列表。
             Positioned(
               left: 0,
               right: 0,
               bottom: 20,
-              child: IgnorePointer(child: _buildCountNotice()),
+              child: IgnorePointer(child: _buildStatusBar()),
             ),
           ],
         ),

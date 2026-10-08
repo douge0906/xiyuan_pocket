@@ -61,6 +61,14 @@ abstract class CachedMessageSource implements MessageSource {
   /// 抓取失败时页面上显示的名字。
   String get displayName => channel.name;
 
+  /// 本机档案里**有没有东西**（**不联网**）。
+  ///
+  /// 用途：批量更新时先判断「这个源值不值得读一趟档案」。
+  /// 空的档案读出来也是空的，白占一个异步往返；而 [fetch] 在档案为空时
+  /// 会兜底去抓 —— 批量更新里那一步由「联网更新」那趟统一做，
+  /// 不必在这里多做一次。
+  Future<bool> hasArchive() async => (await MessageArchive.load(sourceId)).isNotEmpty;
+
   /// 后台增量真的写进档案后回调一次 —— 仓库据此刷新界面。
   ///
   /// 🔴 为什么必须有：重构前后台增量抓到了新公告，却**没有任何人通知界面**，

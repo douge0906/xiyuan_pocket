@@ -132,17 +132,77 @@ class MessageRepository extends ChangeNotifier {
 
   // ---------------- 可观察的加载状态 ----------------
 
-  /// 「正在强刷全部源」的进度；`null` = 没在强刷。用于顶部的**确定性**进度条。
+  /// 「正在强刷全部源」的进度；`null` = 没在强刷。用于那一条**总的更新条**。
   ({int done, int total})? _refreshProgress;
 
   /// 强刷进度（`done`/`total`）；没在强刷时为 `null`。
   ({int done, int total})? get refreshProgress => _refreshProgress;
 
-  /// 是否有**任何**源正在加载 —— 用于「每次加载都显示」的那条细进度条。
+  /// 是否有**任何**源正在加载。
   ///
-  /// 只看 `loading` 标志（也就是非静默加载）；后台静默同步**不该**亮进度条，
-  /// 否则用户什么都没点却看到进度条在动，只会以为是自己触发的。
+  /// 只看 `loading` 标志（也就是非静默加载）；后台静默同步**不该**亮更新条，
+  /// 否则用户什么都没点却看到它在动，只会以为是自己触发的。
   bool get isLoading => _states.values.any((s) => s.loading);
+
+  /// 现在要不要显示「更新条」。
+  ///
+  /// 两个来源取或：正在批量更新（[refreshProgress] 有值），或某个源自己在加载。
+  ///
+  /// ⚠️ 现状是这两项**总是同时成立/同时不成立**：`refreshAll` 从「记进度」到
+  /// 「第一个源置 loading」之间没有任何 await，中间那一刻界面渲染不出来。
+  /// 保留两项是因为它们在语义上确实是两件事（将来若某个源的加载不再置
+  /// `loading`，更新条也不该因此漏掉）；但要清楚，**没有测试能区分它们**。
+  bool get isBusy => isLoading || _refreshProgress != null;
+
+  // ---------------- 计时 ----------------
+
+  /// 「这一次忙了多久」。
+  ///
+  /// 用 [Stopwatch] 而不是记一个开始时间：它走的是单调时钟（不受系统时间
+  /// 被改动影响），而且 `reset/start` 的语义正好就是「一次忙碌周期」。
+  final Stopwatch _busy = Stopwatch();
+
+  /// 每秒一跳 —— **只为让秒数走字**，顺手负责收工（见 [_onTick]）。
+  Timer? _ticker;
+
+  /// 本次更新已经花了多久。
+  Duration get busyElapsed => _busy.elapsed;
+
+  /// 标记「开始忙了」。
+  ///
+  /// 已经在忙就**不重开计时** —— 一串串行的源属于**同一次**更新，
+  /// 计时必须连着算；否则每换一个源秒数就跳回 0，那条「总的更新条」
+  /// 看起来就像一直在重启。
+  void _markBusy() {
+    if (_disposed || _busy.isRunning) return;
+    _busy
+      ..reset()
+      ..start();
+    _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
+  }
+
+  /// 秒表自己每秒看一眼，判断这轮忙完没有。
+  ///
+  /// 🔴 为什么把「收工」放在这里而不是各条出口：`isLoading` 是**派生量**
+  /// （从各源状态算出来的），没有任何一个地方「知道」最后一个源是哪一刻
+  /// 结束的；而 `refreshAll` 与 `load` 的出口有好几个（含 `_disposed` 中途
+  /// 退出）。让秒表每秒自查一次，比在每个出口手写一句「顺手停表」可靠得多。
+  void _onTick() {
+    if (_disposed) return;
+    if (!isBusy) {
+      _stopBusy();
+      return;
+    }
+    _notify(); // 让界面上的秒数往前走
+  }
+
+  void _stopBusy() {
+    _ticker?.cancel();
+    _ticker = null;
+    _busy
+      ..stop()
+      ..reset();
+  }
 
   /// 每完成一次**非静默**加载就 +1。
   ///
@@ -204,6 +264,38 @@ class MessageRepository extends ChangeNotifier {
 
   // ---------------- 加载 ----------------
 
+  /// 【铺页签】把每个源**已有**的档案一次性读出来（**纯本地、不联网**）。
+  ///
+  /// 几毫秒的事，但换来「切任何页签都立刻有内容」—— 这正是 [syncAll] 存在的
+  /// 理由：逐个页签按需加载的话，切到第 5 个要现等一次网络
+  /// （用户报的「点一个更新一个」）。
+  ///
+  /// ⚠️ 档案为空的源**跳过**：读它也是空的，白占一次异步往返；而「档案为空
+  /// 就兜底去抓」那一步交给 [refreshAll] 统一做，免得同一个源连打两轮网络。
+  /// ⇒ 所以空的源会先停在空态，直到 [refreshAll] 轮到它。
+  ///
+  /// [silent] = true（默认）不置 loading、不推进 `loadSeq`：
+  /// 这一趟不是「用户在等的一次更新」，不该亮更新条、也不该弹提示。
+  Future<void> primeArchives({bool silent = true}) async {
+    for (final s in registeredSources) {
+      if (_disposed) return;
+      if (!await s.hasArchive()) continue;
+      if (_disposed) return;
+      await load(s.channel.id, mode: FetchMode.archive, silent: silent);
+    }
+  }
+
+  /// 【总的更新】**一次性**更新全部已注册源 —— 界面只显示一条更新条。
+  ///
+  /// 两趟走：① [primeArchives] 铺档案（所有页签立刻有内容）
+  /// ② [refreshAll] 串行联网更新（于是自动拿到 `done/total` 进度与计时）。
+  Future<void> syncAll() async {
+    if (registeredSources.isEmpty) return;
+    await primeArchives();
+    if (_disposed) return;
+    await refreshAll(mode: FetchMode.incremental);
+  }
+
   /// 强刷**所有**已注册消息源，逐个串行。
   ///
   /// 用于「用户在设置里改了『最多同步 N 条』」→ 必须走 [FetchMode.full]，
@@ -223,7 +315,10 @@ class MessageRepository extends ChangeNotifier {
   }) async {
     final sources = registeredSources;
     final total = sources.length;
+    // 一个源都没有时直接收工：否则更新条会闪一下「0/0」。
+    if (total == 0) return 0;
     var done = 0;
+    _markBusy(); // 计时起点：与更新条出现是同一刻
     _setProgress((done: done, total: total));
     onProgress?.call(done, total);
     try {
@@ -284,6 +379,7 @@ class MessageRepository extends ChangeNotifier {
   ) async {
     final prev = stateOf(channelId);
     if (!silent) {
+      _markBusy(); // 单源加载也走同一条更新条、同一套计时
       _states[channelId] = prev.copyWith(loading: true, error: null);
       _notify();
     }
@@ -352,10 +448,15 @@ class MessageRepository extends ChangeNotifier {
   /// - 关 → [FetchMode.archive]：**只读档案、不联网**。
   ///   ⚠️ 但档案为空时它仍会兜底抓一次（[CachedMessageSource] 内建）——
   ///   否则全新安装的用户看到的是一个空页面，且怎么点都没有内容。
-  void setActive(String channelId) {
+  ///
+  /// [loadIfNeeded] = false 只改「当前是哪个页签」、不碰加载 ——
+  /// 批量更新（[syncAll]）自己会把**所有**页签铺好，
+  /// 这里再加载一次就是对同一个源白跑一趟。
+  void setActive(String channelId, {bool loadIfNeeded = true}) {
     if (_activeChannelId == channelId) return;
     _activeChannelId = channelId;
     _notify();
+    if (!loadIfNeeded) return;
     if (_loaded.contains(channelId)) return;
     final mode = _autoRefresh ? FetchMode.cached : FetchMode.archive;
     _fireAndForget(load(channelId, mode: mode), '加载 $channelId');
@@ -453,6 +554,7 @@ class MessageRepository extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _debounce?.cancel();
+    _stopBusy(); // 🔴 秒表必须停：PeriodicTimer 不取消会一直持有本对象
     super.dispose();
   }
 }
