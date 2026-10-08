@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/course_model.dart';
@@ -12,6 +14,7 @@ import 'reminder_settings_page.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_day_header.dart';
+import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
 import 'tools/course_table_settings_page.dart';
 import '../widgets/course_grid_widgets.dart';
@@ -34,6 +37,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   List<Course> _courses = [];
   /// 正在手动同步课表（刷新键转圈 + 挡住重复点击）。
   bool _syncing = false;
+
+  /// 「第 1 周从哪天开始」的首次提醒本页面生命周期内只弹一次。
+  bool _semesterAsked = false;
   late int _selectedWeek;
   DateTime? _semesterStart;
   /// v2.4.0：改为 getter——原先 `final` 只在 initState 取一次，
@@ -120,7 +126,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   Future<void> _changeSemesterStart(DateTime date) async {
     // 对齐到周一：教学周以周一为界，否则日期列错位（9.7 bug 修复）
     final aligned = CourseStorage.mondayOf(date);
-    await CourseStorage.saveSemesterStart(aligned);
+    // byUser: true —— 用户亲手定的。既不再提醒，也不会被后续自动同步覆盖
+    // （见 CourseStorage.loadSemesterStartConfirmed / shouldAdoptSemesterStart）。
+    await CourseStorage.saveSemesterStart(aligned, byUser: true);
     if (!mounted) return;
     setState(() {
       _semesterStart = aligned;
@@ -136,6 +144,41 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     });
     // 开学日变更后同步推送快照
     CourseReminderService.rescheduleAll(); // v2.2.21 开学日影响教学周→重排上课提醒
+  }
+
+  /// 首次自动导入后，提醒用户确认「第 1 周从哪天开始」——**只提醒一次**。
+  ///
+  /// 为什么要提醒：自动导入是按月份估的（秋季 9/7、春季 2/24），估错一周
+  /// 整张课表的周次就全偏了，单双周课程还会跟着错。
+  /// 以前的「手动导入」路径导入完会弹这个选择器，改成自动导入之后没人弹了，
+  /// 用户就只能对着一个偏了一周的「第 N 周」发呆。
+  ///
+  /// 没有课表就不打扰（周次还没有意义）；用户定过（或明确跳过）过也不再问。
+  Future<void> _maybeAskSemesterStart() async {
+    if (_semesterAsked || _courses.isEmpty) return;
+    if (await CourseStorage.loadSemesterStartConfirmed()) return;
+    if (!mounted) return;
+    _semesterAsked = true; // 无论用户选不选都只弹一次
+    await _askSemesterStart();
+  }
+
+  /// 弹「选择第 1 周」的居中对话框（复刻原来手动导入后的那一步）。
+  Future<void> _askSemesterStart() async {
+    final suggested = CourseStorage.mondayOf(_effectiveStart);
+    final picked = await showCourseDatePicker(
+      context: context,
+      initialDate: suggested,
+      firstDate: DateTime(suggested.year - 1, 1, 1),
+      lastDate: DateTime(suggested.year + 1, 12, 31),
+      helpText: '请确认本学期第 1 周的周一（默认 ${suggested.month} 月 ${suggested.day} 日）',
+    );
+    // 用户直接关掉也算「确认过」——保留估算值（秋季 9/7），不再反复打扰
+    await CourseStorage.markSemesterStartConfirmed();
+    if (picked == null || !mounted) return;
+    await _changeSemesterStart(picked);
+    if (!mounted) return;
+    final m = CourseStorage.mondayOf(_effectiveStart);
+    _toast('第 1 周已设为 ${m.month}/${m.day}，可在顶部「第 N 周」随时修改');
   }
 
   @override
@@ -203,6 +246,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     await _syncTodayCoursesToTodos();
     // v2.4.0：课程已结束的自动划掉（与首页共用同一判定，避免两处口径不一致）。
     await CourseTodoService.autoCompleteFinishedCourses();
+    // 首次有课表时提醒确认「第 1 周」（只弹一次）
+    unawaited(_maybeAskSemesterStart());
   }
 
   void _toast(String msg) {
@@ -414,6 +459,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       if (!mounted) return;
       if (identical(prev?.courses, next.courses)) return;
       setState(() => _courses = next.courses);
+      // 本页已建好、自动同步才回来的情况（登录后 / 启动时那两趟），
+      // 也要在这里补一次首次提醒 —— 否则用户永远等不到那个对话框。
+      unawaited(_maybeAskSemesterStart());
     });
 
     final isDark = Theme.of(context).brightness == Brightness.dark;

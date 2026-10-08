@@ -133,28 +133,72 @@ class CourseStorage {
     return mondayOf(DateTime(d.year, d.month, d.day));
   }
 
-  /// 保存开学日期（仅日期）
-  static Future<void> saveSemesterStart(DateTime date) async {
+  /// 保存开学日期（仅日期）。
+  ///
+  /// [byUser] = true 表示**用户在界面上选的**（顶部「第 N 周」下拉、首次提醒对话框）；
+  /// false 表示**自动同步按学期估的**（秋季 9/7、春季 2/24）。
+  /// 这个区别决定要不要给用户弹「请确认第 1 周」 —— 见 [loadSemesterStartConfirmed]。
+  static Future<void> saveSemesterStart(DateTime date,
+      {bool byUser = false}) async {
     final prefs = await SharedPreferences.getInstance();
     final y = date.year;
     final m = date.month.toString().padLeft(2, '0');
     final d = date.day.toString().padLeft(2, '0');
     await prefs.setString(_kSemesterStart, '$y-$m-$d');
+    await prefs.setString(_kSemesterStartSource, byUser ? _srcUser : _srcAuto);
     // 🔴 开学日决定教学周，而教学周决定「今天上哪几门」（单双周！）→
     //    小组件必须重推，否则它会照旧周次渲染，甚至整门课都不该出现。
     //    清单里还有「第 N 周」标签，同样会停在旧值。
     unawaited(WidgetSyncService.syncTodayCourses());
   }
 
+  /// 开学日的来源：谁写的。
+  static const String _kSemesterStartSource = 'course_semester_start_source';
+  static const String _srcUser = 'user';
+  static const String _srcAuto = 'auto';
+
+  /// 用户**是否定过**「第 1 周从哪天开始」。
+  ///
+  /// 判定顺序：
+  ///   · 来源 = user            → 定过，不再打扰
+  ///   · 来源 = auto（机器填的） → **没定过**，该提醒
+  ///   · 没有来源标记但存了日期 → **老数据**：当年能写进 `_kSemesterStart` 的
+  ///     只有「导入后提示」和顶部下拉，两条都是用户亲手选的 → 当成已确认。
+  ///
+  /// 🔴 最后那条是给**老用户**兜底的。如果只看新标记，老用户升级后会被
+  /// 莫名其妙弹一次，而对话框的默认值还可能把他本来正确的日期改掉。
+  static Future<bool> loadSemesterStartConfirmed() async {
+    final prefs = await SharedPreferences.getInstance();
+    final src = prefs.getString(_kSemesterStartSource);
+    if (src == _srcUser) return true;
+    if (src == _srcAuto) return false;
+    final legacy = prefs.getString(_kSemesterStart);
+    return legacy != null && legacy.isNotEmpty;
+  }
+
+  /// 记为「用户已确认/已跳过」——**不动日期**。
+  ///
+  /// 用户直接把对话框关掉时也要调它：否则下次打开又弹，成了骚扰。
+  static Future<void> markSemesterStartConfirmed() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kSemesterStartSource, _srcUser);
+  }
+
   /// 回退到本周一（教学周以周一为界）
   static DateTime mondayOf(DateTime d) => d.subtract(Duration(days: d.weekday - 1));
 
-  /// 根据当前日期估算开学日期：第1学期（秋）约 9/1，第2学期（春）约 2/24，均对齐到周一。
-  /// 8 月（暑假尾）归入秋季学期 9/1，否则 8 月下旬会被算成春季学期第 25+ 周（bug 修复）。
+  /// 根据当前日期估算开学日期：第1学期（秋）**9/7**，第2学期（春）约 2/24，均对齐到周一。
+  ///
+  /// 🔴 秋季基准是 **9/7 而不是 9/1**（2026-10-08 修正）。9/1 那周不是第 1 周 ——
+  /// 学院历年第 1 周都落在 9 月 7 日那一周；用 9/1 会整整**多算一周**
+  /// （9/1 常落在周二周三，mondayOf 之后还更靠前），用户看到「第 3 周」其实是第 2 周。
+  /// 原来只有「手动导入后的提示」把默认值给成 9/7，自动导入这条路没跟上。
+  ///
+  /// 8 月（暑假尾）也归入秋季学期，否则 8 月下旬会被算成春季学期第 25+ 周。
   static DateTime defaultSemesterStart(DateTime now) {
-    if (now.month >= 8) return mondayOf(DateTime(now.year, 9, 1));
+    if (now.month >= 8) return mondayOf(DateTime(now.year, 9, 7));
     if (now.month >= 2) return mondayOf(DateTime(now.year, 2, 24));
-    return mondayOf(DateTime(now.year - 1, 9, 1));
+    return mondayOf(DateTime(now.year - 1, 9, 7));
   }
 
   /// [defaultSemesterStart] 的**反函数**：按当前日期推出该查哪个学年 / 学期。
@@ -184,11 +228,12 @@ class CourseStorage {
   }
 
   /// 根据学年/学期自动估算开学日期，用于「自动定位」：
-  /// 第1学期(xqm=3) → 当年 9/1；第2学期(xqm=12) → 学年次年 2/24（如 2025-2026 第2学期为 2026-02-24）。
+  /// 第1学期(xqm=3) → 当年 **9/7**；第2学期(xqm=12) → 学年次年 2/24
+  /// （如 2025-2026 第2学期为 2026-02-24）。基准与 [defaultSemesterStart] 一致。
   static DateTime autoSemesterStart(String xnm, String xqm) {
     final year = int.tryParse(xnm) ?? DateTime.now().year;
     if (xqm == '12') return mondayOf(DateTime(year + 1, 2, 24));
-    return mondayOf(DateTime(year, 9, 1));
+    return mondayOf(DateTime(year, 9, 7));
   }
 
   /// 当前学期开始日的 ISO 字符串（供单双周判断使用）。
