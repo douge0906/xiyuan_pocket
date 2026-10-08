@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:home_widget/home_widget.dart';
 import '../models/course_model.dart';
 import 'course_storage.dart';
@@ -97,7 +98,7 @@ class WidgetSyncService {
                   'startSlot': c.startSlot,
                   'endSlot': c.endSlot,
                   'color': c.colorValue,
-                  'timeText': _timeFor(c, slotTimes),
+                  'timeText': timeTextFor(c, slotTimes),
                   // v2.2.14：分钟制起止时刻，供原生「下一节课」按当前时间精确切换
                   'startMinute': _slotMinute(c.startSlot, slotTimes, isStart: true),
                   'endMinute': _slotMinute(c.endSlot, slotTimes, isStart: false),
@@ -142,32 +143,55 @@ class WidgetSyncService {
   }
 
   /// 构建节次 → 时间文本映射：优先用户自定义时间块，否则默认表。
-  static Future<Map<int, String>> _timeText() async {
-    final blocks = await CourseStorage.loadTimeBlocks();
+  ///
+  /// 🔴 **区间块必须铺满它覆盖的每一节**。时间块的数据模型是
+  /// `CourseBlock{start, end, time}`：默认块是「单节块」（start==end==节次），
+  /// 但模型允许一个块覆盖多节（如「第 1-2 节 08:00\n09:40」）。
+  /// 早先这里只按块的 `start` 建键，于是跨节的课查 `map[endSlot]` 会**落空** ——
+  /// 显示退化成「第1节-2节」（完全没有时刻），分钟数还会回落到默认表。
+  static Map<int, String> slotTimesFrom(List<Map<String, dynamic>>? blocks) {
     if (blocks == null || blocks.isEmpty) return _defaultSlotTimes;
     final map = <int, String>{};
     for (final b in blocks) {
       final start = (b['start'] as int?) ?? 0;
+      final rawEnd = (b['end'] as int?) ?? start;
+      final end = rawEnd < start ? start : rawEnd;
       final time = (b['time'] as String?) ?? '';
       if (start <= 0 || time.isEmpty) continue;
       final lines = time.split('\n');
-      if (lines.length >= 2) {
-        map[start] = '${lines[0]}-${lines[1]}';
+      if (lines.length < 2) continue;
+      for (var s = start; s <= end; s++) {
+        map[s] = '${lines[0]}-${lines[1]}';
       }
     }
     return map;
   }
 
-  static String _timeFor(Course c, Map<int, String> map) {
-    final start = map[c.startSlot];
-    final end = map[c.endSlot];
-    if (start != null && end != null) {
-      // start/end 形如 "08:00-08:45"，取开始时刻的首段与结束时刻的首段
-      return '${start.split('-').first}-${end.split('-').first}';
-    }
-    // 兜底：显示节次
-    return '第${c.startSlot}节'
-        '${c.endSlot > c.startSlot ? '-${c.endSlot}节' : ''}';
+  static Future<Map<int, String>> _timeText() async =>
+      slotTimesFrom(await CourseStorage.loadTimeBlocks());
+
+  /// 一门课在小组件上显示的起止时刻（如 `08:00-09:40`）。
+  ///
+  /// 🔴 **唯一口径**：直接由 [startMinute] / [endMinute] 格式化，也就是原生
+  /// 「下一节课」判定用的那两个数字。
+  ///
+  /// 早先这里是 `'${start.split('-').first}-${end.split('-').first}'` —— 两边都取
+  /// **首段**。`start` 取首段是对的，`end` 取首段就把「结束节次的**开始**时刻」
+  /// 当成了结束时刻：1-2 节的课本该 08:00–09:40，小组件印成 08:00–**08:55**
+  /// （第 2 节的开始），整整少 45 分钟。而且同一个组件里「显示」与「判定」两套口径，
+  /// 会出现「正确高亮着这节课、底下却印着错的结束时间」这种自相矛盾。
+  /// 现在两者共用一份数字，结构上不可能再分叉。
+  @visibleForTesting
+  static String timeTextFor(Course c, Map<int, String> map) {
+    final s = _slotMinute(c.startSlot, map, isStart: true);
+    final e = _slotMinute(c.endSlot, map, isStart: false);
+    return '${_hhmm(s)}-${_hhmm(e)}';
+  }
+
+  static String _hhmm(int minuteOfDay) {
+    final h = (minuteOfDay ~/ 60).toString().padLeft(2, '0');
+    final m = (minuteOfDay % 60).toString().padLeft(2, '0');
+    return '$h:$m';
   }
 
   /// 节次 → 分钟起止。优先用户自定义时间块；否则默认分钟表。

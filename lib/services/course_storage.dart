@@ -140,6 +140,10 @@ class CourseStorage {
     final m = date.month.toString().padLeft(2, '0');
     final d = date.day.toString().padLeft(2, '0');
     await prefs.setString(_kSemesterStart, '$y-$m-$d');
+    // 🔴 开学日决定教学周，而教学周决定「今天上哪几门」（单双周！）→
+    //    小组件必须重推，否则它会照旧周次渲染，甚至整门课都不该出现。
+    //    清单里还有「第 N 周」标签，同样会停在旧值。
+    unawaited(WidgetSyncService.syncTodayCourses());
   }
 
   /// 回退到本周一（教学周以周一为界）
@@ -251,6 +255,11 @@ class CourseStorage {
   static Future<void> saveTimeBlocks(List<Map<String, dynamic>> blocks) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kTimeBlocks, jsonEncode(blocks));
+    // 🔴 上课时间变了 → 小组件显示的时刻也得跟着变。
+    //    之前漏了这一步：改完时间 App 里立刻变，桌面小组件要等下次
+    //    「App 回到前台」才更新，用户看到的就是「两边不同步」。
+    //    （saveCourses 里早就有这一句，这里当初漏抄了。）
+    unawaited(WidgetSyncService.syncTodayCourses());
   }
 
   // ---------------- 课表显示设置（v1.1.0） ----------------
