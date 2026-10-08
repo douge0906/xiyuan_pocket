@@ -31,29 +31,32 @@ class CampusSource extends CachedMessageSource {
   @override
   String get displayName => columnName;
 
-  /// 增量：只抓最新 **1 页**（约 20 条）。
+  /// 增量：只抓最新 **1 页**（约 10~16 条）。
   ///
-  /// 资讯中心是单页连续列表，「最新一小段」= 前 20 条 —— 与教务处抓 1 页等价。
+  /// 资讯中心是单页连续列表，「最新一小段」= 首页那一屏 —— 与教务处抓 1 页等价。
   @override
   Future<List<Message>?> fetchIncremental() async {
     final items = await CampusInfoCrawler.fetchList(
       fetcher: CampusHttpFetcher.inject,
       columnId: columnId,
       targetItems: kMessageItemsPerPage,
+      maxPages: 1,
     );
     return items.map(_toMessage).toList();
   }
 
-  /// 冷启动 / 改了同步条数：**按目标条数抓**。
+  /// 冷启动 / 改了同步条数 / 档案不够目标时补齐：**按目标条数抓**。
   ///
   /// 🔴 这里此前写死过 `limit > 20 ? limit : 60`，于是"设 1 页"照样拉 60 条
-  /// —— 设置对它形同虚设。现在直接把目标条数交给抓取器。
+  /// —— 设置对它形同虚设。现在直接把目标条数交给抓取器，
+  /// 顺手带上页数硬顶（防止目标很大时翻几百页）。
   @override
   Future<List<Message>?> fetchFull(int target) async {
     final items = await CampusInfoCrawler.fetchList(
       fetcher: CampusHttpFetcher.inject,
       columnId: columnId,
       targetItems: target,
+      maxPages: pagesForItemCount(target),
     );
     return items.map(_toMessage).toList();
   }

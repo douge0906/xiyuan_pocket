@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,7 +11,8 @@ import '../theme/app_theme.dart';
 /// 消息设置（独立页面）。
 ///
 /// 入口：消息页右上角齿轮 → push 到本页。
-/// 两项设置**都是一行**，点开是**居中弹窗**（项目死律：不用底部弹层）：
+/// 三项设置**都是一行**，点开是**居中弹窗**（项目死律：不用底部弹层）：
+/// * 每次进入自动更新 —— 进消息页要不要联网查新（开关，就地拨）
 /// * 栏目样式 —— 纯白列表 / 圆角卡片，选完立即生效并持久化
 /// * 最多同步条数 —— 每个栏目最多保留并显示多少条
 class MessageSettingsPage extends StatefulWidget {
@@ -26,10 +29,8 @@ class MessageSettingsPage extends StatefulWidget {
 class _MessageSettingsPageState extends State<MessageSettingsPage> {
   String _style = StorageService.kMessageStylePlain;
   int _count = StorageService.kMessageSyncCountDefault;
+  bool _autoRefresh = StorageService.kMessageAutoRefreshDefault;
   bool _loading = true;
-
-  /// 正在按新条数重新同步（重新抓取可能要几十秒，**不阻塞界面**）。
-  bool _syncing = false;
 
   @override
   void initState() {
@@ -40,12 +41,29 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
   Future<void> _load() async {
     final style = await StorageService.loadMessageStyle();
     final count = await StorageService.loadMessageSyncCount();
+    final auto = await StorageService.loadMessageAutoRefresh();
     if (!mounted) return;
     setState(() {
       _style = style;
       _count = count;
+      _autoRefresh = auto;
       _loading = false;
     });
+  }
+
+  // ---------------- 每次进入自动更新 ----------------
+
+  /// 拨开关。**只改行为，不动已存内容** —— 关掉不是清空档案，
+  /// 只是下次进消息页不再联网；用户想立刻查新依然可以下拉刷新。
+  Future<void> _toggleAutoRefresh(bool v) async {
+    setState(() => _autoRefresh = v);
+    final repo = widget.repository;
+    if (repo == null) {
+      await StorageService.saveMessageAutoRefresh(v);
+      return;
+    }
+    // 仓库是会话内的真相：改它才会写存储，也才会被下次 setActive 读到。
+    await repo.setAutoRefresh(v);
   }
 
   // ---------------- 栏目样式 ----------------
@@ -62,6 +80,11 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
 
   // ---------------- 最多同步条数 ----------------
 
+  /// 改「最多同步条数」。
+  ///
+  /// 🔴 **改完自动回消息页并立刻开始加载** —— 进度条在那里，用户得看得见它动。
+  /// 留在设置页的话，同步已经在后台跑，用户却对着一个静止的「同步中…」发呆，
+  /// 只能猜到底有没有生效。
   Future<void> _pickSyncCount() async {
     final picked = await showDialog<int>(
       context: context,
@@ -74,7 +97,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
     await StorageService.saveMessageSyncCount(picked);
 
     final repo = widget.repository;
-    if (repo == null) return;
+    if (!mounted || repo == null) return;
 
     if (picked <= old) {
       // 调小：**不用联网**。展示条数由设置决定，档案里的多余部分被截掉即可
@@ -82,21 +105,24 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
       for (final s in repo.registeredSources) {
         await repo.load(s.channel.id, mode: FetchMode.archive);
       }
+      if (mounted) Navigator.of(context).maybePop();
       return;
     }
 
-    // 🔴 调大：**必须真的重抓一遍**。否则就是原来的「把 3 页改成 20 页，
+    // 调大：**必须真的重抓一遍**。否则就是原来的「把 3 页改成 20 页，
     // 回来一看还是 80 条」—— 全量入口在有档案时够不着，设置形同虚设。
-    if (!mounted) return;
-    setState(() => _syncing = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('正在按 $picked 条重新同步，可返回消息页查看')),
+    //
+    // 🔴 必须在 pop **之前**取到 messenger / navigator：pop 掉之后
+    // 本 State 的 context 就失效了，再 `ScaffoldMessenger.of(context)` 会炸。
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    // 提示挂在消息页上（那才是用户接下来要看的地方）。
+    messenger.showSnackBar(
+      SnackBar(content: Text('正在按 $picked 条重新同步…')),
     );
-    repo
-        .refreshAll(mode: FetchMode.full)
-        .whenComplete(() {
-      if (mounted) setState(() => _syncing = false);
-    });
+    // 不 await：抓上百条要好几秒，设置页没必要为此挂着一个转圈。
+    unawaited(repo.refreshAll(mode: FetchMode.full));
   }
 
   @override
@@ -113,6 +139,16 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
                 _card([
+                  _switchRow(
+                    icon: Icons.sync_rounded,
+                    title: '每次进入自动更新',
+                    subtitle: _autoRefresh
+                        ? '进消息页时会联网查一次新内容'
+                        : '只看本机已存内容，下拉刷新不受影响',
+                    value: _autoRefresh,
+                    onChanged: _toggleAutoRefresh,
+                  ),
+                  Divider(height: 1, color: context.borderColor),
                   _row(
                     icon: Icons.view_agenda_outlined,
                     title: '栏目样式',
@@ -127,13 +163,19 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                     icon: Icons.download_rounded,
                     title: '最多同步条数',
                     subtitle: '每个栏目最多保留并显示多少条',
-                    value: _syncing ? '同步中…' : '$_count 条',
+                    value: '$_count 条',
                     onTap: _pickSyncCount,
                   ),
                 ]),
                 const SizedBox(height: 14),
                 Text(
                   '样式改动立即生效；调大条数会重新抓取一次（可能需要一小会儿）。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: context.textTertiary),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '关闭「自动更新」不会清掉已经存下的内容。',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, color: context.textTertiary),
                 ),
@@ -195,6 +237,53 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                     color: context.textSecondary)),
             Icon(Icons.chevron_right_rounded,
                 size: 20, color: Colors.grey.shade400),
+          ],
+        ),
+      ),
+    );
+  }
+  /// 开关行：与 [_row] 同壳，但右侧是 Switch 而非「值 + 箭头」。
+  ///
+  /// 为什么不复用 [_row] 弹窗：开关只有两态，为它再弹一层窗是多余的一次点击。
+  Widget _switchRow({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: AppTheme.primaryColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: context.textPrimary)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: TextStyle(
+                          fontSize: 12, color: context.textTertiary)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Switch(
+              // Flutter 3.24 只有 activeColor（更新的 SDK 才叫 activeThumbColor）。
+              value: value,
+              onChanged: onChanged,
+              activeColor: AppTheme.primaryColor,
+            ),
           ],
         ),
       ),

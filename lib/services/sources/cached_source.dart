@@ -22,13 +22,14 @@ import '../storage_service.dart';
 ///
 /// 搜索            -> 本地过滤档案，绝不联网
 /// archive         -> 只读档案
-/// cached          -> 立刻返回档案，增量丢后台（进页面）
-/// incremental     -> 抓最新一页 merge 进档案（下拉刷新）
+/// cached          -> 立刻返回档案，同步丢后台（进页面）
+/// incremental     -> 同步一次，merge 进档案后返回（下拉刷新）
 /// full            -> 按目标全量抓（改了数量 / 冷启动）
+/// 同步一次        -> 档案 < 目标 ? 按目标全量补齐 : 只抓最新一页
 /// 抓取失败        -> 返回旧档案 + error（降级，绝不清空）
 /// ```
 ///
-/// ## 三条关键不变量
+/// ## 四条关键不变量
 /// ① **失败与空严格分开**。抓取失败带 `error` 且保留旧数据，
 ///    绝不返回「空且无错」（本项目发作次数最多的 bug）。
 /// ② **增量失败一律是 `null`，绝不是空列表**。空列表 = 「确实没有新公告」，
@@ -36,6 +37,8 @@ import '../storage_service.dart';
 /// ③ **网络 IO 绝不在写锁内**。锁只保护 `load → merge → save` 这十几行
 ///    读改写；把网络请求也圈进去，会让"后台增量正在跑时的下拉刷新"
 ///    排队干等，表现为刷新计时动画走不动。
+/// ④ **档案不足目标就必须真的去抓**。只做增量的话，档案长度永远长不到
+///    用户设置的数量 —— 「设了 200 条却只看到几十条」就是这么来的。
 abstract class CachedMessageSource implements MessageSource {
   /// **增量**：只抓「最新一小段」（1 页），用于快速比对。
   ///
@@ -92,13 +95,13 @@ abstract class CachedMessageSource implements MessageSource {
       case FetchMode.cached:
         final archive = await MessageArchive.load(sourceId);
         if (archive.isEmpty) return _fullFetch(target, q);
-        unawaited(_backgroundIncremental());
+        unawaited(_backgroundSync(target));
         return _pageOf(archive, target, fromCache: true);
 
       case FetchMode.incremental:
         final archive = await MessageArchive.load(sourceId);
         if (archive.isEmpty) return _fullFetch(target, q);
-        final merged = await _incrementalFetch(target);
+        final merged = await _syncFetch(target);
         if (merged == null) {
           // 增量失败：降级用旧档案 + 带上错误。不清空，也不谎报「无新增」。
           return _pageOf(archive, target,
@@ -111,7 +114,7 @@ abstract class CachedMessageSource implements MessageSource {
     }
   }
 
-  /// 全量抓 —— 冷启动与「改了同步条数」都走这里。
+  /// 全量抓 —— 冷启动、「改了同步条数」、以及「档案不够目标要补齐」都走这里。
   ///
   /// 🔴 这条路必须**能被再次到达**。重构前的全量入口只在「档案为空」时
   /// 可达，所以一旦有档案，全量永远够不着 ⇒「把 3 页改成 20 页，回来一看
@@ -131,28 +134,55 @@ abstract class CachedMessageSource implements MessageSource {
       return _pageOf(_filter(archive, q), target,
           fromCache: true, error: '$displayName 数据保存失败，显示的是上次结果');
     }
+    // 全量抓就是「向目标条数冲击」的最大努力，成功一次之后本实例不必再补。
+    _archiveFilled = true;
     return _pageOf(_filter(out, q), target, fromCache: false);
   }
 
-  /// 强制增量 —— 只抓最新一小段，merge 进档案后返回新档案。失败返回 `null`。
-  Future<List<Message>?> _incrementalFetch(int target) async {
-    final fresh = await _tryIncremental(); // 网络：锁外
+  /// **本实例**是否已经朝目标条数补过档。
+  ///
+  /// 为什么需要这个标记：站点内容本身可能少于目标（实测团委全站只有几十条），
+  /// 若每次「档案 < 目标」都发起一轮全量抓，就成了**每次进页面都白打十几个请求**。
+  /// 补齐按实例只做一次（实例存活期 = 消息页存活期），失败则不置位、下次还会再试。
+  bool _archiveFilled = false;
+
+  /// 档案是否还**不够**用户设置的目标条数，需要补齐。
+  ///
+  /// 🔴 这是「只加载几十条」的正解。原逻辑是「档案非空就只做 1 页增量」——
+  /// 于是全新安装（内置快照仅 20 条）永远停在一二十条：把「最多同步条数」
+  /// 设成 200 也毫无变化，因为**没有任何一条路径会为了让档案变长而去抓**。
+  bool _needsFill(int have, int target) =>
+      !_archiveFilled && target > 0 && have < target;
+
+  /// 同步一次：档案不够目标 → 按目标补齐（全量）；够了 → 只问一句有没有新的。
+  ///
+  /// 失败一律返回 `null`（与「确实没有新内容」严格分开）。
+  Future<List<Message>?> _syncFetch(int target) async {
+    final archive = await MessageArchive.load(sourceId);
+    if (_needsFill(archive.length, target)) {
+      final fresh = await _tryFull(target); // 网络：锁外
+      if (fresh == null) return null; // 失败：不置标记，下次进来还会再试
+      // 成功就置标记 —— 哪怕抓回来仍不足目标（站点本身就没有那么多），
+      // 也不能每次进页面都重抓一遍。
+      _archiveFilled = true;
+      return _mergeIntoArchive(fresh, target);
+    }
+    final fresh = await _tryIncremental();
     if (fresh == null) return null;
     return _mergeIntoArchive(fresh, target);
   }
 
-  /// 后台静默增量：失败不打扰用户（手上已有数据），成功后通知界面。
-  Future<void> _backgroundIncremental() async {
+  /// 后台静默同步：失败不打扰用户（手上已有数据），成功后通知界面。
+  Future<void> _backgroundSync(int target) async {
     try {
-      final target = await StorageService.loadMessageSyncCount();
       final before = await MessageArchive.load(sourceId);
-      final merged = await _incrementalFetch(target);
+      final merged = await _syncFetch(target);
       // null = 失败：安静跳过，绝不把失败当成「没有新公告」去重写档案。
       if (merged == null) return;
       // 内容真的变了才通知 —— 否则每次进页面都会白重建一遍列表。
       if (!_sameContent(before, merged)) onArchiveUpdated?.call();
     } catch (e) {
-      _log('后台增量失败：$e');
+      _log('后台同步失败：$e');
     }
   }
 

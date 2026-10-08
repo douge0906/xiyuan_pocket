@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/message.dart';
@@ -50,6 +52,23 @@ class _NotificationPageState extends State<NotificationPage>
   /// 首屏装配中（读订阅集合 + 注册源）。
   bool _booting = true;
 
+  // ---------------- 「累计加载条数」渐隐提示 ----------------
+  // 需求原文：「将累计加载的各项条数做成渐变消失提示」。
+  // 每次加载跑完弹一次，停 3 秒后淡出。**不占布局**（浮层），
+  // 所以它出现和消失都不会让列表抖一下。
+  Timer? _noticeTimer;
+
+  /// 提示内容；`null` = 从来没弹过（首屏前）。
+  ({String headline, String? detail})? _noticeData;
+
+  /// 提示是否可见。与 [_noticeData] 分开是**必须的**：
+  /// 淡出动画期间内容还得画得出来，若把内容一起置 null，
+  /// 就会变成「瞬间消失」而不是「渐变消失」。
+  bool _noticeVisible = false;
+
+  /// 已处理到的加载完成序号（见 [MessageRepository.loadSeq]）。
+  int _seenLoadSeq = 0;
+
   // ---------------- 教程锚点（v2.0.0）----------------
   final GlobalKey _kTabsRow = GlobalKey();
   final GlobalKey _kAddChannelBtn = GlobalKey();
@@ -81,11 +100,55 @@ class _NotificationPageState extends State<NotificationPage>
   }
 
   void _onRepoChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final seq = _repo.loadSeq;
+    if (seq != _seenLoadSeq) {
+      _seenLoadSeq = seq;
+      _armCountNotice();
+    }
+    setState(() {});
   }
 
-  /// 首屏：读已读状态 → 读订阅集合 → 注册源 → 选中第一个页签。
+  /// 每次加载结束（[MessageRepository.loadSeq] 前进）都重排一次提示。
+  ///
+  /// 🔴 **不能**用 `isLoading` 的 true→false 边沿来触发：强刷全部源是**串行**的，
+  /// 五个源中间会回落 4 次，边沿会采到 4 次「假结束」→ 提示闪 5 下。
+  /// 序号是单调的，一次加载一次递增，天然不会有这个问题。
+  void _armCountNotice() {
+    final data = _countNoticeData();
+    if (data == null) return;
+    _noticeTimer?.cancel();
+    _noticeData = data;
+    _noticeVisible = true;
+    _noticeTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _noticeVisible = false);
+    });
+  }
+
+  /// 「共 N 条 / 各栏目 N 条」。
+  ///
+  /// 只统计**已加载**的（[MessageRepository.loadedCounts]），也就是用户此刻
+  /// 真的能在列表里看到的数量 —— 报「档案里有多少」会与「已加载 N 条」打架。
+  ({String headline, String? detail})? _countNoticeData() {
+    final counts = _repo.loadedCounts;
+    final total = _repo.loadedTotal;
+    if (counts.isEmpty || total == 0) return null;
+    final parts = counts
+        .where((e) => e.count > 0)
+        .map((e) => '${e.name} ${e.count}')
+        .toList(growable: false);
+    if (parts.isEmpty) return null;
+    return (headline: '共 $total 条', detail: parts.join(' · '));
+  }
+
+  /// 首屏：读设置 → 读已读状态 → 读订阅集合 → 注册源 → 选中第一个页签。
+  ///
+  /// 🔴 [MessageRepository.initSettings] 必须在 [MessageRepository.setActive]
+  /// **之前**跑完：`setActive` 按「每次进入自动更新」决定第一次加载走不走网络，
+  /// 设置还没读进来时它会拿着默认值做决定（关掉开关的用户照样被联网）。
   Future<void> _boot() async {
+    await _repo.initSettings();
     await _repo.initReadState();
     final subscribed = await MessageChannelService.loadSubscribed();
     await _repo.registerSources(subscribedIds: subscribed);
@@ -101,6 +164,7 @@ class _NotificationPageState extends State<NotificationPage>
 
   @override
   void dispose() {
+    _noticeTimer?.cancel();
     _repo.removeListener(_onRepoChanged);
     _searchController.dispose();
     _tabPageController.dispose();
@@ -545,6 +609,101 @@ class _NotificationPageState extends State<NotificationPage>
         ),
       );
 
+  // ---------------- 加载条 / 累计条数提示 ----------------
+
+  /// 顶部加载条 —— **每次加载都会出现**（这正是本轮要找回的东西）。
+  ///
+  /// 高度**恒定 4px**（含 1px 间隔），不加载时它是一条空槽：
+  /// 所以「出现 / 消失」都不会让下面的列表往上蹿一格。
+  /// 之前它是在 `Column` 里按需插入/移除的，于是每次加载列表都要跳一下 ——
+  /// 这种抖动比进度条本身更容易被看成 bug。
+  ///
+  /// 两种形态：
+  /// - 强刷全部源（改了同步条数）→ **确定性**进度，按 `done / total` 走
+  /// - 单个源加载 → 不确定进度（来回跑），因为单源内部无法报告细粒度进度
+  Widget _buildLoadingBar() {
+    final p = _repo.refreshProgress;
+    final active = p != null || _repo.isLoading;
+    // total 为 0 时按「已跑完」画（否则会除零 → NaN → 进度条不显示）。
+    final double? value =
+        p == null ? null : (p.total <= 0 ? 1.0 : p.done / p.total);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 3,
+          child: active
+              ? LinearProgressIndicator(
+                  value: value,
+                  minHeight: 3,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppTheme.primaryColor,
+                  ),
+                )
+              : const SizedBox.expand(),
+        ),
+        const SizedBox(height: 1),
+      ],
+    );
+  }
+
+  /// 「累计加载条数」渐隐提示：浮在列表底部，**不占布局**。
+  Widget _buildCountNotice() {
+    final data = _noticeData;
+    return AnimatedOpacity(
+      opacity: (_noticeVisible && data != null) ? 1 : 0,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: (_noticeVisible && data != null)
+            ? Offset.zero
+            : const Offset(0, 0.35),
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOut,
+        child: data == null
+            ? const SizedBox.shrink()
+            : Center(child: _noticePill(data)),
+      ),
+    );
+  }
+
+  /// 提示气泡：半透明深底 + 白字 —— 两种主题下都清楚，不必各写一套配色。
+  Widget _noticePill(({String headline, String? detail}) data) => Container(
+        constraints: const BoxConstraints(maxWidth: 340),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.78),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              data.headline,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            if (data.detail != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                data.detail!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.35,
+                  color: Colors.white.withOpacity(0.75),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -554,26 +713,37 @@ class _NotificationPageState extends State<NotificationPage>
       // 无缝白底：消息页整体铺白，行与行之间只靠 1px 灰线分隔。
       backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildHeader(),
-            const SizedBox(height: 12),
-            _buildFilterChips(),
-            _buildSearchBox(isDark),
-            const SizedBox(height: 4),
-            Expanded(
-              child: _booting
-                  ? const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2.5))
-                  : tabs.isEmpty
-                      ? _noChannels(isDark)
-                      : PageView.builder(
-                          controller: _tabPageController,
-                          itemCount: tabs.length,
-                          onPageChanged: (i) => _switchTo(i),
-                          itemBuilder: (ctx, i) =>
-                              _buildChannelContent(tabs[i]),
-                        ),
+            Column(
+              children: [
+                _buildHeader(),
+                const SizedBox(height: 12),
+                _buildFilterChips(),
+                _buildSearchBox(isDark),
+                _buildLoadingBar(),
+                Expanded(
+                  child: _booting
+                      ? const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2.5))
+                      : tabs.isEmpty
+                          ? _noChannels(isDark)
+                          : PageView.builder(
+                              controller: _tabPageController,
+                              itemCount: tabs.length,
+                              onPageChanged: (i) => _switchTo(i),
+                              itemBuilder: (ctx, i) =>
+                                  _buildChannelContent(tabs[i]),
+                            ),
+                ),
+              ],
+            ),
+            // 浮层：`IgnorePointer` 保证它绝不抢列表的点击（它只是个提示）。
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 20,
+              child: IgnorePointer(child: _buildCountNotice()),
             ),
           ],
         ),

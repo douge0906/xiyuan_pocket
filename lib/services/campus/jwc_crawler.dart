@@ -49,12 +49,28 @@ class JwcCrawler {
   static const String baseUrl = 'https://jwc.cwxu.edu.cn';
   static const String listUrl = '$baseUrl/index/tzgg.htm';
 
+  /// 教务处列表**实测每页 12 条**（2026-10-08 逐页核对：全站 1793 条 / 150 页）。
+  static const int kJwcPageSize = 12;
+
+  /// 连续多少页拿不到就放弃翻页（个别页缺失应跳过，不该整段中断）。
+  static const int _maxConsecutivePageFailures = 5;
+
   /// 抓列表页（首页 + 可选翻页）。
   ///
   /// [fetcher] 注入的 HTTP 客户端（形如 `(url, headers) async => body`）。
-  /// [maxPages] 翻页上限（1 = 只抓首页）。页码越大越新，故从最大页往回翻。
+  ///
+  /// [targetItems] **目标条数：凑够就停**（不是"必须抓满"）。这是抓取量的
+  /// 实际决定者 —— 翻页循环每轮都检查它。
+  /// [maxPages] **最多请求几页（含首页）** —— 纯粹的安全硬顶，防止站点分页
+  /// 结构异常时打爆几百个不存在的页。因为循环按条数提前退出，这个值给大了
+  /// 不花代价，给小了才会抓不够，所以调用方应该按保守的每页条数来算。
+  ///
+  /// 教务处页码**越大越新**（首页 `/index/tzgg.htm` 是最新，次新的反而是
+  /// `/index/tzgg/149.htm`，最旧的是 `/index/tzgg/1.htm`），所以从最大页
+  /// 往回翻，得到的就是从最新连续往旧的一段。
   static Future<List<NoticeItem>> fetchList({
     required Future<Object?> Function(String, Map<String, String>) fetcher,
+    int targetItems = kJwcPageSize,
     int maxPages = 1,
   }) async {
     final html = await CampusWeb.httpGet(fetcher, listUrl);
@@ -70,13 +86,31 @@ class JwcCrawler {
       throw CampusFetchException(listUrl, '列表首页解析不出条目');
     }
 
-    if (maxPages > 1) {
+    if (maxPages > 1 && items.length < targetItems) {
       final maxp = _detectMaxPage(html);
-      for (var n = maxp; n >= 1 && items.length < maxPages * 20; n--) {
-        final page = await CampusWeb.httpGet(fetcher, '$baseUrl/index/tzgg/$n.htm');
-        if (page == null) break;
+      var pages = 1; // 首页已算一页
+      var failures = 0;
+      for (var n = maxp; n >= 1; n--) {
+        if (items.length >= targetItems) break;
+        if (pages >= maxPages) break;
+        if (failures >= _maxConsecutivePageFailures) break;
+
+        final page =
+            await CampusWeb.httpGet(fetcher, '$baseUrl/index/tzgg/$n.htm');
+        // 🔴 单页失败**跳过而不是中断**。曾经这里是 `break`：只要最大页号
+        // 识别得偏大（例如把文章永久链接里的数字当页码），第一次请求就是
+        // 404，翻页立刻结束 —— 用户只看到首页那十几条，且毫无提示。
+        if (page == null) {
+          failures++;
+          continue;
+        }
         final got = _parseList(page);
-        if (got.isEmpty) break;
+        if (got.isEmpty) {
+          failures++;
+          continue;
+        }
+        failures = 0;
+        pages++;
         items.addAll(got);
       }
     }

@@ -37,7 +37,8 @@ class JwcSource extends CachedMessageSource {
 
   /// 增量：**只抓最新 1 页**。
   ///
-  /// 教务处通知公告是「页码越大越新」，所以第 1 页就是最新的 —— 一页足够。
+  /// 教务处通知公告是「页码越大越新」，所以第 1 页（`/index/tzgg.htm`）
+  /// 就是最新的 —— 一页足够。
   ///
   /// 🔴 抓取失败时**抛异常**（由基类接住并转成 `null`），**不得压成空列表**
   /// —— 空列表会被上层当成「确实没有新公告」，于是断网时用户看到「刷新成功」。
@@ -45,16 +46,18 @@ class JwcSource extends CachedMessageSource {
   Future<List<Message>?> fetchIncremental() async {
     final items = await JwcCrawler.fetchList(
       fetcher: CampusHttpFetcher.inject,
+      targetItems: JwcCrawler.kJwcPageSize,
       maxPages: 1,
     );
     return items.map(_toMessage).toList();
   }
 
-  /// 冷启动 / 改了同步条数：按目标条数换算成页数全量抓。
+  /// 冷启动 / 改了同步条数 / 档案不够目标时补齐：**按目标条数抓**。
   @override
   Future<List<Message>?> fetchFull(int target) async {
     final items = await JwcCrawler.fetchList(
       fetcher: CampusHttpFetcher.inject,
+      targetItems: target,
       maxPages: pagesForItemCount(target),
     );
     return items.map(_toMessage).toList();

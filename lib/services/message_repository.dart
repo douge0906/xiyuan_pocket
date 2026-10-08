@@ -9,6 +9,7 @@ import 'message_source.dart';
 import 'sources/cached_source.dart';
 import 'sources/campus_source.dart';
 import 'sources/jwc_source.dart';
+import 'storage_service.dart';
 
 /// 单个消息源的状态。
 ///
@@ -100,6 +101,70 @@ class MessageRepository extends ChangeNotifier {
   /// 已加载过「目录」的渠道集合（区分「没加载过」与「加载过但为空」）。
   final Set<String> _loaded = {};
 
+  // ---------------- 设置项 ----------------
+
+  /// 每次进入消息页是否自动联网更新（设置页的「每次进入自动更新」开关）。
+  ///
+  /// `false` → 进入只读本机档案、**不联网**（档案为空才会兜底抓一次，
+  /// 否则新装的用户会面对一个空页面且无从下手）。
+  /// 下拉刷新不受它影响 —— 那是用户的明确动作。
+  ///
+  /// 🔴 它是**内存里的镜像**，真相在 [StorageService]；由 [initSettings] 读入、
+  /// [setAutoRefresh] 写出。两边必须一起改，否则「开关关了但下次进来照样联网」。
+  bool _autoRefresh = StorageService.kMessageAutoRefreshDefault;
+
+  bool get autoRefresh => _autoRefresh;
+
+  Future<void> setAutoRefresh(bool value) async {
+    if (_autoRefresh == value) return;
+    _autoRefresh = value;
+    _notify();
+    await StorageService.saveMessageAutoRefresh(value);
+  }
+
+  /// 读取持久化的设置。必须在 [registerSources] **之前**调用 ——
+  /// [setActive] 会按它决定第一次加载走不走网络。
+  Future<void> initSettings() async {
+    _autoRefresh = await StorageService.loadMessageAutoRefresh();
+    if (_disposed) return;
+    _notify();
+  }
+
+  // ---------------- 可观察的加载状态 ----------------
+
+  /// 「正在强刷全部源」的进度；`null` = 没在强刷。用于顶部的**确定性**进度条。
+  ({int done, int total})? _refreshProgress;
+
+  /// 强刷进度（`done`/`total`）；没在强刷时为 `null`。
+  ({int done, int total})? get refreshProgress => _refreshProgress;
+
+  /// 是否有**任何**源正在加载 —— 用于「每次加载都显示」的那条细进度条。
+  ///
+  /// 只看 `loading` 标志（也就是非静默加载）；后台静默同步**不该**亮进度条，
+  /// 否则用户什么都没点却看到进度条在动，只会以为是自己触发的。
+  bool get isLoading => _states.values.any((s) => s.loading);
+
+  /// 每完成一次**非静默**加载就 +1。
+  ///
+  /// 🔴 为什么给的是「序号」而不是直接给一句文案：仓库不该生产界面文字
+  /// （同一份数据在别处可能要换一种说法），界面拿序号自己决定「什么时候弹、
+  /// 弹什么」。序号只增不减，界面比对自己上次见到的那一个，
+  /// 就知道「刚刚又跑完一轮」—— 用 `isLoading` 的 true→false 边沿做不到这件事：
+  /// 五个源串行强刷时中间会回落，边沿会被采到五次「假结束」。
+  int _loadSeq = 0;
+
+  int get loadSeq => _loadSeq;
+
+  /// 各源**当前已加载条数**，按注册顺序；用于「累计加载」那条提示。
+  List<({String name, int count})> get loadedCounts => registeredSources
+      .map((s) =>
+          (name: s.channel.name, count: stateOf(s.channel.id).items.length))
+      .toList(growable: false);
+
+  /// 各源已加载条数之和。
+  int get loadedTotal =>
+      loadedCounts.fold(0, (sum, e) => sum + e.count);
+
   // ---------------- 源注册表 ----------------
 
   /// 注册全部**已订阅**的消息源。
@@ -148,6 +213,9 @@ class MessageRepository extends ChangeNotifier {
   /// 每路数页 = 十几条同时打过去，没必要也不礼貌；② 串行能让
   /// 「已完成 3/5」的进度真实反映到界面上。
   ///
+  /// 进度同时写进 [refreshProgress]（界面据此出一条**确定性**进度条），
+  /// `onProgress` 是给调用方自己拿去显示文字的。
+  ///
   /// 单个源失败**不中断**整体 —— 失败信息记在该源的 [ChannelState.error] 里。
   Future<int> refreshAll({
     FetchMode mode = FetchMode.full,
@@ -156,15 +224,30 @@ class MessageRepository extends ChangeNotifier {
     final sources = registeredSources;
     final total = sources.length;
     var done = 0;
+    _setProgress((done: done, total: total));
     onProgress?.call(done, total);
-    for (final source in sources) {
-      if (_disposed) break;
-      await load(source.channel.id, mode: mode);
-      if (_disposed) break;
-      done++;
-      onProgress?.call(done, total);
+    try {
+      for (final source in sources) {
+        if (_disposed) break;
+        await load(source.channel.id, mode: mode);
+        if (_disposed) break;
+        done++;
+        _setProgress((done: done, total: total));
+        onProgress?.call(done, total);
+      }
+    } finally {
+      // 🔴 必须在 finally 里清空：中途 `_disposed` 时若直接 return，
+      // 进度条会永久停在「3/5」——那是界面能犯的最显眼的错。
+      _setProgress(null);
     }
     return done;
+  }
+
+  /// 写强刷进度并通知界面；传 `null` 表示收工。
+  void _setProgress(({int done, int total})? p) {
+    if (_disposed) return;
+    _refreshProgress = p;
+    _notify();
   }
 
   /// 载入某源。
@@ -212,6 +295,7 @@ class MessageRepository extends ChangeNotifier {
     } catch (e) {
       // 源内部已做兜底；这是最后一道防线，失败**绝不清空**旧内容。
       if (_disposed) return;
+      if (!silent) _loadSeq++;
       _states[channelId] = ChannelState(
         items: prev.items,
         loading: false,
@@ -228,6 +312,7 @@ class MessageRepository extends ChangeNotifier {
     if (_disposed) return;
 
     // 失败与空严格分开：page.error 非空就是失败，绝不清空已有数据。
+    if (!silent) _loadSeq++;
     _states[channelId] = ChannelState(
       items: page.items,
       loading: false,
@@ -261,13 +346,19 @@ class MessageRepository extends ChangeNotifier {
   // ---------------- 页签 / 搜索 ----------------
 
   /// 切换当前页签。首次进入该源时才触发加载。
+  ///
+  /// 走哪条路由 [autoRefresh] 决定：
+  /// - 开（默认）→ [FetchMode.cached]：读档案秒开 + 后台悄悄抓增量。
+  /// - 关 → [FetchMode.archive]：**只读档案、不联网**。
+  ///   ⚠️ 但档案为空时它仍会兜底抓一次（[CachedMessageSource] 内建）——
+  ///   否则全新安装的用户看到的是一个空页面，且怎么点都没有内容。
   void setActive(String channelId) {
     if (_activeChannelId == channelId) return;
     _activeChannelId = channelId;
     _notify();
-    if (!_loaded.contains(channelId)) {
-      _fireAndForget(load(channelId, mode: FetchMode.cached), '加载 $channelId');
-    }
+    if (_loaded.contains(channelId)) return;
+    final mode = _autoRefresh ? FetchMode.cached : FetchMode.archive;
+    _fireAndForget(load(channelId, mode: mode), '加载 $channelId');
   }
 
   /// 搜索词变化 → **重载当前页签的源**（只在本地档案上过滤，不联网）。

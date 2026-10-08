@@ -89,11 +89,21 @@ class CampusInfoCrawler {
     return null;
   }
 
-  /// 抓某栏目列表。[targetItems] 目标条数（默认 60，避免客户端长时间翻页）。
+  /// 连续多少页拿不到就放弃翻页（个别页缺失应跳过，不该整段中断）。
+  static const int _maxConsecutivePageFailures = 5;
+
+  /// 抓某栏目列表。
+  ///
+  /// [targetItems] 目标条数：**凑够就停**。
+  /// [maxPages] 最多请求几页（含首页）；`0` = 不设上限（只由 [targetItems] 收口）。
+  ///
+  /// 🔴 单页失败**跳过而不中断**。这里曾经是 `break`，于是最大页号一旦识别
+  /// 偏大，第一次翻页就 404、整段翻页立刻结束 —— 用户只看到首页那十几条。
   static Future<List<NoticeItem>> fetchList({
     required Future<Object?> Function(String, Map<String, String>) fetcher,
     required String columnId,
     int targetItems = 60,
+    int maxPages = 0,
   }) async {
     final col = columnById(columnId);
     if (col == null) {
@@ -111,14 +121,29 @@ class CampusInfoCrawler {
       throw CampusFetchException(col.listUrl, '列表首页解析不出条目');
     }
 
-    // 翻页（页码越大越新 → 从最大页往小翻）
+    // 翻页（页码越大越新 → 从最大页往小翻，得到从最新连续往旧的一段）
     if (col.pagePattern.isNotEmpty && items.length < targetItems) {
       final maxp = _detectMaxPage(html);
-      for (var n = maxp; n >= 1 && items.length < targetItems; n--) {
-        final page = await CampusWeb.httpGet(fetcher, col.pagePattern.replaceAll('{n}', '$n'));
-        if (page == null) break;
+      var pages = 1; // 首页已算一页
+      var failures = 0;
+      for (var n = maxp; n >= 1; n--) {
+        if (items.length >= targetItems) break;
+        if (maxPages > 0 && pages >= maxPages) break;
+        if (failures >= _maxConsecutivePageFailures) break;
+
+        final page = await CampusWeb.httpGet(
+            fetcher, col.pagePattern.replaceAll('{n}', '$n'));
+        if (page == null) {
+          failures++;
+          continue;
+        }
         final got = _parse(col.kind, page, col.host);
-        if (got.isEmpty) break;
+        if (got.isEmpty) {
+          failures++;
+          continue;
+        }
+        failures = 0;
+        pages++;
         items.addAll(got);
       }
     }
