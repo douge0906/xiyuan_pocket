@@ -153,6 +153,25 @@ class CourseStorage {
     return mondayOf(DateTime(now.year - 1, 9, 1));
   }
 
+  /// [defaultSemesterStart] 的**反函数**：按当前日期推出该查哪个学年 / 学期。
+  ///
+  /// 返回 `(xnm, xqm)`，取值与教务接口一致：
+  ///   · xqm = `'3'`  第1学期（秋，9 月开学）
+  ///   · xqm = `'12'` 第2学期（春，次年 2 月开学）
+  ///   · xnm 是**学年起始年**（2026-2027 学年第2学期 → xnm = `'2026'`）
+  ///
+  /// 自洽性（写单元测试钉住）：把返回值喂给 [autoSemesterStart]，
+  /// 得到的开学日必须与 [defaultSemesterStart] 一致。
+  ///
+  /// **为什么需要它**：原先「教务导入」面板把默认值写死成「当年 + 第1学期」，
+  /// 人手动导入时会自己看下拉框，问题不大；改成自动同步后就没人看了 ——
+  /// 2~7 月自动同步会去抓秋季学期的课，再覆盖掉用户正确的课表。
+  static (String, String) semesterArgsFor(DateTime now) {
+    if (now.month >= 8) return ('${now.year}', '3'); // 秋季学期，学年从今年起
+    if (now.month >= 2) return ('${now.year - 1}', '12'); // 春季学期，学年从去年起
+    return ('${now.year - 1}', '3'); // 1 月仍属去年秋季学期（寒假）
+  }
+
   /// 计算教学周（第 1 周从开学日期所在周一开始）
   static int teachingWeek(DateTime now, DateTime start) {
     final diff = now.difference(start).inDays;
@@ -236,7 +255,8 @@ class CourseStorage {
 
   // ---------------- 课表显示设置（v1.1.0） ----------------
 
-  /// 显示设置：**网格线**（默认开）、**非本周课程**（默认关）、**背景图**（默认无）。
+  /// 课表设置：**网格线**（默认开）、**非本周课程**（默认关）、**背景图**（默认无）、
+  /// **进入 App 自动更新课表**（默认开）。
   /// 用 JSON 存而不是独立 key：以后加字段不用改存储格式，缺字段自动补默认值。
   static const String _kDisplaySettings = 'course_display_settings_v1';
 
@@ -250,10 +270,18 @@ class CourseStorage {
   /// 课表背景图路径的内存缓存（空串 = 无背景图）。理由同上。
   static String backgroundImageCache = '';
 
+  /// 「进入 App 自动更新课表」开关的内存缓存（理由同上）。
+  ///
+  /// 默认**开**：开源版已经把「手动点按钮导入」这条路去掉了，同步对用户是隐形的；
+  /// 默认关的话，大多数人永远不会去设置页打开它，课表就再也不更新了。
+  /// 关了也安全 —— 只是不再自动同步，随时可用课表页右上角的刷新键手动同步。
+  static bool autoUpdateOnLaunchCache = true;
+
   static Map<String, dynamic> defaultDisplaySettings() => <String, dynamic>{
         'showGridLines': true,
         'showOtherWeeks': false,
         'backgroundImage': '',
+        'autoUpdateOnLaunch': true,
       };
 
   static Future<Map<String, dynamic>> loadDisplaySettings() async {

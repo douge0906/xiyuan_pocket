@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/home_page.dart';
 import 'pages/notification_page.dart';
 import 'pages/toolbox_page.dart';
 import 'pages/user_page.dart';
 import 'pages/course_table_home_page.dart';
+import 'services/course_storage.dart';
+import 'services/course_sync_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
@@ -44,6 +47,29 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     );
     _controllers[_currentIndex].value = 1.0;
     WidgetsBinding.instance.addPostFrameCallback((_) => _showDisclaimerIfNeeded());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoUpdateCourseTable());
+  }
+
+  /// 「进入 App 自动更新课表」（开关在课表设置页，**默认开**）。
+  ///
+  /// 为什么挂在这里而不是课表页：课表页是 IndexedStack 里的**懒加载** Tab，
+  /// 要等用户第一次点「课表」才初始化。挂在那里就变成「第一次点开课表才更新」，
+  /// 不是「进入 App 就更新」。挂在这里才算数。
+  ///
+  /// **全程静默**：还没登录、教务系统 00:00-6:00 关闭、网络不通 —— 都会失败，
+  /// 这些都不该在启动时弹东西打扰用户；失败也**不会**动已有课表
+  /// （CourseSyncService 里挡着「失败≠空」）。
+  Future<void> _autoUpdateCourseTable() async {
+    try {
+      final s = await CourseStorage.loadDisplaySettings();
+      // 缺字段按默认开处理（老用户升级上来不会因为没这个 key 而不更新）
+      if (s['autoUpdateOnLaunch'] == false) return;
+      if (!mounted) return;
+      await CourseSyncService.sync(
+          ProviderScope.containerOf(context, listen: false));
+    } catch (_) {
+      // 静默：自动同步失败不影响任何功能，用户随时可用课表页刷新键手动同步
+    }
   }
 
 
