@@ -112,15 +112,11 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
     // 调大：**必须真的重抓一遍**。否则就是原来的「把 3 页改成 20 页，
     // 回来一看还是 80 条」—— 全量入口在有档案时够不着，设置形同虚设。
     //
-    // 🔴 必须在 pop **之前**取到 messenger / navigator：pop 掉之后
-    // 本 State 的 context 就失效了，再 `ScaffoldMessenger.of(context)` 会炸。
-    final messenger = ScaffoldMessenger.of(context);
+    // 🔴 不再弹 SnackBar：消息页底部那条更新条（「更新中 0/5 · 2s」+ 计时）
+    // 已经在报同一件事，而且它就在底部，SnackBar 会**叠在它上面**把它压住。
+    // 重复的信息 + 视觉打架，直接去掉。
     final navigator = Navigator.of(context);
     navigator.pop();
-    // 提示挂在消息页上（那才是用户接下来要看的地方）。
-    messenger.showSnackBar(
-      SnackBar(content: Text('正在按 $picked 条重新同步…')),
-    );
     // 不 await：抓上百条要好几秒，设置页没必要为此挂着一个转圈。
     unawaited(repo.refreshAll(mode: FetchMode.full));
   }
