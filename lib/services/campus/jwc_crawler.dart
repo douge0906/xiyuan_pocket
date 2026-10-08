@@ -1,3 +1,4 @@
+import 'campus_http_fetcher.dart' show CampusFetchException;
 import 'campus_web.dart';
 
 /// 一条公告（列表项）。
@@ -57,8 +58,17 @@ class JwcCrawler {
     int maxPages = 1,
   }) async {
     final html = await CampusWeb.httpGet(fetcher, listUrl);
-    if (html == null) return [];
+    // 🔴 首页抓不到 = 整体失败，**必须抛**（不能返回空列表 —— 那会被
+    // 上层当成「确实没有公告」，于是断网时界面显示「暂无内容」）。
+    if (html == null) {
+      throw CampusFetchException(listUrl, '列表首页抓取失败');
+    }
     final items = _parseList(html);
+    // 抓到了页面却解析不出任何条目 = 站点结构变了 / 被拦截页顶替，
+    // 同样是失败。教务处通知公告页从来不会是空的。
+    if (items.isEmpty) {
+      throw CampusFetchException(listUrl, '列表首页解析不出条目');
+    }
 
     if (maxPages > 1) {
       final maxp = _detectMaxPage(html);

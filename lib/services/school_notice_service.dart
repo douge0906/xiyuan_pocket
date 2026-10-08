@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/school_notice.dart';
+import '../models/message_read_storage.dart';
 import 'campus/jwc_crawler.dart';
 import 'campus/campus_http_fetcher.dart';
 
@@ -55,22 +56,12 @@ class SchoolNoticeService {
     }
   }
 
-  static const String _kUnreadBaseline = 'school_notice_unread_baseline';
-
   /// 未读红点基准线（天级）：首次打开公告页时记录当天。
-  /// 「日期不早于基准线」的公告视为新增，未读即标红点。
-  static Future<String> loadOrInitUnreadBaseline() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final existing = prefs.getString(_kUnreadBaseline);
-      if (existing != null && existing.isNotEmpty) return existing;
-      final today = DateTime.now().toIso8601String().substring(0, 10);
-      await prefs.setString(_kUnreadBaseline, today);
-      return today;
-    } catch (_) {
-      return '';
-    }
-  }
+  ///
+  /// 实现已搬到 [MessageReadStorage]（它才是"已读状态"该在的地方）。
+  /// 这里保留一个转发，避免同一段逻辑存在两份。
+  static Future<String> loadOrInitUnreadBaseline() =>
+      MessageReadStorage.loadOrInitUnreadBaseline();
 
   /// 缓存首页列表，供下次打开先显示。
   ///

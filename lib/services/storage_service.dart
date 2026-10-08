@@ -274,4 +274,37 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kMessageStyle, style);
   }
+
+  // ---------------- 消息同步量（「最多同步 N 条」） ----------------
+  // 一个数字同时决定三件事：每个源**抓多少**、本机档案**存多少**、界面**显示多少**。
+  // 用户拍板用「条数」而不是「页数」——不该让他去记"一页算几条"。
+  static const String _kMessageSyncCount = 'message_sync_count';
+  static const int kMessageSyncCountDefault = 200;
+  static const int kMessageSyncCountMin = 20;
+  static const int kMessageSyncCountMax = 2000;
+
+  /// 设置页的档位快捷键（3 / 6 / 10 / 20 页 ≈ 60 / 120 / 200 / 400 条）。
+  static const List<int> kMessageSyncCountPresets = [60, 120, 200, 400];
+
+  /// 🔴 **钳制**，不是"非法就回落默认值"。
+  ///
+  /// 曾经写成「白名单 + 非法回落默认」：用户输入 7 页会被**悄悄改回 3 页**，
+  /// 设置项形同摆设。钳制的语义是"超界就收到边界"，用户填 5000 得到 2000，
+  /// 至少他知道自己填的生效了。
+  static int normalizeMessageSyncCount(int? raw) {
+    if (raw == null) return kMessageSyncCountDefault;
+    if (raw < kMessageSyncCountMin) return kMessageSyncCountMin;
+    if (raw > kMessageSyncCountMax) return kMessageSyncCountMax;
+    return raw;
+  }
+
+  static Future<int> loadMessageSyncCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return normalizeMessageSyncCount(prefs.getInt(_kMessageSyncCount));
+  }
+
+  static Future<void> saveMessageSyncCount(int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kMessageSyncCount, normalizeMessageSyncCount(count));
+  }
 }

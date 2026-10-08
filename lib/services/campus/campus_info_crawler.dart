@@ -1,3 +1,4 @@
+import 'campus_http_fetcher.dart' show CampusFetchException;
 import 'campus_web.dart';
 import 'jwc_crawler.dart' show NoticeItem, NoticeDetail;
 
@@ -95,11 +96,20 @@ class CampusInfoCrawler {
     int targetItems = 60,
   }) async {
     final col = columnById(columnId);
-    if (col == null) return [];
+    if (col == null) {
+      throw CampusFetchException(columnId, '栏目未在抓取器里登记');
+    }
 
     final html = await CampusWeb.httpGet(fetcher, col.listUrl);
-    if (html == null) return [];
+    // 🔴 首页抓不到 = 整体失败，**必须抛**（理由同教务处抓取器：
+    // 返回空列表会被上层当成「这个栏目没有内容」）。
+    if (html == null) {
+      throw CampusFetchException(col.listUrl, '列表首页抓取失败');
+    }
     final items = _parse(col.kind, html, col.host);
+    if (items.isEmpty) {
+      throw CampusFetchException(col.listUrl, '列表首页解析不出条目');
+    }
 
     // 翻页（页码越大越新 → 从最大页往小翻）
     if (col.pagePattern.isNotEmpty && items.length < targetItems) {
