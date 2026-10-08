@@ -275,6 +275,7 @@ class _CenterCourseButton extends StatelessWidget {
             height: 52,
             margin: const EdgeInsets.only(bottom: 2),
             decoration: BoxDecoration(
+              border: Border.all(color: context.borderColor),
               color: isSelected ? AppTheme.primaryColor : const Color(0xFF374151),
               borderRadius: BorderRadius.circular(52),
               // v2.4.2：去掉原来 16px 模糊 + 40% 主题色的投影（用户反馈

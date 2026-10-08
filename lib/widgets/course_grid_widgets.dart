@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import '../../models/course_model.dart';
 import '../../theme/app_theme.dart';
+import '../services/course_storage.dart';
 import '../../widgets/course_day_header.dart';
 
 // 课程表网格的展示层组件（v1.0.0 从 course_table_home_page.dart 剥离）。
@@ -66,12 +69,17 @@ class CourseBlockRow extends StatelessWidget {
   final CourseBlock block;
   final int todayWeekday;
   final bool isDark;
+
+  /// v1.1.1：背景图开启时，格子底色必须透明，否则会把背景图整片遮住
+  /// （用户反馈「背景图只显示在最右侧一列，左侧空白」）。
+  final bool transparent;
   final void Function(int weekday, int startSlot, int endSlot) onOpenAdd;
   const CourseBlockRow({
     super.key,
     required this.block,
     required this.todayWeekday,
     required this.isDark,
+    this.transparent = false,
     required this.onOpenAdd,
   });
 
@@ -80,13 +88,14 @@ class CourseBlockRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CourseTimeCell(block: block, isDark: isDark),
+        CourseTimeCell(block: block, isDark: isDark, transparent: transparent),
         for (int d = 0; d < 7; d++)
           CourseDayCell(
             weekday: d + 1,
             block: block,
             isToday: d + 1 == todayWeekday,
             isDark: isDark,
+            transparent: transparent,
             onOpenAdd: onOpenAdd,
           ),
       ],
@@ -97,7 +106,15 @@ class CourseBlockRow extends StatelessWidget {
 class CourseTimeCell extends StatelessWidget {
   final CourseBlock block;
   final bool isDark;
-  const CourseTimeCell({super.key, required this.block, required this.isDark});
+  const CourseTimeCell({
+    super.key,
+    required this.block,
+    required this.isDark,
+    this.transparent = false,
+  });
+
+  /// 背景图开启时透出底图。
+  final bool transparent;
 
   @override
   Widget build(BuildContext context) {
@@ -110,8 +127,14 @@ class CourseTimeCell extends StatelessWidget {
     return Container(
       width: kCourseTimeColWidth,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF202020) : Colors.grey.shade50,
-        border: Border(right: BorderSide(color: context.borderColor)),
+        color: transparent
+            ? Colors.transparent
+            : (isDark ? const Color(0xFF202020) : Colors.grey.shade50),
+        // v1.1.1 恢复无条件右边线：竖线是**结构线**（常驻，用来分列），
+        // 开关只控制「贯穿线 + 横线」；与在线版行为一致。
+        border: Border(
+            right: BorderSide(
+                color: isDark ? Colors.grey.shade800 : context.borderColor)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -142,6 +165,9 @@ class CourseDayCell extends StatelessWidget {
   final CourseBlock block;
   final bool isToday;
   final bool isDark;
+
+  /// 背景图开启时透出底图（v1.1.1）。
+  final bool transparent;
   final void Function(int weekday, int startSlot, int endSlot) onOpenAdd;
   const CourseDayCell({
     super.key,
@@ -149,6 +175,7 @@ class CourseDayCell extends StatelessWidget {
     required this.block,
     required this.isToday,
     required this.isDark,
+    this.transparent = false,
     required this.onOpenAdd,
   });
 
@@ -160,8 +187,15 @@ class CourseDayCell extends StatelessWidget {
         behavior: HitTestBehavior.translucent,
         child: Container(
           decoration: BoxDecoration(
-            color: isToday ? AppTheme.primaryColor.withOpacity(0.04) : (context.surfaceColor),
-            border: Border(right: BorderSide(color: context.borderColor)),
+            color: transparent
+                ? Colors.transparent
+                : (isToday
+                    ? AppTheme.primaryColor.withOpacity(0.04)
+                    : (context.surfaceColor)),
+            // v1.1.1 恢复无条件右边线（常驻结构竖线，与在线版一致）
+            border: Border(
+                right: BorderSide(
+                    color: isDark ? Colors.grey.shade800 : context.borderColor)),
           ),
         ),
       ),
@@ -257,7 +291,9 @@ class CourseWeekGrid extends StatelessWidget {
 
         final overlays = <Widget>[];
         for (final course in courses) {
-          if (!course.isActiveOnWeek(selectedWeek)) continue;
+          // v1.1.0：「显示非本周课程」开启时不再直接跳过非本周课程，改为淡化显示
+          final activeThisWeek = course.isActiveOnWeek(selectedWeek);
+          if (!activeThisWeek && !CourseStorage.showOtherWeeksCache) continue;
           final startIdx = blocks.indexWhere((b) => b.start == course.startSlot);
           final endIdx = blocks.lastIndexWhere((b) => b.end == course.endSlot);
           if (startIdx == -1 || endIdx == -1 || endIdx < startIdx) continue;
@@ -281,15 +317,57 @@ class CourseWeekGrid extends StatelessWidget {
               left: kCourseTimeColWidth + (wd - 1) * dayWidth,
               width: dayWidth,
               height: height,
-              child: CourseCardWidget(course: course, onTap: () => onOpenDetail(course)),
+              child: CourseCardWidget(
+                course: course,
+                onTap: () => onOpenDetail(course),
+                dimmed: !activeThisWeek,
+              ),
             ));
           }
         }
 
+        // v1.1.0：贯穿竖线（对齐在线版）—— 每天一条从上到下的完整竖线 + 时间列右边界。
+        // 此前只有「单元格右边线」，被横线打断成一段段，两版观感不一致（用户反馈）。
+        final gridLines = <Widget>[];
+        if (CourseStorage.showGridLinesCache) {
+          final lineColor = isDark ? Colors.grey.shade600 : Colors.grey.shade300;
+          for (int c = 0; c < 7; c++) {
+            gridLines.add(Positioned(
+              top: 0,
+              bottom: 0,
+              left: kCourseTimeColWidth + c * dayWidth,
+              child: Container(width: 1.0, color: lineColor),
+            ));
+          }
+        }
+
+        // v1.1.0：课表背景图（与在线版一致）——图片铺满整表 + 底色薄膜透出，
+        // 薄膜既让背景图能看见，又保证时间列文字 / 空格依然可读。
+        final bgPath = CourseStorage.backgroundImageCache;
+        final bgFile = bgPath.isEmpty ? null : File(bgPath);
+        final hasBg = bgFile != null && bgFile.existsSync();
+
         return Container(
           color: surfaceColor,
           child: Stack(
+            // v1.1.1 关键修复（对齐在线版）：必须 StackFit.expand。
+            // 默认 StackFit.loose 时 Stack 尺寸按非定位子组件（Column）塌陷，
+            // 导致「背景图只显示一列」+「贯穿竖线完全看不见」两个症状。
+            fit: StackFit.expand,
             children: [
+              if (hasBg) ...[
+                // v1.1.1 修复「背景图错位到最右边一列」：Stack 里非 Positioned 的子组件
+                // 会按自身尺寸参与布局，图片按原始分辨率摆 -> 偏移。必须 Positioned.fill 铺满。
+                Positioned.fill(
+                  child:
+                      Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
+                ),
+                ColoredBox(
+                  // v1.1.1 薄膜加浓（0.55 -> 0.72）：真机上看背景图时时间/日期文字被图案
+                  // 干扰到几乎看不清 —— 盖住底图的同时要保证文字可读。
+                  color: surfaceColor.withOpacity(isDark ? 0.78 : 0.72),
+                ),
+              ],
               Column(
                 children: [
                   for (int i = 0; i < blocks.length; i++) ...[
@@ -298,14 +376,21 @@ class CourseWeekGrid extends StatelessWidget {
                         block: blocks[i],
                         todayWeekday: todayWeekday,
                         isDark: isDark,
+                        transparent: hasBg,
                         onOpenAdd: onOpenAdd,
                       ),
                     ),
-                    if (i != blocks.length - 1)
+                    // v1.1.0：横线也只由「课表设置 → 显示网格线」控制
+                    // （读内存缓存，避免逐层传参）：关 = 完全没有网格线。
+                    if (i != blocks.length - 1 &&
+                        CourseStorage.showGridLinesCache)
                       Divider(height: dividerHeight, thickness: dividerHeight, color: context.borderColor),
                   ],
                 ],
               ),
+              // v1.1.1 逐字对齐在线版顺序：**gridLines 在 overlays 之前**
+              // （在线版 _WeekGrid 就是这个顺序，我之前写反了）。
+              ...gridLines,
               ...overlays,
             ],
           ),
@@ -318,7 +403,16 @@ class CourseWeekGrid extends StatelessWidget {
 class CourseCardWidget extends StatelessWidget {
   final Course course;
   final VoidCallback? onTap;
-  const CourseCardWidget({super.key, required this.course, this.onTap});
+
+  /// 是否为「非本周课程」（v1.1.0）：淡化显示，仅在设置里开启「显示非本周课程」时出现。
+  final bool dimmed;
+
+  const CourseCardWidget({
+    super.key,
+    required this.course,
+    this.onTap,
+    this.dimmed = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -334,7 +428,10 @@ class CourseCardWidget extends StatelessWidget {
         margin: const EdgeInsets.all(1.8),
         padding: const EdgeInsets.only(left: 3, right: 3, top: 3, bottom: 2),
         decoration: BoxDecoration(
-          color: bg,
+          // v1.1.0：非本周课程与页面底色混合 → 视觉上「退到后面」（淡化但仍可读）
+          color: dimmed
+              ? Color.lerp(bg, context.scaffoldColor, 0.62)!
+              : bg,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: isDark ? Colors.white.withOpacity(0.25) : Colors.black.withOpacity(0.30),

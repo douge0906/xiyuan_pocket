@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/storage_service.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
@@ -48,6 +49,9 @@ class _UserPageState extends State<UserPage> {
   /// 应用版本号 —— **运行时从编译产物读取**（见 `_load()`），不手写副本。
   /// 真相源只有 `pubspec.yaml` 的 `version:`，Android 侧由 flutter.versionName 自动取。
   String _appVersion = '';
+
+  /// 开源仓库地址（登录页展示、点击在浏览器打开）。
+  static const String _repoUrl = 'https://github.com/douge0906/xiyuan_pocket';
 
   // ---------------- 教程锚点 ----------------
   final GlobalKey _kHeader = GlobalKey();
@@ -258,7 +262,7 @@ class _UserPageState extends State<UserPage> {
                             : const Color(0xFF9CA3AF)),
                     const SizedBox(height: 10),
                     Text(
-                      '掌上锡院 · 开源版',
+                      '掌上锡院',
                       style: TextStyle(
                         fontSize: 13.5,
                         color: isDark
@@ -274,6 +278,27 @@ class _UserPageState extends State<UserPage> {
                         color: isDark
                             ? Colors.grey.shade600
                             : const Color(0xFF9CA3AF),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    // 开源仓库地址（点击在浏览器打开）
+                    GestureDetector(
+                      onTap: () => launchUrl(
+                        Uri.parse(_repoUrl),
+                        mode: LaunchMode.externalApplication,
+                      ),
+                      child: Text(
+                        _repoUrl.replaceFirst('https://', ''),
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: isDark
+                              ? Colors.grey.shade500
+                              : const Color(0xFF6B7280),
+                          decoration: TextDecoration.underline,
+                          decorationColor: isDark
+                              ? Colors.grey.shade700
+                              : const Color(0xFFD1D5DB),
+                        ),
                       ),
                     ),
                   ],

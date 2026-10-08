@@ -249,7 +249,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
               child: Container(
                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: context.borderColor),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -280,7 +280,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade300),
+                    border: Border.all(color: context.borderColor),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(

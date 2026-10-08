@@ -195,6 +195,7 @@ class _BalanceCard extends StatelessWidget {
     final Widget content = Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
+        border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: AppTheme.cardShadow,

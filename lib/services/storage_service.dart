@@ -52,6 +52,7 @@ class StorageService {
   static const String _kStudentName = 'student_name'; // 学生姓名缓存（「我的」页展示）
   static const String _kDisclaimerDismissed = 'disclaimer_dismissed';
   static const String _kJwglNoticeDismissed = 'jwgl_notice_dismissed';
+  static const String _kHiddenServices = 'hidden_services'; // v1.9.0 服务页显示/隐藏
 
   // 教务密码专用键：存放在系统安全存储（Android Keystore / iOS Keychain），
   // 不写入 SharedPreferences 明文。
@@ -174,6 +175,20 @@ class StorageService {
     await prefs.setBool(_kJwglNoticeDismissed, dismissed);
   }
 
+  // ---- 服务页显示/隐藏（v1.9.0） ----
+
+  /// 读取被隐藏的服务 id 列表。未设置返回空列表（= 全部显示）。
+  static Future<List<String>> loadHiddenServices() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kHiddenServices) ?? <String>[];
+  }
+
+  /// 保存被隐藏的服务 id 列表。
+  static Future<void> saveHiddenServices(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kHiddenServices, ids);
+  }
+
   // ---- 我的成绩（本地缓存，仅在推送时更新） ----
 
   static const String _kGradeCache = 'grade_cache_v1';
@@ -242,5 +257,80 @@ class StorageService {
   static Future<void> clearCardBalanceCache() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kCardBalanceCache);
+  }
+
+  // ---------------- 消息页栏目样式（v1.1.0） ----------------
+  // 两套样式随时可切：'plain' 纯白无缝（默认）/ 'card' 圆角卡片。
+  static const String _kMessageStyle = 'message_style';
+  static const String kMessageStylePlain = 'plain';
+  static const String kMessageStyleCard = 'card';
+
+  static Future<String> loadMessageStyle() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kMessageStyle) ?? kMessageStylePlain;
+  }
+
+  static Future<void> saveMessageStyle(String style) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kMessageStyle, style);
+  }
+
+  // ---------------- 消息同步量（「最多同步 N 条」） ----------------
+  // 一个数字同时决定三件事：每个源**抓多少**、本机档案**存多少**、界面**显示多少**。
+  // 用户拍板用「条数」而不是「页数」——不该让他去记"一页算几条"。
+  static const String _kMessageSyncCount = 'message_sync_count';
+
+  /// 默认 40 条。
+  ///
+  /// 🔴 从 200 改成 40 是**实测之后的修正**，不是口味问题：教务处分页实测
+  /// 每页 12 条、全站 150 页（1793 条），200 条 = 至少 17 页网络请求。
+  /// 首次进入消息页就默默打十几分钟级别的请求量，既慢又对校方站点不礼貌。
+  /// 40 条（约 4 页）是"一屏看得到变化"与"首次进页面秒开"的平衡点，
+  /// 想要更多的人可以在设置里加档 —— 档位快捷键第一项就写着 40。
+  static const int kMessageSyncCountDefault = 40;
+  static const int kMessageSyncCountMin = 20;
+  static const int kMessageSyncCountMax = 2000;
+
+  /// 设置页的档位快捷键。第一个就是默认值，方便用户一眼认出当前在哪一档。
+  static const List<int> kMessageSyncCountPresets = [40, 60, 120, 200, 400];
+
+  /// 🔴 **钳制**，不是"非法就回落默认值"。
+  ///
+  /// 曾经写成「白名单 + 非法回落默认」：用户输入 7 页会被**悄悄改回 3 页**，
+  /// 设置项形同摆设。钳制的语义是"超界就收到边界"，用户填 5000 得到 2000，
+  /// 至少他知道自己填的生效了。
+  static int normalizeMessageSyncCount(int? raw) {
+    if (raw == null) return kMessageSyncCountDefault;
+    if (raw < kMessageSyncCountMin) return kMessageSyncCountMin;
+    if (raw > kMessageSyncCountMax) return kMessageSyncCountMax;
+    return raw;
+  }
+
+  static Future<int> loadMessageSyncCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return normalizeMessageSyncCount(prefs.getInt(_kMessageSyncCount));
+  }
+
+  static Future<void> saveMessageSyncCount(int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kMessageSyncCount, normalizeMessageSyncCount(count));
+  }
+
+  // ---------------- 消息页「每次进入自动更新」 ----------------
+  // `true`（默认）：进消息页立刻读档案秒开，同时在后台悄悄抓一次增量。
+  // `false`：进消息页**只读档案、不联网**；只有该栏目档案为空时才兜底抓一次
+  //         （否则全新安装的用户会面对一个空页面，且无从下手）。
+  // ⚠️ 它管不到**下拉刷新** —— 那是用户的明确动作，任何时候都该真的联网。
+  static const String _kMessageAutoRefresh = 'message_auto_refresh';
+  static const bool kMessageAutoRefreshDefault = true;
+
+  static Future<bool> loadMessageAutoRefresh() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kMessageAutoRefresh) ?? kMessageAutoRefreshDefault;
+  }
+
+  static Future<void> saveMessageAutoRefresh(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kMessageAutoRefresh, value);
   }
 }

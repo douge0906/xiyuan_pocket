@@ -98,7 +98,7 @@ class _SplashPageState extends State<SplashPage>
                           width: 120,
                           height: 120,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1F2937),
+                            color: AppTheme.textPrimaryLight,
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
@@ -120,7 +120,7 @@ class _SplashPageState extends State<SplashPage>
                           style: TextStyle(
                             fontSize: 32,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF1F2937),
+                            color: AppTheme.textPrimaryLight,
                             letterSpacing: 2,
                           ),
                         ),

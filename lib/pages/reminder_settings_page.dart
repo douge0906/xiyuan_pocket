@@ -361,6 +361,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
+        border: Border.all(color: context.borderColor),
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         boxShadow: AppTheme.cardShadow,

@@ -233,4 +233,52 @@ class CourseStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kTimeBlocks, jsonEncode(blocks));
   }
+
+  // ---------------- 课表显示设置（v1.1.0） ----------------
+
+  /// 显示设置：**网格线**（默认开）、**非本周课程**（默认关）、**背景图**（默认无）。
+  /// 用 JSON 存而不是独立 key：以后加字段不用改存储格式，缺字段自动补默认值。
+  static const String _kDisplaySettings = 'course_display_settings_v1';
+
+  /// 网格线开关的**内存缓存**：供网格绘制组件（course_grid_widgets）直接读取，
+  /// 避免「页面 → 网格 → 单元格」逐层传参。由课表页加载/刷新显示设置时同步更新。
+  static bool showGridLinesCache = true;
+
+  /// 「显示非本周课程」开关的内存缓存（理由同 showGridLinesCache）。
+  static bool showOtherWeeksCache = false;
+
+  /// 课表背景图路径的内存缓存（空串 = 无背景图）。理由同上。
+  static String backgroundImageCache = '';
+
+  static Map<String, dynamic> defaultDisplaySettings() => <String, dynamic>{
+        'showGridLines': true,
+        'showOtherWeeks': false,
+        'backgroundImage': '',
+      };
+
+  static Future<Map<String, dynamic>> loadDisplaySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final base = defaultDisplaySettings();
+    final raw = prefs.getString(_kDisplaySettings);
+    if (raw == null || raw.isEmpty) return base;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      final merged = <String, dynamic>{...base, ...j};
+      // v1.1.1 一次性迁移：网格线默认开启。老数据里没有标记时（用户此前测试
+      // 关过一次就一直关着，导致课表看不到任何网格线）统一置为开启，只做一次。
+      if (merged['_gridDefaultOn'] != true) {
+        merged['showGridLines'] = true;
+        merged['_gridDefaultOn'] = true;
+        await saveDisplaySettings(merged);
+      }
+      return merged;
+    } catch (_) {
+      return base; // 损坏则回落默认值，不影响课表可用
+    }
+  }
+
+  static Future<void> saveDisplaySettings(Map<String, dynamic> s) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kDisplaySettings, jsonEncode(s));
+  }
 }

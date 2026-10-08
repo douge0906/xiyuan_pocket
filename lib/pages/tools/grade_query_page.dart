@@ -410,7 +410,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
         if (_message != null)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
               borderRadius: BorderRadius.circular(14),
@@ -493,6 +493,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       decoration: BoxDecoration(
+        border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         borderRadius: BorderRadius.circular(14),
         boxShadow: AppTheme.cardShadow,
@@ -541,7 +542,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
 
   /// 分数着色：≥90 标绿（优秀）、<60 标红（不及格）、其余用正文色。
   Color _scoreColor(bool isDark, String score) {
-    final normal = isDark ? Colors.white : const Color(0xFF1F2937);
+    final normal = isDark ? Colors.white : AppTheme.textPrimaryLight;
     final n = double.tryParse(score.trim());
     if (n == null) return normal;
     if (n >= 90) return const Color(0xFF10B981);

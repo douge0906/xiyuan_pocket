@@ -21,6 +21,7 @@ class LoadingOverlay extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 40),
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
+            border: Border.all(color: context.borderColor),
             color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
             borderRadius: BorderRadius.circular(20),
             boxShadow: AppTheme.cardShadow,

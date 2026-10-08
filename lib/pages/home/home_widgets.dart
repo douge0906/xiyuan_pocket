@@ -49,7 +49,7 @@ class HomeClockWidgetState extends State<HomeClockWidget> {
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
-            color: widget.isDark ? Colors.white70 : const Color(0xFF1F2937),
+            color: widget.isDark ? Colors.white70 : AppTheme.textPrimaryLight,
             letterSpacing: 1.5,
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
@@ -94,10 +94,10 @@ class TodoTimelineItem extends StatelessWidget {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
         margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isHighlighted
-              ? const Color(0xFF1F2937)
+              ? AppTheme.textPrimaryLight
               : (todo.completed
                   ? (isDark ? const Color(0xFF161616) : const Color(0xFFF3F4F6))
                   : (context.surfaceColor)),

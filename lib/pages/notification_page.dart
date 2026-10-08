@@ -1,16 +1,28 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
-import '../models/notice_channel.dart';
-import '../models/message_read_storage.dart';
-import '../models/school_notice.dart';
-import '../services/notice_channel_service.dart';
-import '../services/school_notice_service.dart';
-import 'message/message_cards.dart';
-import 'school_notice_detail_page.dart';
-import '../theme/app_theme.dart';
-import '../services/campus_info_service.dart';
-import 'campus_info_detail_page.dart';
 
+import 'package:flutter/material.dart';
+
+import '../models/message.dart';
+import '../services/message_channel_service.dart';
+import '../services/message_repository.dart';
+import '../services/message_source.dart';
+import '../services/storage_service.dart';
+import '../theme/app_theme.dart';
+import 'message/channel_picker_dialog.dart';
+import 'message/message_cards.dart';
+import 'message/message_detail.dart';
+import 'message/msg_style.dart';
+import 'message_settings_page.dart';
+
+/// 消息页 —— **一个页签 = 一个消息源**，所有源的渲染完全同一套代码。
+///
+/// 【本页只剩三件事】布局、把手势转成对 [MessageRepository] 的调用、
+/// 把仓库状态画出来。加载、入档、预算、失败降级、已读、搜索全在仓库里 ——
+/// 所以「新增一个消息来源」在这里是**零改动**（源注册好就自动出现页签）。
+///
+/// 重构前这里同时维护两套状态（教务处 6 个平铺字段 + 资讯的
+/// `Map<channelId, _ChannelState>`）和两套渲染，同一件事写两遍必然漂 ——
+/// 「搜索只对教务处生效」「改了同步条数对资讯无效」都是这么来的。
 class NotificationPage extends StatefulWidget {
   const NotificationPage({super.key});
 
@@ -20,246 +32,266 @@ class NotificationPage extends StatefulWidget {
 
 class _NotificationPageState extends State<NotificationPage>
     with TickerProviderStateMixin {
+  /// 页面**唯一**的状态与操作入口。
+  final MessageRepository _repo = MessageRepository();
 
+  /// 全部可订阅栏目（订阅面板用）。
+  List<MessageChannel> _allChannels = const [];
 
-  // ---------------- 消息渠道（v1.5.1）----------------
-  // 可订阅渠道目录（内置清单）+ 用户本地勾选结果。
-  List<NoticeChannel> _allChannels = [];
+  /// 用户当前订阅的栏目 id。
   Set<String> _subscribedIds = {};
 
-  // ---------------- 功能教程锚点（v2.0.0）----------------
+  final TextEditingController _searchController = TextEditingController();
+
+  /// 左右滑动切换页签；顺序与 [_tabs] 一致。
+  final PageController _tabPageController = PageController();
+
+  /// 搜索框里是否有内容（只用来决定后缀「清除」按钮显不显示）。
+  String _searchQuery = '';
+
+  /// 首屏装配中（读订阅集合 + 注册源）。
+  bool _booting = true;
+
+  // ---------------- 「累计加载条数」渐隐提示 ----------------
+  // 需求原文：「将累计加载的各项条数做成渐变消失提示」。
+  // 每次加载跑完弹一次，停 3 秒后淡出。**不占布局**（浮层），
+  // 所以它出现和消失都不会让列表抖一下。
+  Timer? _noticeTimer;
+
+  /// 提示内容；`null` = 从来没弹过（首屏前）。
+  ({String headline, String? detail})? _noticeData;
+
+  /// 提示是否可见。与 [_noticeData] 分开是**必须的**：
+  /// 淡出动画期间内容还得画得出来，若把内容一起置 null，
+  /// 就会变成「瞬间消失」而不是「渐变消失」。
+  bool _noticeVisible = false;
+
+  /// 已处理到的加载完成序号（见 [MessageRepository.loadSeq]）。
+  int _seenLoadSeq = 0;
+
+  // ---------------- 教程锚点（v2.0.0）----------------
   final GlobalKey _kTabsRow = GlobalKey();
   final GlobalKey _kAddChannelBtn = GlobalKey();
-  String? _activeChannelId; // 非空表示当前正查看某个已订阅渠道
 
-  /// 各渠道的资讯列表状态（按渠道 id 缓存，切来切去不重复请求）。
-  final Map<String, _ChannelState> _channelStates = {};
+  // ---------------- 消息栏目样式（两套，默认纯白） ----------------
+  String _messageStyle = StorageService.kMessageStylePlain;
 
-  Set<String> _readIds = {};
+  /// 当前页签（顺序 = 注册顺序 = chip 顺序 = PageView 页序）。
+  List<MessageChannel> get _tabs =>
+      _repo.registeredSources.map((s) => s.channel).toList();
 
-  // 学校公告（独立系统）
-  List<SchoolNotice> _notices = [];
-  bool _isLoadingNotices = true;
-  bool _loadingMore = false;
-  int _noticeTotal = -1;
-  String? _noticeError;
-  static const int _pageSize = 20;
-
-
-  // 搜索（按标题模糊匹配当前列表）
-  final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
-  Timer? _debounce;
-
-  // 新增公告红点基准线（天级）
-  String _unreadBaseline = '';
-
-  // 上拉加载
-  final ScrollController _scrollController = ScrollController();
-
-  /// 左右滑动切换列表（v1.6.0）。页面顺序与 chip 顺序一致（见 _allTabs）。
-  final PageController _tabPageController = PageController(initialPage: 1);
+  /// 当前选中的页签下标；找不到时回落 0。
+  int get _currentTabIndex {
+    final tabs = _tabs;
+    final id = _repo.activeChannelId;
+    if (id == null) return 0;
+    final i = tabs.indexWhere((t) => t.id == id);
+    return i < 0 ? 0 : i;
+  }
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
-    _loadReadIds();
-    _initSchoolNotices();
-    _loadChannels();
+    _loadMessageStyle();
+    // 发布-订阅是**两端**契约：只写 notifyListeners() 而没人订阅，
+    // 等于没接线（历史上「搜索完全失效」就是这么来的）。
+    _repo.addListener(_onRepoChanged);
+    _boot();
   }
 
-  /// 加载可订阅渠道：读本地缓存 + 订阅集合（缓存命中则不联网）。
-  Future<void> _loadChannels() async {
-    final catalog = await NoticeChannelService.loadCatalog();
-    final subscribed = await NoticeChannelService.loadSubscribed();
+  void _onRepoChanged() {
     if (!mounted) return;
-    setState(() {
-      _allChannels = catalog.channels;
-      _subscribedIds = subscribed;
-    });
-  }
-
-  /// 当前已订阅的渠道（按目录顺序）。
-  List<NoticeChannel> get _subscribedChannels =>
-      _allChannels.where((c) => _subscribedIds.contains(c.id)).toList();
-
-  /// 打开渠道勾选面板。
-  Future<void> _showChannelPicker() async {
-    if (_allChannels.isEmpty) {
-      // 目录还没拉到时，尝试强制刷新一次
-      final catalog = await NoticeChannelService.loadCatalog(force: true);
-      if (!mounted) return;
-      setState(() => _allChannels = catalog.channels);
-      if (_allChannels.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('暂无可订阅的渠道，请稍后再试')),
-        );
-        return;
-      }
+    final seq = _repo.loadSeq;
+    if (seq != _seenLoadSeq) {
+      _seenLoadSeq = seq;
+      _armCountNotice();
     }
+    setState(() {});
+  }
 
-    final picked = await showModalBottomSheet<Set<String>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ChannelPickerSheet(
-        channels: _allChannels,
-        initial: _subscribedIds,
-      ),
-    );
-    if (picked == null) return;
-
-    await NoticeChannelService.saveSubscribed(picked);
-    if (!mounted) return;
-    setState(() {
-      _subscribedIds = picked;
-      // 若当前查看的渠道被取消勾选，退回学校公告
-      if (_activeChannelId != null && !picked.contains(_activeChannelId)) {
-        _activeChannelId = null;
-      }
+  /// 每次加载结束（[MessageRepository.loadSeq] 前进）都重排一次提示。
+  ///
+  /// 🔴 **不能**用 `isLoading` 的 true→false 边沿来触发：强刷全部源是**串行**的，
+  /// 五个源中间会回落 4 次，边沿会采到 4 次「假结束」→ 提示闪 5 下。
+  /// 序号是单调的，一次加载一次递增，天然不会有这个问题。
+  void _armCountNotice() {
+    final data = _countNoticeData();
+    if (data == null) return;
+    _noticeTimer?.cancel();
+    _noticeData = data;
+    _noticeVisible = true;
+    _noticeTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _noticeVisible = false);
     });
   }
+
+  /// 「共 N 条 / 各栏目 N 条」。
+  ///
+  /// 只统计**已加载**的（[MessageRepository.loadedCounts]），也就是用户此刻
+  /// 真的能在列表里看到的数量 —— 报「档案里有多少」会与「已加载 N 条」打架。
+  ({String headline, String? detail})? _countNoticeData() {
+    final counts = _repo.loadedCounts;
+    final total = _repo.loadedTotal;
+    if (counts.isEmpty || total == 0) return null;
+    final parts = counts
+        .where((e) => e.count > 0)
+        .map((e) => '${e.name} ${e.count}')
+        .toList(growable: false);
+    if (parts.isEmpty) return null;
+    return (headline: '共 $total 条', detail: parts.join(' · '));
+  }
+
+  /// 首屏：读设置 → 读已读状态 → 读订阅集合 → 注册源 → **一次性更新全部源**。
+  ///
+  /// 🔴 [MessageRepository.initSettings] 必须在加载**之前**跑完：
+  /// 「每次进入自动更新」决定要不要联网，设置还没读进来时它会拿着默认值
+  /// 做决定（关掉开关的用户照样被联网）。
+  ///
+  /// 🔴 这里用 `loadIfNeeded: false` + [MessageRepository.syncAll]：
+  /// 选中第一个页签只是**定页签**，加载由批量更新统一负责 ——
+  /// 两边都加载的话第一个源会被白跑两趟。
+  Future<void> _boot() async {
+    await _repo.initSettings();
+    await _repo.initReadState();
+    final subscribed = await MessageChannelService.loadSubscribed();
+    await _repo.registerSources(subscribedIds: subscribed);
+    if (!mounted) return;
+    setState(() {
+      _allChannels = MessageChannelService.allChannels;
+      _subscribedIds = subscribed;
+      _booting = false;
+    });
+    final tabs = _tabs;
+    if (tabs.isEmpty) return;
+    // 只定页签，不单独加载 —— 下面的批量更新会把**所有**页签都铺好。
+    _repo.setActive(tabs.first.id, loadIfNeeded: false);
+    unawaited(_refreshFromEntry());
+  }
+
+  /// 进页面时的更新。
+  ///
+  /// - 「每次进入自动更新」开（默认）→ [MessageRepository.syncAll]：
+  ///   铺档案 + 串行联网更新全部源，界面出一条总的更新条。
+  /// - 关 → 只读档案（[FetchMode.archive]），**档案为空才兜底抓一次**
+  ///   （否则全新安装的用户面对一个空页面，且怎么点都没有内容）。
+  ///
+  /// 两条路都会亮同一条更新条、走同一套计时 —— 只是抓不抓网络不同。
+  Future<void> _refreshFromEntry() => _repo.autoRefresh
+      ? _repo.syncAll()
+      : _repo.refreshAll(mode: FetchMode.archive);
 
   @override
   void dispose() {
-    _debounce?.cancel();
+    _noticeTimer?.cancel();
+    _repo.removeListener(_onRepoChanged);
     _searchController.dispose();
-    _scrollController.dispose();
     _tabPageController.dispose();
+    _repo.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (_loadingMore || _isLoadingNotices) return;
-    if (_noticeTotal >= 0 && _notices.length >= _noticeTotal) return;
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 300) {
-      _loadMoreNotices();
+  // ---------------- 样式 ----------------
+
+  Future<void> _loadMessageStyle() async {
+    final s = await StorageService.loadMessageStyle();
+    MsgStyle.card = s == StorageService.kMessageStyleCard;
+    if (!mounted || s == _messageStyle) return;
+    setState(() => _messageStyle = s);
+  }
+
+  /// 右上角齿轮 → **独立设置页**；返回时无条件重读样式，立即生效。
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MessageSettingsPage(repository: _repo),
+    ));
+    await _loadMessageStyle();
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  // ---------------- 订阅 ----------------
+
+  /// 打开订阅面板；用户点「完成」才落盘并重注册源。
+  Future<void> _showChannelPicker() async {
+    if (_allChannels.isEmpty) {
+      _allChannels = MessageChannelService.allChannels;
+    }
+    final picked = await showChannelPickerDialog(
+      context,
+      channels: _allChannels,
+      selected: _subscribedIds,
+    );
+    if (picked == null || !mounted) return;
+
+    await MessageChannelService.saveSubscribed(picked);
+    // 重新注册：被取消的源整体撤下，新勾上的源立刻可用。
+    await _repo.registerSources(subscribedIds: picked);
+    if (!mounted) return;
+    setState(() => _subscribedIds = picked);
+    _syncActiveTab();
+    // 新勾上的栏目还是空的（从没加载过）—— 顺手走一次总的更新，别让用户
+    // 切过去看到一个转圈。取消订阅不会走到这里造成多余请求：注册表里已经
+    // 没有那个源了。
+    unawaited(_refreshFromEntry());
+  }
+
+  /// 让「当前页签」始终有效：被取消订阅后落到第一个栏目。
+  void _syncActiveTab() {
+    final tabs = _tabs;
+    if (tabs.isEmpty) {
+      _repo.setActive('');
+      return;
+    }
+    final active = _repo.activeChannelId;
+    if (active != null && tabs.any((t) => t.id == active)) return;
+    _repo.setActive(tabs.first.id);
+    if (_tabPageController.hasClients) _tabPageController.jumpToPage(0);
+  }
+
+  // ---------------- 页签切换 ----------------
+
+  void _switchTo(int i, {bool animate = false}) {
+    final tabs = _tabs;
+    if (i < 0 || i >= tabs.length) return;
+    _repo.setActive(tabs[i].id);
+    if (animate && _tabPageController.hasClients) {
+      _tabPageController.animateToPage(i,
+          duration: const Duration(milliseconds: 260), curve: Curves.easeOut);
     }
   }
 
-  Future<void> _loadReadIds() async {
-    final ids = await MessageReadStorage.loadReadIds();
-    if (mounted) setState(() => _readIds = ids);
-  }
-
-  // ---------------- 学校公告 ----------------
-
-  /// 先显示本地缓存，再后台刷新（"先显示后加载"）。
-  Future<void> _initSchoolNotices() async {
-    final baseline = await SchoolNoticeService.loadOrInitUnreadBaseline();
-    if (mounted) setState(() => _unreadBaseline = baseline);
-    final cached = await SchoolNoticeService.loadCachedList();
-    if (cached.isNotEmpty && mounted) {
-      setState(() {
-        _notices = cached;
-        _isLoadingNotices = false;
-      });
-    }
-    await _refreshNotices(showLoading: cached.isEmpty);
-  }
-
-  /// 新增公告 = 发布日期不早于基准线；未读的新增公告标红点。
-  bool _isUnreadNewNotice(SchoolNotice notice) {
-    if (_readIds.contains('school_${notice.id}')) return false;
-    if (notice.date.isEmpty || _unreadBaseline.isEmpty) return false;
-    return notice.date.compareTo(_unreadBaseline) >= 0;
-  }
-
-  Future<void> _refreshNotices({bool showLoading = false}) async {
-    if (mounted && showLoading) {
-      setState(() {
-        _isLoadingNotices = true;
-        _noticeError = null;
-      });
-    }
-    try {
-      final result = await SchoolNoticeService.fetchList(
-        limit: _pageSize,
-        offset: 0,
-        q: _searchQuery,
-      );
-      if (!mounted) return;
-      final searching = _searchQuery.trim().isNotEmpty;
-      // ⚠️ fetchList 抓取失败时**不抛异常，直接返回空列表**（见 school_notice_service）。
-      // 若不判断就把空列表写回 state / 缓存，会清掉内置快照与上次结果，
-      // 用户下次打开消息页只能看到转圈。此处保留已有内容。
-      if (!searching && result.items.isEmpty && _notices.isNotEmpty) {
-        setState(() => _isLoadingNotices = false);
-        return;
-      }
-      // 缓存仅保存无搜索时的首页，且只在有内容时写（避免覆盖成空）
-      if (!searching && result.items.isNotEmpty) {
-        SchoolNoticeService.cacheList(result.items);
-      }
-      setState(() {
-        _notices = result.items;
-        _noticeTotal = result.total;
-        _isLoadingNotices = false;
-        _noticeError = null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingNotices = false;
-        // 有缓存数据时静默失败（继续显示旧数据）
-        _noticeError = _notices.isEmpty
-            ? e.toString().replaceFirst('Exception: ', '')
-            : null;
-      });
-    }
-  }
-
-  Future<void> _loadMoreNotices() async {
-    if (_loadingMore) return;
-    setState(() => _loadingMore = true);
-    try {
-      final result = await SchoolNoticeService.fetchList(
-        limit: _pageSize,
-        offset: _notices.length,
-        q: _searchQuery,
-      );
-      if (!mounted) return;
-      setState(() {
-        _notices.addAll(result.items);
-        _noticeTotal = result.total;
-        _loadingMore = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loadingMore = false);
-    }
-  }
+  // ---------------- 搜索 ----------------
 
   void _onSearchChanged(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
-      if (!mounted) return;
-      setState(() => _searchQuery = value);
-      if (true) {
-        _refreshNotices(showLoading: true);
-      }
-      // v2.4.0：渠道内容也要能搜 —— 原来只处理「教务处」分类，
-      // 在渠道页输入关键词毫无反应（用户反馈「搜索仅限学校公告」）。
-      final cid = _activeChannelId;
-      if (cid != null) _loadChannel(cid, force: true);
-    });
+    setState(() => _searchQuery = value);
+    // 防抖与「只重载当前页签」都在仓库里（搜索是仓库级能力，与具体源无关）。
+    _repo.onQueryChanged(value);
   }
 
-  void _onNoticeTap(SchoolNotice notice) async {
-    final readKey = 'school_${notice.id}';
-    await MessageReadStorage.markRead(readKey);
-    if (!mounted) return;
-    // v2.4.0 修复：此前只写存储、未更新内存 `_readIds` 也未 setState，
-    // 导致看完公告返回列表时红点依旧（已读红点不消失）。
-    setState(() => _readIds.add(readKey));
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SchoolNoticeDetailPage(notice: notice),
-      ),
-    );
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _searchQuery = '');
+    _repo.clearQuery();
   }
+
+  // ---------------- 详情 ----------------
+
+  Future<void> _openDetail(MessageChannel ch, Message m) async {
+    // 先标已读再进详情：仓库会通知，列表红点立刻消失
+    // （历史上这里只写存储、不更新内存，返回后红点还在）。
+    await _repo.markRead(m);
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MessageDetailPage(
+        message: m,
+        sourceName: ch.name,
+        loader: _repo.loadDetail,
+      ),
+    ));
+  }
+
+  // ---------------- 视图 ----------------
 
   Widget _buildHeader() {
     return Padding(
@@ -269,33 +301,29 @@ class _NotificationPageState extends State<NotificationPage>
         children: [
           Expanded(
             child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '消息通知',
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: -0.5,
-                    ),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '消息通知',
+                  style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.5,
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '系统公告 · 教务处',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Colors.grey.shade500,
-                    ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _booting ? '加载中…' : '共 ${_tabs.length} 个栏目',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: Colors.grey.shade500,
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
           ),
           GestureDetector(
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('消息设置开发中')),
-              );
-            },
+            onTap: _openSettings,
             child: Container(
               width: 40,
               height: 40,
@@ -317,14 +345,14 @@ class _NotificationPageState extends State<NotificationPage>
   }
 
   Widget _buildFilterChips() {
-    final tabs = _allTabs;
+    final tabs = _tabs;
     return SizedBox(
-        key: _kTabsRow, // v2.0.0 教程高亮锚点
+      key: _kTabsRow,
       height: 44,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         scrollDirection: Axis.horizontal,
-        // 末位固定是「＋」：已订阅渠道插在它之前，故加号始终在最右（用户要求）。
+        // 末位固定是「＋」：已订阅栏目插在它之前，故加号始终在最右。
         itemCount: tabs.length + 1,
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
@@ -333,24 +361,19 @@ class _NotificationPageState extends State<NotificationPage>
           final selected = index == _currentTabIndex;
           return _chipShell(
             selected: selected,
+            // 点 chip 时也让 PageView 滑过去，两者永远同步
             onTap: () {
               if (selected) return;
-              _switchTo(index);
-              if (_tabPageController.hasClients) {
-                _tabPageController.animateToPage(index,
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOut);
-              }
+              _switchTo(index, animate: true);
             },
-            // 内置页签只剩「学校公告」，渠道页签用渠道名
-            label: t.channel?.name ?? '教务处',
+            label: t.name,
           );
         },
       ),
     );
   }
 
-  /// 统一的 chip 外壳（内置分类与渠道共用，保证视觉一致）。
+  /// 统一的 chip 外壳（所有栏目共用，保证视觉一致）。
   Widget _chipShell({
     required bool selected,
     required VoidCallback onTap,
@@ -382,10 +405,10 @@ class _NotificationPageState extends State<NotificationPage>
     );
   }
 
-  /// 「＋」：打开渠道勾选面板。
+  /// 「＋」：打开订阅面板。
   Widget _buildAddChannelButton() {
     return Center(
-      key: _kAddChannelBtn, // v2.0.0 教程高亮锚点
+      key: _kAddChannelBtn,
       child: Material(
         color: Colors.transparent,
         shape: const CircleBorder(),
@@ -407,240 +430,6 @@ class _NotificationPageState extends State<NotificationPage>
     );
   }
 
-
-  // ---------------- 列表左右滑动切换（v1.6.0）----------------
-  // 左右滑动在「学校公告 / 已订阅渠道」之间翻页切换。
-  //
-  // 设计要点：**chip 顺序与页面顺序用同一套索引**（见 _allTabs），
-  // 这样「点 chip」和「左右滑」天然对齐，不会出现错位。
-
-  /// 全部页签（顺序即 chip 顺序、也是 PageView 的页面顺序）。
-  /// 索引 0 固定为学校公告（教务处），其后是已订阅的校园资讯渠道。
-  /// 页签 = 学校公告（教务处直抓）+ 已订阅的校园资讯渠道。
-  List<_NoticeTab> get _allTabs => [
-        const _NoticeTab(isSchool: true),
-        for (final c in _subscribedChannels) _NoticeTab(channel: c),
-      ];
-
-  /// 当前选中的页签下标；找不到时回落到 0（学校公告）。
-  int get _currentTabIndex {
-    final tabs = _allTabs;
-    final i = tabs.indexWhere((t) =>
-        _activeChannelId != null
-            ? t.channel?.id == _activeChannelId
-            : t.isSchool);
-    return i < 0 ? 0 : i;
-  }
-
-  /// 切换到指定页签（chip 点击与 PageView 回调共用）。
-  void _switchTo(int i) {
-    final tabs = _allTabs;
-    if (i < 0 || i >= tabs.length) return;
-    final t = tabs[i];
-    setState(() {
-      if (t.channel != null) {
-        _activeChannelId = t.channel!.id;
-      } else {
-        _activeChannelId = null;
-      }
-    });
-    // 学校公告列表依赖 _scrollController，仅在切到它时复位
-    if (t.isSchool && _scrollController.hasClients) {
-      _scrollController.jumpTo(0);
-    }
-  }
-
-/// 渠道内容区（v2.3.0）：显示该渠道的真实资讯列表。
-  ///
-  /// 三态：加载中（骨架/转圈）→ 列表 / 空态 / 失败可重试。
-  /// 支持下拉刷新（强制走网络）；点击条目进入详情。
-  Widget _buildChannelContent(NoticeChannel ch) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final state = _channelStates[ch.id];
-
-    // 首次进入该渠道：触发加载
-    if (state == null) {
-      _loadChannel(ch.id);
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2.5));
-    }
-    if (state.loading && state.items.isEmpty) {
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2.5));
-    }
-    if (state.error != null && state.items.isEmpty) {
-      return _channelError(ch, state.error!, isDark);
-    }
-    if (state.items.isEmpty) {
-      return _channelEmpty(ch, isDark);
-    }
-
-    return RefreshIndicator(
-      color: AppTheme.primaryColor,
-      onRefresh: () => _loadChannel(ch.id, force: true),
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        itemCount: state.items.length,
-        separatorBuilder: (_, __) => Divider(
-          height: 1,
-          color: context.borderColor,
-        ),
-        itemBuilder: (ctx, i) {
-          final it = state.items[i];
-          return InkWell(
-            onTap: () => _openCampusInfo(ch, it),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          it.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.45,
-                            fontWeight: FontWeight.w500,
-                            color: context.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          it.date,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isDark
-                                ? Colors.grey.shade600
-                                : Colors.grey.shade400,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(Icons.chevron_right,
-                      size: 18,
-                      color: isDark
-                          ? Colors.grey.shade700
-                          : Colors.grey.shade300),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  /// 加载某渠道的资讯（[force] 为 true 时跳过本地缓存）。
-  Future<void> _loadChannel(String columnId, {bool force = false}) async {
-    setState(() {
-      _channelStates[columnId] =
-          (_channelStates[columnId] ?? const _ChannelState()).copyWith(
-        loading: true,
-        error: null,
-      );
-    });
-    try {
-      final items = await CampusInfoService.fetchList(columnId,
-          force: force, q: _searchQuery);
-      if (!mounted) return;
-      setState(() {
-        _channelStates[columnId] = _ChannelState(items: items, loading: false);
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _channelStates[columnId] = _ChannelState(
-          items: _channelStates[columnId]?.items ?? const [],
-          loading: false,
-          error: '内容加载失败，请检查网络',
-        );
-      });
-    }
-  }
-
-  /// 打开资讯详情（**整页**，与「教务处公告详情」观感一致）。
-  ///
-  /// v2.4.0：原来用 showModalBottomSheet（上滑弹层），用户反馈「上滑式丑陋」，
-  /// 且与学校公告详情不一致 → 改为整页 push。
-  Future<void> _openCampusInfo(NoticeChannel ch, CampusInfoItem item) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CampusInfoDetailPage(
-          columnId: ch.id,
-          columnName: ch.name,
-          item: item,
-        ),
-      ),
-    );
-  }
-
-  Widget _channelEmpty(NoticeChannel ch, bool isDark) => Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.inbox_outlined,
-                  size: 52,
-                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-              const SizedBox(height: 12),
-              Text(
-                '暂无${ch.name}内容',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '下拉可刷新',
-                style: TextStyle(
-                    fontSize: 12.5,
-                    color: isDark
-                        ? Colors.grey.shade600
-                        : Colors.grey.shade400),
-              ),
-            ],
-          ),
-        ),
-      );
-
-  Widget _channelError(NoticeChannel ch, String msg, bool isDark) => Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.wifi_off_outlined,
-                  size: 48,
-                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-              const SizedBox(height: 12),
-              Text(msg,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 13.5,
-                      color: isDark
-                          ? Colors.grey.shade500
-                          : Colors.grey.shade500)),
-              const SizedBox(height: 14),
-              ElevatedButton.icon(
-                onPressed: () => _loadChannel(ch.id, force: true),
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('重新加载'),
-              ),
-            ],
-          ),
-        ),
-      );
-
   Widget _buildSearchBox(bool isDark) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
@@ -649,30 +438,23 @@ class _NotificationPageState extends State<NotificationPage>
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: context.borderColor,
-          ),
+          border: Border.all(color: context.borderColor),
         ),
         child: TextField(
           controller: _searchController,
           onChanged: _onSearchChanged,
-          style: TextStyle(
-            fontSize: 14,
-            color: context.textPrimary,
-          ),
+          style: TextStyle(fontSize: 14, color: context.textPrimary),
           decoration: InputDecoration(
             isDense: true,
-            hintText: '搜索公告标题',
+            hintText: '搜索标题',
             hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
-            prefixIcon: Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade400),
+            prefixIcon:
+                Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade400),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
-                    icon: Icon(Icons.close_rounded, size: 18, color: Colors.grey.shade500),
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _searchQuery = '');
-                      _refreshNotices(showLoading: true);
-                    },
+                    icon: Icon(Icons.close_rounded,
+                        size: 18, color: Colors.grey.shade500),
+                    onPressed: _clearSearch,
                   )
                 : null,
             border: InputBorder.none,
@@ -683,352 +465,420 @@ class _NotificationPageState extends State<NotificationPage>
     );
   }
 
-  Widget _buildSchoolNotices() {
-    if (_isLoadingNotices) {
-      return const Center(
-          child: CircularProgressIndicator(strokeWidth: 2.5));
-    }
-    if (_noticeError != null && _notices.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.wifi_off_outlined, size: 48, color: Colors.grey.shade400),
-            const SizedBox(height: 12),
-            Text(
-              _noticeError!,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () => _refreshNotices(showLoading: true),
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('重新加载'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (_notices.isEmpty) {
-      final searching = _searchQuery.trim().isNotEmpty;
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              searching ? Icons.search_off_rounded : Icons.inbox_outlined,
-              size: 64,
-              color: Colors.grey.shade300,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              searching ? '未找到相关公告' : '暂无公告',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-            ),
-          ],
-        ),
-      );
-    }
+  /// 单个页签的内容区。
+  ///
+  /// 三态严格区分：加载中 / 失败（[ChannelState.error] 非空）/ 空。
+  /// 🔴 **绝不能用 `items.isEmpty` 判断失败** —— 那是本项目发作次数最多的 bug。
+  Widget _buildChannelContent(MessageChannel ch) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final state = _repo.stateOf(ch.id);
+
+    if (state.loading && state.items.isEmpty) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
+    }
+    if (state.error != null && state.items.isEmpty) {
+      return _channelError(ch, state.error!, isDark);
+    }
+    if (state.items.isEmpty) {
+      return _channelEmpty(ch, isDark, searching: _searchQuery.trim().isNotEmpty);
+    }
+
     return RefreshIndicator(
-      onRefresh: () => _refreshNotices(),
-      color: const Color(0xFF1F2937),
-      child: ListView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
-        itemCount: _notices.length + 1,
-        itemBuilder: (context, index) {
-          if (index == _notices.length) {
-            final endReached =
-                _noticeTotal >= 0 && _notices.length >= _noticeTotal;
-            if (endReached && _notices.length > _pageSize) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Center(
-                  child: Text(
-                    '已显示全部公告',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey.shade400),
-                  ),
-                ),
-              );
-            }
-            if (endReached) return const SizedBox(height: 8);
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Center(
-                child: _loadingMore
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(
-                        '加载更多…',
-                        style: TextStyle(
-                            fontSize: 12.5, color: Colors.grey.shade400),
-                      ),
-              ),
-            );
+      color: AppTheme.primaryColor,
+      // 下拉刷新 = **更新全部**（不是只更新当前这一个页签）。
+      // 理由：更新条只有一条、进度是「N 个源里的第几个」，单刷一个源时
+      // 那条进度只会显示 1/1 —— 与「总的更新」这个概念自相矛盾。
+      // 另外它**不受「每次进入自动更新」影响** —— 那是用户的明确动作。
+      onRefresh: () => _repo.syncAll(),
+      child: ListView.separated(
+        // 内容不足一屏时也要能下拉刷新
+        physics: const AlwaysScrollableScrollPhysics(),
+        // 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
+        padding: MsgStyle.card
+            ? const EdgeInsets.fromLTRB(14, 10, 14, 24)
+            : const EdgeInsets.fromLTRB(0, 4, 0, 24),
+        itemCount: state.items.length + 1,
+        separatorBuilder: (_, i) => i < state.items.length - 1
+            ? (MsgStyle.card
+                ? const SizedBox.shrink()
+                : Divider(height: 1, color: context.borderColor))
+            : const SizedBox.shrink(),
+        itemBuilder: (ctx, i) {
+          // 末尾一行：已加载条数（不再有「加载更多」，也就没有分页状态）
+          if (i == state.items.length) {
+            return _loadedCountLabel(state.items.length);
           }
-          final notice = _notices[index];
-          return SchoolNoticeCard(
-            notice: notice,
-            index: index,
-            isDark: isDark,
-            isRead: !_isUnreadNewNotice(notice),
-            onTap: () => _onNoticeTap(notice),
+          final m = state.items[i];
+          return MessageCard(
+            message: m,
+            isUnread: _repo.isUnread(m),
+            onTap: () => _openDetail(ch, m),
           );
         },
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC),
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 12),
-            _buildFilterChips(),
-            _buildSearchBox(isDark),
-            const SizedBox(height: 4),
-            // 左右滑动切换列表（v1.6.0）：页面顺序 = _allTabs 顺序。
-            Expanded(
-              child: PageView.builder(
-                controller: _tabPageController,
-                itemCount: _allTabs.length,
-                onPageChanged: (i) => _switchTo(i),
-                itemBuilder: (ctx, i) {
-                  final t = _allTabs[i];
-                  if (t.channel != null) {
-                    return _buildChannelContent(t.channel!);
-                  }
-                  return _buildSchoolNotices();
-                },
-              ),
-            ),
-          ],
+  /// 「已加载 N 条」——取代原先的「加载更多… / 已显示全部公告」。
+  ///
+  /// 列表是懒渲染的（一次只画十来行），200 条和 400 条的渲染成本几乎一样，
+  /// 所以不做上滑分页；用户只需要知道「现在手里有多少条」以及
+  /// 「要更多就去设置里调大」。
+  Widget _loadedCountLabel(int n) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Text(
+            '已加载 $n 条',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade400),
+          ),
         ),
+      );
+
+  Widget _channelEmpty(MessageChannel ch, bool isDark,
+          {bool searching = false}) =>
+      Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                searching ? Icons.search_off_rounded : Icons.inbox_outlined,
+                size: searching ? 64 : 52,
+                color: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                searching ? '未找到相关标题' : '暂无${ch.name}内容',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                searching ? '换个关键词试试' : '下拉可刷新',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _channelError(MessageChannel ch, String msg, bool isDark) => Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.wifi_off_outlined,
+                  size: 48,
+                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
+              const SizedBox(height: 12),
+              Text(
+                msg,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13.5, color: Colors.grey.shade500),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton.icon(
+                onPressed: () =>
+                    _repo.load(ch.id, mode: FetchMode.incremental),
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('重新加载'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  /// 一个栏目都没订阅时的空态 —— 必须显式给出，否则页面只剩一排「＋」。
+  Widget _noChannels(bool isDark) => Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.inbox_outlined,
+                  size: 56,
+                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
+              const SizedBox(height: 14),
+              Text(
+                '还没有订阅任何栏目',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '点右上角「＋」挑选想看的栏目',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _showChannelPicker,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('订阅栏目'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  // ---------------- 总的更新条 / 轻量提示 ----------------
+
+  /// **一条**总的更新条，浮在列表底部（**不占布局**，出现消失都不抖）。
+  ///
+  /// 为什么不放在顶部：它要带文字（`正在更新 3/5 · 12s`）。顶部的文字条会
+  /// 把下面的列表整体推下去，每次更新都蹿一格；底部浮层则完全不动布局，
+  /// 而且能和「更新完成」的提示**共用同一个位置**，视觉上是同一条东西
+  /// 从「进行中」变成「已完成」，而不是两个东西一进一出。
+  ///
+  /// 两个状态共用外层容器，靠 [AnimatedOpacity] / [AnimatedSlide] 过渡。
+  Widget _buildStatusBar() {
+    final busy = _repo.isBusy;
+    final data = _noticeData;
+    final showNotice = !busy && _noticeVisible && data != null;
+
+    return AnimatedOpacity(
+      opacity: (busy || showNotice) ? 1 : 0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: (busy || showNotice) ? Offset.zero : const Offset(0, 0.4),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        child: busy
+            ? Center(child: _syncPill())
+            : (data == null
+                ? const SizedBox.shrink()
+                : Center(child: _noticePill(data))),
       ),
     );
   }
-}
-/// 渠道勾选面板（多选）。
-///
-/// 交互：勾选 / 取消勾选，点「完成」回传新的订阅集合。
-/// 未接通数据源的渠道标「筹备中」，但仍允许勾选 —— 上线后自动出现内容，
-/// 这样用户不必等到上线才想起去勾。
-class _ChannelPickerSheet extends StatefulWidget {
-  final List<NoticeChannel> channels;
-  final Set<String> initial;
 
-  const _ChannelPickerSheet({required this.channels, required this.initial});
-
-  @override
-  State<_ChannelPickerSheet> createState() => _ChannelPickerSheetState();
-}
-
-class _ChannelPickerSheetState extends State<_ChannelPickerSheet> {
-  late Set<String> _sel;
-
-  @override
-  void initState() {
-    super.initState();
-    _sel = Set<String>.from(widget.initial);
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  /// 状态一：**更新中**。左侧小进度环 + 文案 + 计时，底下一条细进度。
+  ///
+  /// 宽度**固定**：`正在更新 3/5` 的位数会变（1/5 → 10/5 之类），
+  /// 让它自适应宽度的话下面那条细进度会跟着一会儿长一会儿短，很跳。
+  Widget _syncPill() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final p = _repo.refreshProgress;
+    // 没有批量进度（单源加载）→ 不确定进度。total<=0 按跑完画，免得除零。
+    final double? value =
+        p == null ? null : (p.total <= 0 ? 1.0 : (p.done / p.total).clamp(0, 1));
+    final label = p == null ? '更新中' : '更新中 ${p.done}/${p.total}';
+
     return Container(
+      width: 214,
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 14,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        color: isDark ? const Color(0xF21E1E1E) : const Color(0xF2FFFFFF),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: context.borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.30 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '订阅消息渠道',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: context.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '勾选后该渠道会出现在消息页顶部，内容上线后自动显示',
-            style: TextStyle(
-              fontSize: 12.5,
-              color: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: widget.channels.length,
-              itemBuilder: (ctx, i) {
-                final ch = widget.channels[i];
-                final on = _sel.contains(ch.id);
-                return InkWell(
-                  onTap: () => setState(() {
-                    if (on) {
-                      _sel.remove(ch.id);
-                    } else {
-                      _sel.add(ch.id);
-                    }
-                  }),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Row(
-                      children: [
-                        // 自绘复选框：与页面风格一致，不依赖平台样式
-                        Container(
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            color: on ? AppTheme.primaryColor : Colors.transparent,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: on
-                                  ? const Color(0xFF1F2937)
-                                  : (isDark ? Colors.grey.shade600 : Colors.grey.shade300),
-                              width: 1.5,
-                            ),
-                          ),
-                          child: on
-                              ? const Icon(Icons.check_rounded,
-                                  size: 15, color: Colors.white)
-                              : null,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                ch.name,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  color: context.textPrimary,
-                                ),
-                              ),
-                              if (ch.desc.isNotEmpty) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  ch.desc,
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    color: isDark
-                                        ? Colors.grey.shade500
-                                        : Colors.grey.shade500,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        if (!ch.isReady)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? const Color(0xFF3A3A2A)
-                                  : const Color(0xFFFAEEDA),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text(
-                              '筹备中',
-                              style: TextStyle(
-                                  fontSize: 11, color: Color(0xFF854F0B)),
-                            ),
-                          ),
-                      ],
-                    ),
+          Row(
+            children: [
+              _progressRing(value),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: context.textPrimary,
                   ),
-                );
-              },
-            ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _formatElapsed(_repo.busyElapsed),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  // 等宽数字：秒数从 9s → 10s 时宽度不变，不会把左边的
+                  // 文案挤得抖一下。
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: context.textTertiary,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(_sel),
-              child: const Text('完成'),
+          const SizedBox(height: 8),
+          // 内嵌细进度条：**确定性**时按 done/total 填充，否则来回扫。
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: SizedBox(
+              height: 3,
+              child: LinearProgressIndicator(
+                value: value,
+                minHeight: 3,
+                backgroundColor: AppTheme.primaryColor.withOpacity(0.12),
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+              ),
             ),
           ),
         ],
       ),
     );
   }
-}
-/// 消息页的一个页签：要么是内置的「学校公告」，要么是已订阅的校园资讯渠道。
-///
-/// 用它把「chip 顺序」与「PageView 页面顺序」统一到同一个列表（见 `_allTabs`），
-/// 两者共用索引后，点 chip 与左右滑动天然对齐。
-///
-/// 开源版说明：原设计用 `MessageCategory` 枚举区分内置分类（系统公告 / 学校公告）。
-/// 移除系统公告后**内置分类只剩学校公告一个**，枚举失去意义 → 退化为布尔
-/// [isSchool]，顺便解除了对已删除的 `message_model.dart` 的依赖。
-class _NoticeTab {
-  /// 是否是内置的「学校公告」页签（与 [channel] 二选一）。
-  final bool isSchool;
 
-  /// 已订阅渠道（与 [isSchool] 二选一）。
-  final NoticeChannel? channel;
-
-  const _NoticeTab({this.isSchool = false, this.channel});
-}
-
-
-/// 单渠道的加载状态（v2.3.0）。
-class _ChannelState {
-  final List<CampusInfoItem> items;
-  final bool loading;
-  final String? error;
-
-  const _ChannelState({
-    this.items = const [],
-    this.loading = false,
-    this.error,
-  });
-
-  _ChannelState copyWith({
-    List<CampusInfoItem>? items,
-    bool? loading,
-    String? error,
-  }) =>
-      _ChannelState(
-        items: items ?? this.items,
-        loading: loading ?? this.loading,
-        error: error,
+  /// 左侧那个小环：有 `value` 就是**确定性**进度环（数值变化带补间动画），
+  /// 没有就是不确定的转圈。
+  Widget _progressRing(double? value) {
+    const size = 15.0;
+    if (value == null) {
+      return SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
+        ),
       );
+    }
+    // 直接给 CircularProgressIndicator 换 value 是**瞬变**的，
+    // 五个源就是五次硬跳；补间一下才像「在走」。
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: value),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      builder: (_, v, __) => SizedBox(
+        width: size,
+        height: size,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          value: v,
+          strokeCap: StrokeCap.round,
+          valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
+        ),
+      ),
+    );
+  }
+
+  /// `12s` / `1:05` / `12:03`。
+  static String _formatElapsed(Duration d) {
+    final s = d.inSeconds;
+    if (s < 60) return '${s}s';
+    final m = s ~/ 60;
+    final r = s % 60;
+    if (m < 60) return '$m:${r.toString().padLeft(2, '0')}';
+    return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// 状态二：**更新完成**的轻量提示。
+  ///
+  /// 刻意做得比「更新中」轻：一行、字号更小、浅底 + 细边 + 几乎没有阴影。
+  /// 它的职责只是「告诉用户拿到了多少条」，不该像弹窗一样抢注意力。
+  Widget _noticePill(({String headline, String? detail}) data) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 340),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xE61E1E1E) : const Color(0xE6FFFFFF),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_rounded, size: 13, color: AppTheme.primaryColor),
+          const SizedBox(width: 5),
+          Text(
+            data.headline,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              color: context.textSecondary,
+            ),
+          ),
+          if (data.detail != null) ...[
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                data.detail!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11.5, color: context.textTertiary),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tabs = _tabs;
+
+    return Scaffold(
+      // 无缝白底：消息页整体铺白，行与行之间只靠 1px 灰线分隔。
+      backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                _buildHeader(),
+                const SizedBox(height: 12),
+                _buildFilterChips(),
+                _buildSearchBox(isDark),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: _booting
+                      ? const Center(
+                          child: CircularProgressIndicator(strokeWidth: 2.5))
+                      : tabs.isEmpty
+                          ? _noChannels(isDark)
+                          : PageView.builder(
+                              controller: _tabPageController,
+                              itemCount: tabs.length,
+                              onPageChanged: (i) => _switchTo(i),
+                              itemBuilder: (ctx, i) =>
+                                  _buildChannelContent(tabs[i]),
+                            ),
+                ),
+              ],
+            ),
+            // 浮层：`IgnorePointer` 保证它绝不抢列表的点击 —— 它只是个状态条，
+            // 更新中也不该挡着用户去点列表。
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 20,
+              child: IgnorePointer(child: _buildStatusBar()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

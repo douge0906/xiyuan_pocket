@@ -397,7 +397,7 @@ class HomePageState extends ConsumerState<HomePage>
                         margin: const EdgeInsets.symmetric(horizontal: 6),
                         decoration: BoxDecoration(
                           color: isSelected
-                              ? const Color(0xFF1F2937)
+                              ? AppTheme.textPrimaryLight
                               : (context.surfaceColor),
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: isSelected
@@ -582,7 +582,7 @@ child: HomeTodayOverview(
           shape: BoxShape.circle,
           boxShadow: AppTheme.cardShadow,
         ),
-        child: Icon(icon, size: 20, color: isDark ? Colors.white70 : const Color(0xFF1F2937)),
+        child: Icon(icon, size: 20, color: isDark ? Colors.white70 : AppTheme.primaryColor),
       ),
     );
   }

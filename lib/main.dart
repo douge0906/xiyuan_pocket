@@ -6,6 +6,7 @@ import 'services/course_reminder_service.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'services/seed_data.dart';
+import 'services/message_migration.dart';
 import 'services/widget_sync_service.dart';
 import 'theme/app_theme.dart';
 
@@ -18,6 +19,9 @@ void main() async {
   await NotificationService.init();
   // 开源版：首次启动把**内置的爬取快照**写进本地缓存 → 消息页首次打开秒出内容。
   // 只在首次运行写一次，之后照常走「缓存 + 刷新」流程。
+  // 🔴 顺序不能反：先把老键的缓存迁到新档案键，再让种子补缺位。
+  // 反了的话，种子会给老用户写回一份**更旧**的快照。
+  await MessageMigration.ensureMigrated();
   await SeedData.ensureApplied();
   // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
   WidgetSyncService.syncTodayCourses();

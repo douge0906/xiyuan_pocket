@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 /// 课程来源：manual（自主添加）/ server（教务系统导入）
 enum CourseSource { manual, server }
@@ -300,7 +301,7 @@ Color textOnColor(Color bg) {
   // 相对亮度（Rec. 601）
   final luminance =
       (0.299 * bg.red + 0.587 * bg.green + 0.114 * bg.blue) / 255;
-  return luminance > 0.62 ? const Color(0xFF1F2937) : Colors.white;
+  return luminance > 0.62 ? AppTheme.textPrimaryLight : Colors.white;
 }
 
 /// FNV-1a 稳定哈希（非负）：为缺失 id 的历史课程生成**跨运行稳定**的 id。

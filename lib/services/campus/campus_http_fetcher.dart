@@ -1,6 +1,27 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+/// 抓取失败信号 —— **爬虫必须用它把"失败"和"没有内容"分开**。
+///
+/// 🔴 为什么要有这个异常：抓取函数此前用「返回空列表」表示失败，而空列表
+/// 同时也是「这个栏目真的没有内容」。两者在调用方**完全同形**，于是断网时
+/// 界面显示「暂无内容」而不是「加载失败」—— 本项目发作次数最多的 bug
+/// （累计 6~7 次）就是这一条。
+///
+/// 约定：
+/// - **首页**抓不到 / 解析不出条目 → 抛本异常（整体失败）；
+/// - **翻页**过程中的失败 → 不抛，保留已经拿到的部分（「有多少取多少」）。
+class CampusFetchException implements Exception {
+  final String url;
+  final String reason;
+
+  const CampusFetchException(this.url, [this.reason = '']);
+
+  @override
+  String toString() =>
+      'CampusFetchException($url${reason.isEmpty ? '' : ' · $reason'})';
+}
+
 /// 给爬虫用的 HTTP 抓取器（开源版）。
 ///
 /// 为什么单独一层：

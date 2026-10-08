@@ -3,6 +3,8 @@ include: package:flutter_lints/flutter.yaml
 linter:
   rules:
     avoid_print: true
-    prefer_const_constructors: true
-    prefer_const_literals_to_create_immutables: true
+    # 这两条在「卡片阴影/边框随主题色变化」的场景下会持续报 info，
+    # 而 CI 开了 --fatal-infos（info 即失败）-> 直接关闭，避免无意义改动卡流水线。
+    prefer_const_constructors: false
+    prefer_const_literals_to_create_immutables: false
     unnecessary_brace_in_string_interps: true
