@@ -84,6 +84,34 @@ class ApiService {
     return {'data': data};
   }
 
+  /// 搜索班级（跨专业自选 · 步骤1：选班）。
+  ///
+  /// 开源版无服务器：客户端直连教务「班级课表打印」模块。
+  /// [keyword] 留空返回全部（357 个班，本机缓存 30 分钟）。
+  static Future<Map<String, dynamic>> searchClassList({
+    required String xnm,
+    required String xqm,
+    String keyword = '',
+  }) async {
+    final c = await _resolveCredential('', '');
+    final data = await LocalCampusService.searchClassList(
+        c.username, c.password, xnm, xqm, keyword);
+    return {'data': data};
+  }
+
+  /// 抓取一个班级的课表（跨专业自选 · 步骤2：取课）。
+  /// 返回 data.courses 的字段与学生课表接口完全一致。
+  static Future<Map<String, dynamic>> fetchClassSchedule({
+    required String xnm,
+    required String xqm,
+    required String bhId,
+  }) async {
+    final c = await _resolveCredential('', '');
+    final data = await LocalCampusService.fetchClassCourses(
+        c.username, c.password, xnm, xqm, bhId);
+    return {'data': data};
+  }
+
   /// 从教务系统查询考试安排。
   static Future<Map<String, dynamic>> fetchExams({
     String username = '',

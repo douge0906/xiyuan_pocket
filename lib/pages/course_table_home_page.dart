@@ -8,6 +8,7 @@ import '../models/todo.dart';
 import '../repositories/todo_repository.dart';
 import '../services/course_reminder_service.dart';
 import '../services/course_storage.dart';
+import '../services/api_service.dart';
 import '../services/course_sync_service.dart';
 import '../services/widget_sync_service.dart';
 import '../providers/course_provider.dart';
@@ -16,6 +17,7 @@ import 'reminder_settings_page.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_day_header.dart';
+import 'class_picker_page.dart';
 import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
 import 'tools/course_table_settings_page.dart';
@@ -594,14 +596,40 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     _toast('已切换到「$_tableName」');
   }
 
-  /// 「导入一份新课表」的居中对话框：第 1 周 + 命名。
+  // ---------------- 「导入一份新课表」 ----------------
+
+  static const int _kMethodAccount = 0;
+  static const int _kMethodClass = 1;
+
+  /// 两种导入方式的显示名与图标（收起的那行 + 展开的卡片共用）。
   ///
-  /// 开源版只有一条导入链路（统一认证账号，学期按当前日期自动推），
-  /// 所以这里没有在线版那个「学年/学期 + 导入方式」的选择。
+  /// 开源版没有服务端，PDF 解析需要移植 pdfplumber（Dart 无等价库），
+  /// 所以这里是两种而非在线版的三种；「看朋友的课表」的两个主场景
+  /// （拿得到账密 / 只知道班级）都已覆盖。
+  static const Map<int, (String, IconData)> _kMethods = {
+    _kMethodAccount: ('输入账密快速导入', Icons.key_rounded),
+    _kMethodClass: ('跨专业自选（按班级）', Icons.school_rounded),
+  };
+
+  /// 「导入一份新课表」的居中对话框。
+  ///
+  /// 🔴 这里说的「新课表」基本就是**别人的课表** —— 把同学/朋友的课表也存进来，
+  ///    之后在顶部那个列表里随时切着看。
+  ///
+  /// 版式与在线版一致：可选项统一实底 + 细边框、不放说明性小字、
+  /// 第 1 周默认学期估算值（秋季 9.7）、导入方式可展开。
   Future<void> _showNewTableImportDialog() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    var start = CourseStorage.defaultSemesterStart(DateTime.now());
+    final nowYear = DateTime.now().year;
+    final yearList = [nowYear - 1, nowYear, nowYear + 1];
+    var xnm = '$nowYear';
+    var xqm = '3';
+    var start = CourseStorage.autoSemesterStart('$nowYear', '3');
+    var method = _kMethodAccount;
+    var methodOpen = false;
     final nameCtl = TextEditingController(text: '课表 ${_tables.length + 1}');
+    final fg = isDark ? Colors.white : context.textPrimary;
+    final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
 
     final ok = await showDialog<bool>(
       context: context,
@@ -613,13 +641,67 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('用统一认证账号取一份课表到新的一份',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
-                const SizedBox(height: 12),
-                // 第 1 周：教学周的基准。导入前就定好，省得导完再回头调。
-                const Text('第 1 周（教学周基准）',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
-                const SizedBox(height: 6),
+                _dialogBox(
+                  isDark,
+                  child: TextField(
+                    controller: nameCtl,
+                    style: TextStyle(fontSize: 14, color: fg),
+                    decoration: const InputDecoration(
+                      hintText: '课表名字，例如：张同学的课表',
+                      hintStyle: TextStyle(fontSize: 13.5),
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(
+                    child: _dialogBox(
+                      isDark,
+                      child: DropdownButton<String>(
+                        value: xnm,
+                        isExpanded: true,
+                        isDense: true,
+                        underline: const SizedBox.shrink(),
+                        style: TextStyle(fontSize: 14, color: fg),
+                        items: [
+                          for (final y in yearList)
+                            DropdownMenuItem(
+                                value: '$y', child: Text('$y-${y + 1}')),
+                        ],
+                        onChanged: (v) => setDlg(() {
+                          xnm = v ?? xnm;
+                          start = CourseStorage.autoSemesterStart(xnm, xqm);
+                        }),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _dialogBox(
+                      isDark,
+                      child: DropdownButton<String>(
+                        value: xqm,
+                        isExpanded: true,
+                        isDense: true,
+                        underline: const SizedBox.shrink(),
+                        style: TextStyle(fontSize: 14, color: fg),
+                        items: const [
+                          DropdownMenuItem(value: '3', child: Text('第 1 学期')),
+                          DropdownMenuItem(value: '12', child: Text('第 2 学期')),
+                        ],
+                        onChanged: (v) => setDlg(() {
+                          xqm = v ?? xqm;
+                          start = CourseStorage.autoSemesterStart(xnm, xqm);
+                        }),
+                      ),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 10),
                 InkWell(
                   onTap: () async {
                     final picked = await showCourseDatePicker(
@@ -633,35 +715,52 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                       setDlg(() => start = CourseStorage.mondayOf(picked));
                     }
                   },
-                  child: Container(
-                    width: double.infinity,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                          color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text('${start.year} 年 ${start.month} 月 ${start.day} 日',
-                        style: const TextStyle(fontSize: 13.5)),
+                  child: _dialogBox(
+                    isDark,
+                    child: Row(children: [
+                      Icon(Icons.event_rounded, size: 16, color: sub),
+                      const SizedBox(width: 8),
+                      Text('第 1 周　${start.month} 月 ${start.day} 日',
+                          style: TextStyle(fontSize: 14, color: fg)),
+                    ]),
                   ),
                 ),
-                const SizedBox(height: 14),
-                const Text('给这份课表起个名字',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: nameCtl,
-                  decoration: const InputDecoration(
-                      hintText: '例如：张同学的课表', isDense: true),
+                const SizedBox(height: 10),
+                InkWell(
+                  onTap: () => setDlg(() => methodOpen = !methodOpen),
+                  child: _dialogBox(
+                    isDark,
+                    child: Row(children: [
+                      Icon(_kMethods[method]!.$2, size: 16, color: sub),
+                      const SizedBox(width: 8),
+                      Text(_kMethods[method]!.$1,
+                          style: TextStyle(fontSize: 14, color: fg)),
+                      const Spacer(),
+                      AnimatedRotation(
+                        turns: methodOpen ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 160),
+                        child: Icon(Icons.keyboard_arrow_down_rounded,
+                            size: 18, color: sub),
+                      ),
+                    ]),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  '导入的是新增的一份，不会动你现在的「$_tableName」。',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? Colors.grey.shade500 : const Color(0xFF6B7280)),
-                ),
+                if (methodOpen) ...[
+                  const SizedBox(height: 8),
+                  for (final entry in _kMethods.entries) ...[
+                    _methodCard(
+                      isDark,
+                      title: entry.value.$1,
+                      icon: entry.value.$2,
+                      selected: method == entry.key,
+                      onTap: () => setDlg(() {
+                        method = entry.key;
+                        methodOpen = false;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ],
               ],
             ),
           ),
@@ -672,7 +771,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('开始导入', style: TextStyle(fontWeight: FontWeight.w600)),
+              child: const Text('开始导入',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -680,24 +780,224 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     );
 
     if (ok != true || !mounted) return;
-    final name = nameCtl.text.trim();
+    final name = nameCtl.text.trim().isEmpty
+        ? '课表 ${_tables.length + 1}'
+        : nameCtl.text.trim();
     setState(() => _tablePanelOpen = false);
 
-    final container = ProviderScope.containerOf(context, listen: false);
-    final r = await CourseSyncService.sync(
-      container,
-      asNewTableName: name.isEmpty ? '课表 ${_tables.length + 1}' : name,
-      asNewTableStart: start,
-    );
-    if (!mounted) return;
-    if (r.ok) {
-      // 新表已经切过来了 → 小组件与上课提醒跟着换
-      unawaited(WidgetSyncService.syncTodayCourses());
-      unawaited(CourseReminderService.rescheduleAll());
+    final beforeTableId = _activeTableId;
+    List<Course>? imported;
+    if (method == _kMethodAccount) {
+      // 账密：问「导入谁的课表」，拿对方的账密去取
+      final cred = await _askOtherAccount();
+      if (cred == null || !mounted) return;
+      final resp = await ApiService.fetchSchedule(
+        username: cred.$1,
+        password: cred.$2,
+        xnm: xnm,
+        xqm: xqm,
+      );
+      final data = resp['data'] as Map<String, dynamic>? ?? {};
+      final raw = (data['courses'] as List? ?? [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      imported = raw.map(_courseFromJson).toList();
+    } else {
+      // 跨专业自选：进班级选择页挑班 → 预览确认
+      final result = await Navigator.of(context).push(
+        MaterialPageRoute<Map<String, dynamic>>(
+          builder: (_) => ClassPickerPage(xnm: xnm, xqm: xqm),
+        ),
+      );
+      if (result == null || !mounted) return;
+      imported =
+          (result['courses'] as List? ?? []).whereType<Course>().toList();
     }
+
+    if (!mounted) return;
+    if (imported.isEmpty) {
+      _toast('该班级本学期没有已发布的课表数据');
+      return;
+    }
+    await CourseStorage.createTable(
+      name: name,
+      courses: imported,
+      semesterStart: start,
+      // 第 1 周是用户亲手选的 → 记成 user，别再弹「请确认第 1 周」
+      semesterStartSource: CourseTable.srcUser,
+    );
     await ref.read(courseProvider.notifier).load();
     await _load();
-    if (mounted) _toast(r.message);
+    if (!mounted) return;
+    if (_activeTableId != beforeTableId) {
+      // 桌面小组件与上课提醒不认 provider，切表后要主动通知
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+      _toast('已导入到「$_tableName」');
+    }
+  }
+
+  /// 把班级/教务接口返回的课程字典转成 [Course]。
+  Course _courseFromJson(Map<String, dynamic> m) {
+    final name = (m['name'] ?? '').toString().trim();
+    final wd = (m['weekday'] as num?)?.toInt() ?? 1;
+    final start = (m['start_slot'] as num?)?.toInt() ?? 1;
+    return Course(
+      id: 'imp_${name}_$wd-$start',
+      name: name.isEmpty ? '未命名' : name,
+      teacher: (m['teacher'] ?? '').toString().trim(),
+      classroom: (m['classroom'] ?? '').toString().trim(),
+      weekday: wd,
+      startSlot: start,
+      endSlot: (m['end_slot'] as num?)?.toInt() ?? start,
+      weeks: (m['weeks'] ?? '').toString().trim(),
+      colorValue: colorForName(name),
+      source: CourseSource.server,
+    );
+  }
+
+  /// 问「要导入谁的课表」—— 同学/朋友的统一认证学号与密码。
+  ///
+  /// 返回 null 表示取消（或没填全）。
+  /// ⚠️ 密码只用于**这一次**抓取：直接塞进请求体，不在本机任何地方落盘。
+  Future<(String, String)?> _askOtherAccount() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fg = isDark ? Colors.white : context.textPrimary;
+    final userCtl = TextEditingController();
+    final pwdCtl = TextEditingController();
+    var obscure = true;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text('导入谁的课表', style: TextStyle(fontSize: 16)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogBox(
+                isDark,
+                child: TextField(
+                  controller: userCtl,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(fontSize: 14, color: fg),
+                  decoration: const InputDecoration(
+                    hintText: '对方的学号',
+                    hintStyle: TextStyle(fontSize: 13.5),
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _dialogBox(
+                isDark,
+                child: Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: pwdCtl,
+                      obscureText: obscure,
+                      style: TextStyle(fontSize: 14, color: fg),
+                      decoration: const InputDecoration(
+                        hintText: '对方统一认证密码',
+                        hintStyle: TextStyle(fontSize: 13.5),
+                        isDense: true,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: () => setDlg(() => obscure = !obscure),
+                    child: Icon(
+                      obscure
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      size: 18,
+                      color: isDark
+                          ? Colors.grey.shade400
+                          : const Color(0xFF6B7280),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('导入',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true) return null;
+    final u = userCtl.text.trim();
+    final p = pwdCtl.text;
+    if (u.isEmpty || p.isEmpty) return null;
+    return (u, p);
+  }
+
+  /// 对话框里所有可选项共用的**统一实底**：浅色纯白、深色深灰，一律细边框。
+  Widget _dialogBox(bool isDark, {required Widget child}) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+          border: Border.all(
+              color: isDark ? Colors.grey.shade700 : const Color(0xFFE5E7EB)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: child,
+      );
+
+  /// 「导入方式」展开后的一项。
+  Widget _methodCard(
+    bool isDark, {
+    required String title,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+          border: Border.all(
+            color: selected
+                ? AppTheme.primaryColor
+                : (isDark ? Colors.grey.shade700 : const Color(0xFFE5E7EB)),
+            width: selected ? 1.2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(children: [
+          Icon(icon, size: 17, color: AppTheme.primaryColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(title,
+                style: TextStyle(
+                    fontSize: 14, color: isDark ? Colors.white : context.textPrimary)),
+          ),
+          if (selected)
+            Icon(Icons.check_rounded, size: 17, color: AppTheme.primaryColor),
+        ]),
+      ),
+    );
   }
 
   Future<void> _clearAll() async {
