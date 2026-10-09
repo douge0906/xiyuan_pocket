@@ -570,6 +570,14 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             ),
             Text('${t.courses.length} 门',
                 style: TextStyle(fontSize: 11.5, color: sub)),
+            // 只有一份时不显示删除（存储层也不允许删最后一份）
+            if (_tables.length > 1)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.delete_outline_rounded, size: 18, color: sub),
+                tooltip: '删除这份课表',
+                onPressed: () => _deleteTable(t),
+              ),
           ],
         ),
       ),
@@ -595,6 +603,49 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     if (!mounted) return;
     _toast('已切换到「$_tableName」');
   }
+  /// 删除一份课表（展开面板每行的垃圾桶图标）。
+  ///
+  /// 存储层有两条硬规则：**最后一份不许删**；删掉当前激活那份时自动切到剩下的第一份。
+  Future<void> _deleteTable(CourseTable t) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除课表', style: TextStyle(fontSize: 16)),
+        content: Text('「${t.name}」的课表将被删除，无法恢复。',
+            style: const TextStyle(fontSize: 13.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除',
+                style: TextStyle(
+                    fontWeight: FontWeight.w600, color: Color(0xFFE24B4A))),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final wasActive = t.id == _activeTableId;
+    final deleted = await CourseStorage.deleteTable(t.id);
+    if (!mounted) return;
+    if (!deleted) {
+      _toast('至少要保留一份课表');
+      return;
+    }
+    if (wasActive) {
+      // 激活的那份被删了 → 存储层已自动切到第一份，小组件/上课提醒跟着换
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+      await ref.read(courseProvider.notifier).load();
+    }
+    await _load();
+    if (!mounted) return;
+    _toast(wasActive ? '已删除，已切换到「$_tableName」' : '已删除「${t.name}」');
+  }
+
 
   // ---------------- 「导入一份新课表」 ----------------
 
