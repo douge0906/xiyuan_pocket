@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/storage_service.dart';
 import '../services/api_service.dart';
+import '../services/course_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'user/user_cards.dart';
 import 'settings_page.dart';
@@ -131,6 +134,10 @@ class _UserPageState extends State<UserPage> {
 
       // ③ 后台静默补数据（能获取就获取，拿不到就算），不阻塞登录动画
       _ensureStudentName();
+      // ④ 登录成功 = 顺手把课表同步一次（开源版已取消课表页的「教务导入」按钮，
+      //     这一步接管了它）。静默：登录动画不该因为教务慢而卡住；
+      //     同步失败也不会动已有课表，用户随时能用课表页的刷新键手动重来。
+      unawaited(CourseSyncService.sync(container));
     } catch (e) {
       if (!mounted) return;
       setState(() {

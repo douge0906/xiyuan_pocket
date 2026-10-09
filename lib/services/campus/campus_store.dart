@@ -201,6 +201,19 @@ class LocalCampusService {
       _withRelogin(
           username, password, (s) => CourseFetcher.fetch(s, xnm, xqm));
 
+  /// 跨专业自选 · 步骤1：列出全部班级（可按关键字过滤）。
+  /// 教务「班级课表打印」模块，客户端直连（v2.1.0）。
+  static Future<Map<String, dynamic>> searchClassList(String username,
+          String password, String xnm, String xqm, String keyword) =>
+      _withRelogin(username, password,
+          (s) => CourseFetcher.searchClassList(s, xnm, xqm, keyword));
+
+  /// 跨专业自选 · 步骤2：取一个班的课表。
+  static Future<Map<String, dynamic>> fetchClassCourses(String username,
+          String password, String xnm, String xqm, String bhId) =>
+      _withRelogin(username, password,
+          (s) => CourseFetcher.fetchClassCourses(s, xnm, xqm, bhId));
+
   /// 查一卡通余额（v2.0.0 开源版新增：客户端直连融合门户）。
   ///
   /// ⚠️ 门户与教务是**两个子系统**，cookie 不通用 —— 所以这里独立建会话，

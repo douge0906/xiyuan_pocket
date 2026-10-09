@@ -52,6 +52,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   String get _bgPath => (_display['backgroundImage'] ?? '').toString();
   bool get _hasBg => _bgPath.isNotEmpty && File(_bgPath).existsSync();
 
+  /// 「进入 App 自动更新课表」。缺字段时按默认开（老用户升级上来不会突然变关）。
+  bool get _autoUpdateOnLaunch => _display['autoUpdateOnLaunch'] != false;
+
   @override
   void initState() {
     super.initState();
@@ -183,6 +186,23 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
             ),
           ),
           const SizedBox(height: 16),
+          _sectionTitle('同步'),
+          userCard(
+            context,
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                _switchTile(
+                  icon: Icons.sync_rounded,
+                  title: '进入 App 自动更新课表',
+                  subtitle: '打开 App 时自动从教务系统同步一次；关掉后可用课表页右上角的刷新键手动同步',
+                  value: _autoUpdateOnLaunch,
+                  onChanged: (v) => _set('autoUpdateOnLaunch', v),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           _sectionTitle('课程'),
           userCard(
             context,
@@ -223,7 +243,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           ),
           const SizedBox(height: 14),
           Text(
-            '上课提醒在课表页右上角的铃铛 · 教务导入在课表页右上角的下载按钮',
+            '上课提醒在课表页右上角的铃铛 · 同步课表在课表页右上角的刷新键',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, color: context.textTertiary),
           ),
