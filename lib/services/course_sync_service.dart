@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/course_model.dart';
+import '../models/course_table.dart';
 import '../providers/course_provider.dart';
 import 'api_service.dart';
 import 'course_reminder_service.dart';
@@ -67,7 +68,15 @@ class CourseSyncService {
   /// 学年/学期，与 [CourseStorage.defaultSemesterStart] 的估算**互为反函数**。
   /// （原先按钮上的面板默认「当年 + 第1学期」，2~7 月用它自动同步会抓到
   ///   秋季学期的课，然后把正确的课表覆盖掉。）
-  static Future<CourseSyncResult> sync(ProviderContainer container) async {
+  static Future<CourseSyncResult> sync(
+    ProviderContainer container, {
+    /// 非空 = 把这次同步的结果**写进一份新课表**（「导入一份新课表」走这条），
+    /// 原课表原样不动；空 = 照常合并进当前那份。
+    String? asNewTableName,
+
+    /// 新课表的第 1 周（对话框里用户选的）。给 null 就按学期估算。
+    DateTime? asNewTableStart,
+  }) async {
     if (_running) return CourseSyncResult.busy;
     _running = true;
     try {
@@ -113,14 +122,35 @@ class CourseSyncService {
       }
 
       final notifier = container.read(courseProvider.notifier);
-      final merged = await notifier.mergeServer(parsed);
 
-      // 开学日期不是无条件写 —— 见 shouldAdoptSemesterStart 的说明
-      // （自动同步每次启动都跑，无条件写会把用户手动调过的开学日抹掉）。
-      final computed = CourseStorage.autoSemesterStart(xnm, xqm);
-      final stored = await CourseStorage.loadSemesterStart();
-      if (shouldAdoptSemesterStart(stored, computed)) {
-        await notifier.setSemesterStart(computed);
+      // 「导入一份新课表」→ 新建一份，原课表原样保留，并自动切过去。
+      // 注意是**导入成功这一刻**才建表 —— 用户中途取消就什么都不产生，
+      // 不需要再写「回滚空表 + 切回原来那份」那套逻辑（在线版同理）。
+      final asNew = asNewTableName;
+      final List<Course> merged;
+      if (asNew != null) {
+        await CourseStorage.createTable(
+          name: asNew,
+          courses: parsed,
+          semesterStart: asNewTableStart,
+          // 第 1 周是用户在对话框里选的 → 记成 user，别再弹「请确认第 1 周」
+          semesterStartSource: CourseTable.srcUser,
+        );
+        await notifier.load();
+        merged = await CourseStorage.loadCourses();
+      } else {
+        merged = await notifier.mergeServer(parsed);
+      }
+
+      // 开学日期不是无条件写 —— 见 shouldAdoptSemesterStart 的说明。
+      // 新建那份分支里，第 1 周是用户亲手选的（或本来就没选、该由估算填），
+      // 已经在 createTable 里落好了，这里不要再覆盖。
+      if (asNew == null) {
+        final computed = CourseStorage.autoSemesterStart(xnm, xqm);
+        final stored = await CourseStorage.loadSemesterStart();
+        if (shouldAdoptSemesterStart(stored, computed)) {
+          await notifier.setSemesterStart(computed);
+        }
       }
 
       // 课表变了 → 上课提醒要跟着重排（本地通知的时刻来自课程表）。

@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/course_model.dart';
+import '../models/course_table.dart';
 import '../models/todo.dart';
 import '../repositories/todo_repository.dart';
 import '../services/course_reminder_service.dart';
 import '../services/course_storage.dart';
 import '../services/course_sync_service.dart';
+import '../services/widget_sync_service.dart';
 import '../providers/course_provider.dart';
 import '../services/course_todo_service.dart';
 import 'reminder_settings_page.dart';
@@ -40,6 +42,14 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
 
   /// 「第 1 周从哪天开始」的首次提醒本页面生命周期内只弹一次。
   bool _semesterAsked = false;
+
+  // ---------- 多课表 ----------
+  /// 当前激活那份课表的 id 与名字；以及展开面板里列出的全部课表。
+  String _activeTableId = '';
+  String _tableName = '我的课表';
+  List<CourseTable> _tables = const [];
+  /// 顶部「课表名」下方的切换面板是否展开（向下展开，不用居中弹窗）。
+  bool _tablePanelOpen = false;
   late int _selectedWeek;
   DateTime? _semesterStart;
   /// v2.4.0：改为 getter——原先 `final` 只在 initState 取一次，
@@ -240,8 +250,20 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   Future<void> _load() async {
     _loadDisplaySettings(); // 读网格线开关（独立异步，不阻塞课表加载）
     final list = await CourseStorage.loadCourses();
+    // 多课表：当前是哪一份、一共有几份（顶部 chip 与展开面板都要用）；
+    // 开学日是**每份课表各有一份**的（别人那份可能是别的学期）→ 一并重读，
+    // 否则切表后周次会沿用上一份的，整张课表错位。
+    final tables = await CourseStorage.loadTables();
+    final active = await CourseStorage.activeTable();
+    final semStart = await CourseStorage.loadSemesterStart();
     if (!mounted) return;
-    setState(() => _courses = list);
+    setState(() {
+      _courses = list;
+      _tables = tables;
+      _activeTableId = active.id;
+      _tableName = active.name;
+      _semesterStart = semStart;
+    });
     // 进入课表自动把今日课程同步为待办（去重，不打扰）。
     await _syncTodayCoursesToTodos();
     // v2.4.0：课程已结束的自动划掉（与首页共用同一判定，避免两处口径不一致）。
@@ -422,6 +444,262 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// 同步改成自动/静默之后它没有调用点了；调整开学日的入口在顶部
   /// 「第 N 周」下拉里（CourseDayHeader → showCourseDatePicker），并未丢失。
 
+  // ============ 多课表：顶部 chip + 向下展开的切换面板 ============
+
+  /// 顶部第二行的「课表名 ▾」，点它向下展开切换面板。
+  ///
+  /// 样式刻意与旁边「今日 N 门」**区分开**：那个是填充底（状态徽标，不可点），
+  /// 这个是描边（可点入口）。两个长得一样的话，用户不知道哪个能点。
+  Widget _buildTableChip(bool isDark) {
+    final fg = AppTheme.primaryColor;
+    return InkWell(
+      onTap: () => setState(() => _tablePanelOpen = !_tablePanelOpen),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          border: Border.all(color: fg.withOpacity(0.28)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                _tableName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 12.5, fontWeight: FontWeight.w600, color: fg),
+              ),
+            ),
+            const SizedBox(width: 1),
+            AnimatedRotation(
+              turns: _tablePanelOpen ? 0.5 : 0,
+              duration: const Duration(milliseconds: 160),
+              child:
+                  Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: fg),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 头部下方**向下展开**的「切换课表」面板。
+  ///
+  /// 用内联展开而不是居中弹窗：切换是高频且轻的动作，
+  /// 「点一下表名看看还有哪几份」就该在原地解决，不该盖住整张课表。
+  /// 只有「导入一份新课表」才弹居中盒子 —— 那个要填表单，需要专注。
+  Widget _buildTablePanel(bool isDark, Color surfaceColor) {
+    final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: !_tablePanelOpen
+          ? const SizedBox(width: double.infinity)
+          : Container(
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              decoration: BoxDecoration(
+                border: Border.all(color: context.borderColor),
+                color: surfaceColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final t in _tables) _buildTableRow(t, isDark, sub),
+                  Divider(height: 10, thickness: 0.5, color: context.borderColor),
+                  InkWell(
+                    onTap: _showNewTableImportDialog,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      child: Row(
+                        children: [
+                          Icon(Icons.add_rounded,
+                              size: 17, color: AppTheme.primaryColor),
+                          const SizedBox(width: 8),
+                          Text('导入一份新课表',
+                              style: TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w500,
+                                  color: AppTheme.primaryColor)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  /// 展开面板里的一份课表：勾选态 + 名字 + 门数。
+  Widget _buildTableRow(CourseTable t, bool isDark, Color sub) {
+    final isActive = t.id == _activeTableId;
+    return InkWell(
+      onTap: () => _switchTable(t.id),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              child: isActive
+                  ? Icon(Icons.check_rounded,
+                      size: 17, color: AppTheme.primaryColor)
+                  : null,
+            ),
+            Expanded(
+              child: Text(
+                t.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                  color: isActive
+                      ? AppTheme.primaryColor
+                      : (isDark ? Colors.white : context.textPrimary),
+                ),
+              ),
+            ),
+            Text('${t.courses.length} 门',
+                style: TextStyle(fontSize: 11.5, color: sub)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 切到另一份课表。切完本页 + 首页立刻重载，并通知小组件与上课提醒。
+  ///
+  /// 开源版有 courseProvider 这个唯一数据源：课表页与首页都 `ref.listen` 它，
+  /// 所以只要 `load()` 一次，两处自动跟进 —— 不需要在线版那个广播信号。
+  Future<void> _switchTable(String id) async {
+    if (id != _activeTableId) {
+      final ok = await CourseStorage.switchTable(id);
+      if (!ok) return;
+      // 桌面小组件 / 上课提醒：它们不认 courseProvider，得主动通知
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+      await ref.read(courseProvider.notifier).load();
+    }
+    if (!mounted) return;
+    setState(() => _tablePanelOpen = false);
+    await _load();
+    if (!mounted) return;
+    _toast('已切换到「$_tableName」');
+  }
+
+  /// 「导入一份新课表」的居中对话框：第 1 周 + 命名。
+  ///
+  /// 开源版只有一条导入链路（统一认证账号，学期按当前日期自动推），
+  /// 所以这里没有在线版那个「学年/学期 + 导入方式」的选择。
+  Future<void> _showNewTableImportDialog() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    var start = CourseStorage.defaultSemesterStart(DateTime.now());
+    final nameCtl = TextEditingController(text: '课表 ${_tables.length + 1}');
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text('导入一份新课表', style: TextStyle(fontSize: 16)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('用统一认证账号取一份课表到新的一份',
+                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 12),
+                // 第 1 周：教学周的基准。导入前就定好，省得导完再回头调。
+                const Text('第 1 周（教学周基准）',
+                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 6),
+                InkWell(
+                  onTap: () async {
+                    final picked = await showCourseDatePicker(
+                      context: ctx,
+                      initialDate: start,
+                      firstDate: DateTime(start.year - 1, 1, 1),
+                      lastDate: DateTime(start.year + 1, 12, 31),
+                      helpText: '选择本学期第 1 周的周一',
+                    );
+                    if (picked != null) {
+                      setDlg(() => start = CourseStorage.mondayOf(picked));
+                    }
+                  },
+                  child: Container(
+                    width: double.infinity,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                          color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('${start.year} 年 ${start.month} 月 ${start.day} 日',
+                        style: const TextStyle(fontSize: 13.5)),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text('给这份课表起个名字',
+                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameCtl,
+                  decoration: const InputDecoration(
+                      hintText: '例如：张同学的课表', isDense: true),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '导入的是新增的一份，不会动你现在的「$_tableName」。',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? Colors.grey.shade500 : const Color(0xFF6B7280)),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('开始导入', style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+    final name = nameCtl.text.trim();
+    setState(() => _tablePanelOpen = false);
+
+    final container = ProviderScope.containerOf(context, listen: false);
+    final r = await CourseSyncService.sync(
+      container,
+      asNewTableName: name.isEmpty ? '课表 ${_tables.length + 1}' : name,
+      asNewTableStart: start,
+    );
+    if (!mounted) return;
+    if (r.ok) {
+      // 新表已经切过来了 → 小组件与上课提醒跟着换
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+    }
+    await ref.read(courseProvider.notifier).load();
+    await _load();
+    if (mounted) _toast(r.message);
+  }
+
   Future<void> _clearAll() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -483,6 +761,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         child: Column(
           children: [
             _buildHomeHeader(context, isDark, surfaceColor, now, monday, todayCount),
+            // 多课表：头部下方**向下展开**的切换面板（收起时不占高度）
+            _buildTablePanel(isDark, surfaceColor),
             CourseDayHeader(
               selectedWeek: _selectedWeek,
               todayWeekday: _todayWeekday,
@@ -572,7 +852,6 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     DateTime monday,
     int todayCount,
   ) {
-    final subColor = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 2, 10, 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -594,6 +873,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ── 第一行：日期 ──
                 Text(
                   '${now.year}/${now.month}/${now.day}',
                   style: TextStyle(
@@ -602,17 +882,13 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                     color: context.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
+                // ── 第二行：[课表名 ▾] + [今日 N 门] ──
+                // 「第 N 周」从这里去掉：往下一点（CourseDayHeader）就有周次，
+                // 同一个数字在半个屏幕里出现两次是噪音。
                 Row(
                   children: [
-                    Text(
-                      '第$_selectedWeek周',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: subColor,
-                      ),
-                    ),
+                    Flexible(child: _buildTableChip(isDark)),
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
