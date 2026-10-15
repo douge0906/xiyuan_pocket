@@ -80,10 +80,28 @@ object WidgetAlarmScheduler {
             Intent(context, RefreshReceiver::class.java).setAction(ACTION_REFRESH),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi)
+        // 2026-10-13：setExact 系列在 Android 12+ 需要 SCHEDULE_EXACT_ALARM，
+        // 而 **Android 14+ 该权限默认不授予** —— 直接调用会抛 SecurityException，
+        // 又被上层静默 catch，表现成「精准刷新整体失效、只剩系统 1 小时周期」。
+        // 所以先查能力：不可用就降级成 setWindow（模糊闹钟，最多晚几分钟，
+        // 但小组件一定会刷新）。另加 try/catch 兜住权限被临时收回的极端情况。
+        val canExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.canScheduleExactAlarms()
         } else {
-            am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi)
+            true
+        }
+        try {
+            if (canExact) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, trigger, pi)
+                } else {
+                    am.setExact(AlarmManager.RTC_WAKEUP, trigger, pi)
+                }
+            } else {
+                am.setWindow(AlarmManager.RTC_WAKEUP, trigger, 10 * 60 * 1000L, pi)
+            }
+        } catch (_: SecurityException) {
+            am.setWindow(AlarmManager.RTC_WAKEUP, trigger, 10 * 60 * 1000L, pi)
         }
     }
 

@@ -9,4 +9,5 @@
     android:initialLayout="@layout/widget_medium"
     android:resizeMode="none"
     android:widgetCategory="home_screen"
+    android:previewLayout="@layout/widget_medium"
     android:description="@string/widget_desc_medium" />

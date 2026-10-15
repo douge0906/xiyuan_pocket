@@ -21,15 +21,15 @@ class ServiceTile extends StatelessWidget {
     final iconColor = AppTheme.primaryColor;
     return Material(
       color: bgColor,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
           decoration: BoxDecoration(
             color: bgColor,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border: Border.all(color: borderColor, width: 1),
           ),
           child: Row(
@@ -39,7 +39,7 @@ class ServiceTile extends StatelessWidget {
                 height: 34,
                 decoration: BoxDecoration(
                   color: iconColor.withOpacity(isDark ? 0.20 : 0.10),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Icon(tool.icon, size: 19, color: iconColor),
               ),
@@ -78,7 +78,7 @@ class ServiceTile extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                             decoration: BoxDecoration(
                               color: const Color(0xFFFFF4E0),
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                               border: Border.all(color: const Color(0xFFF59E0B), width: 0.8),
                             ),
                             child: Text(

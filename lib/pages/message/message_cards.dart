@@ -52,7 +52,7 @@ class MessageCard extends StatelessWidget {
           : EdgeInsets.zero,
       child: Material(
         color: rowBg,
-        borderRadius: MsgStyle.card ? BorderRadius.circular(14) : null,
+        borderRadius: MsgStyle.card ? BorderRadius.circular(AppTheme.radiusMd) : null,
         clipBehavior: MsgStyle.card ? Clip.antiAlias : Clip.none,
         child: InkWell(
           onTap: onTap,
@@ -63,7 +63,7 @@ class MessageCard extends StatelessWidget {
             decoration: MsgStyle.card
                 ? BoxDecoration(
                     color: rowBg,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                     border: Border.all(color: context.borderColor),
                     boxShadow: const [
                       BoxShadow(
@@ -141,7 +141,7 @@ class MessageCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF1F3F7),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         ),
         child: Text(
           text,

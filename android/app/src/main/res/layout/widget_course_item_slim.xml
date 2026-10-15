@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 单行紧凑条目（中号 2×2 用）。
+     为什么这么矮：2×2 的高度（约 110dp）减掉卡片内边距和标题，只剩约 63dp；
+     原来 38dp 的两行条目只能塞下 1 门，第 2 门会被裁掉。
+     这里压成一行（课程名 + 时间），高度约 20dp → 能稳定放下 2 门 +「还有 N 门」。
+     注意：色条必须用 LinearLayout（裸 <View> 会导致 AppWidget inflate 失败）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="3dp"
+    android:paddingBottom="3dp"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp"
+    android:background="@drawable/widget_course_item_bg">
+
+    <LinearLayout
+        android:id="@+id/item_color_bar"
+        android:layout_width="3dp"
+        android:layout_height="14dp"
+        android:background="#F8D2D7" />
+
+    <TextView
+        android:id="@+id/item_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="6dp"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/item_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:textSize="9sp"
+        android:maxLines="1"
+        android:textColor="#667085" />
+</LinearLayout>

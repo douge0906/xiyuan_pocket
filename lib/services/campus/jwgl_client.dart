@@ -299,6 +299,12 @@ class JwglClient {
     }
 
     if (books.isEmpty && lastError is CampusException) throw lastError;
+    // 2026-10-13（与在线版同步）：**网络类异常也必须抛出去**。原来只重抛
+    // CampusException，断网/超时被吞掉后返回 success:true 且文案
+    // 「本学期暂无教材信息」—— 用户以为教务真的没教材（代码审查报告：断网误报空）。
+    if (books.isEmpty && lastError != null) {
+      throw CampusException('网络异常，请检查网络后重试');
+    }
 
     return {
       'success': true,

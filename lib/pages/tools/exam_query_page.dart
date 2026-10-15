@@ -272,13 +272,13 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('考试安排',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-        elevation: 0.5,
+        elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         // 仿掌上徐工：右上角一个刷新按钮（取代原来的大查询按钮）
         actions: [
           IconButton(
@@ -323,14 +323,14 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   Widget _buildSemesterRow(bool isDark) {
     return Material(
       color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: _querying ? null : _pickSemester,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border: Border.all(
                 color: context.borderColor),
           ),
@@ -368,7 +368,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.45)),
           ),
           child: Row(
@@ -396,7 +396,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     if (_exams.isEmpty) {
       return [
         _emptyState(isDark, Icons.event_busy_outlined,
-            _semester == null ? '还没有查询结果，点上面的按钮开始查询' : '该学期暂无考试安排'),
+            _semester == null ? '还没有查询结果，点右上角刷新开始查询' : '该学期暂无考试安排'),
       ];
     }
 
@@ -434,7 +434,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF59E0B).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
                     _cacheUpdatedAt == null
@@ -467,7 +467,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
           foregroundColor: isDark ? Colors.grey.shade300 : const Color(0xFF4B5563),
           side: BorderSide(
               color: isDark ? const Color(0xFF3A3A3A) : const Color(0xFFD1D5DB)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
         ),
       ),
     );
@@ -479,7 +479,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
       padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       ),
       child: Column(
         children: [
@@ -527,7 +527,7 @@ class _ExamTile extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Column(
@@ -561,7 +561,7 @@ class _ExamTile extends StatelessWidget {
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: const Color(0xFFEF4444).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: const Text('补考',
                       style: TextStyle(

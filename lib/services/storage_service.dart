@@ -259,15 +259,67 @@ class StorageService {
     await prefs.remove(_kCardBalanceCache);
   }
 
+  // ---------------- 全局外观：圆角缩放（2026-10-13） ----------------
+  //
+  // 设置 → 外观 → 圆角：紧凑 0.7 / 标准 1.0 / 圆润 1.3。
+  // 启动时读出并 apply 到 AppTheme；改的时候立刻 apply + 存盘。
+  static const String _kUiRadiusScale = 'ui_radius_scale';
+
+  static Future<double> loadUiRadiusScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getDouble(_kUiRadiusScale);
+    if (v == null || v <= 0) return 1.0;
+    return v;
+  }
+
+  static Future<void> saveUiRadiusScale(double scale) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kUiRadiusScale, scale);
+  }
+
+  // ---------------- 页面背景色（v1.5.0，浅色模式生效） ----------------
+  static const String _kUiBackgroundColor = 'ui_bg_color';
+
+  /// 页面背景色；null = 默认（跟随 AppTheme.backgroundColor）。存 -1 表示未设置。
+  static Future<Color?> loadUiBackgroundColor() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getInt(_kUiBackgroundColor);
+    if (v == null || v < 0) return null;
+    return Color(v);
+  }
+
+  static Future<void> saveUiBackgroundColor(Color? c) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kUiBackgroundColor, c?.value ?? -1);
+  }
+
   // ---------------- 消息页栏目样式（v1.1.0） ----------------
   // 两套样式随时可切：'plain' 纯白无缝（默认）/ 'card' 圆角卡片。
   static const String _kMessageStyle = 'message_style';
   static const String kMessageStylePlain = 'plain';
   static const String kMessageStyleCard = 'card';
 
+  // ---------------- 冲突忽略名单（v1.6.0） ----------------
+  // 用户在「时间冲突」弹窗里选择删掉的教务课会记在这里（签名 = 课名|教师|星期|
+  // 起止节次|周次），之后每次同步都把它们过滤掉 —— 否则下次同步教务又下发，
+  // 用户删过的冲突课会复活。可随时在「课表设置」里恢复。
+  static const String _kDroppedCourseKeys = 'dropped_course_keys';
+
+  static Future<List<String>> loadDroppedCourseKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kDroppedCourseKeys) ?? const <String>[];
+  }
+
+  static Future<void> saveDroppedCourseKeys(List<String> keys) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kDroppedCourseKeys, keys);
+  }
+
   static Future<String> loadMessageStyle() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_kMessageStyle) ?? kMessageStylePlain;
+    // 2026-10-11：默认改为圆角卡片（v1.7.1 起与在线版对齐 —— 此前开源版还停在纯白，
+    // 新装用户在两个版本上看到的默认样式不一样）
+    return prefs.getString(_kMessageStyle) ?? kMessageStyleCard;
   }
 
   static Future<void> saveMessageStyle(String style) async {

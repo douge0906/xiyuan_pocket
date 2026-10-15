@@ -21,6 +21,7 @@ class CourseTable {
     required this.courses,
     this.semesterStart,
     this.semesterStartSource = srcAuto,
+    this.kind = kindOwn,
   });
 
   /// 稳定 id（创建时生成，改名不变）。
@@ -46,6 +47,23 @@ class CourseTable {
   static const String srcUser = 'user';
   static const String srcAuto = 'auto';
 
+  /// 课表来源（2026-10-13 新增）——**决定它能不能被「我的教务」自动同步写**。
+  ///
+  /// 🔴 起因：同步写的是「当前激活那份」，用户导入他人的课表并切过去之后，
+  ///    自动更新 / 手动刷新会把我自己的教务课表灌进那份 → 别人的课表被覆盖。
+  ///    有了来源，同步就只认「本人的课表」。
+  ///
+  ///  · [kindOwn]      = 本人的课表（从自己的教务导入）→ 唯一可被同步写入的一份
+  ///  · [kindImported] = 导入的班级 / 他人课表 → **绝不被我的教务覆盖**
+  ///  · [kindManual]   = 手动新建/编辑 → 同样不被自动同步写
+  final String kind;
+  static const String kindOwn = 'own';
+  static const String kindImported = 'imported';
+  static const String kindManual = 'manual';
+
+  /// 这份课表能不能被「我的教务」同步写入。
+  bool get syncableByMyCampus => kind == kindOwn;
+
   /// 用户是否亲手定过第 1 周。没定过 → 该提醒一次。
   bool get semesterStartConfirmedByUser => semesterStartSource == srcUser;
 
@@ -55,6 +73,7 @@ class CourseTable {
     DateTime? semesterStart,
     bool clearSemesterStart = false,
     String? semesterStartSource,
+    String? kind,
   }) {
     return CourseTable(
       id: id,
@@ -64,6 +83,7 @@ class CourseTable {
       semesterStart:
           clearSemesterStart ? null : (semesterStart ?? this.semesterStart),
       semesterStartSource: semesterStartSource ?? this.semesterStartSource,
+      kind: kind ?? this.kind,
     );
   }
 
@@ -74,6 +94,7 @@ class CourseTable {
         'courses': courses.map((c) => c.toJson()).toList(),
         'semesterStart': ymd(semesterStart),
         'semesterStartSource': semesterStartSource,
+        'kind': kind,
       };
 
   /// 容错解析：整条坏掉返回 null（调用方跳过这一份，不影响其它份）。
@@ -111,6 +132,11 @@ class CourseTable {
         courses: courses,
         semesterStart: parseYmd((m['semesterStart'] ?? '').toString()),
         semesterStartSource: src == srcUser ? srcUser : srcAuto,
+        // 老数据没有 kind → 按「本人的课表」处理（保持升级前的行为；
+        // 只有新建/导入的课表才会带 imported / manual 标记）。
+        kind: ((m['kind'] ?? '').toString()).isEmpty
+            ? kindOwn
+            : (m['kind'] ?? '').toString(),
       );
     } catch (_) {
       return null;

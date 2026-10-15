@@ -252,13 +252,13 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('成绩查询',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-        elevation: 0.5,
+        elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         // 仿掌上徐工：右上角一个刷新按钮（取代原来的大查询按钮）
         actions: [
           IconButton(
@@ -301,14 +301,14 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
   Widget _buildSemesterRow(bool isDark) {
     return Material(
       color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: _querying ? null : _pickSemester,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border: Border.all(
                 color: context.borderColor),
           ),
@@ -340,11 +340,15 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     );
   }
 
-/// 缓存新鲜度提示（v2.3.1）。
+  /// 缓存时间提示（v2.3.1，2026-10-12 调整）。
   ///
   /// 背景：成绩查询结果会缓存到本地，重进页面直接展示 —— 但用户不知道
-  /// 看到的是「刚查的」还是「上周的」。这里在结果顶部显式标注缓存时间，
-  /// 并在超过 1 天时用醒目色提示「建议重新查询」。
+  /// 看到的是「刚查的」还是「上周的」。这里在结果顶部如实标注缓存时间。
+  ///
+  /// 🔴 2026-10-12：**不再把缓存判为「过期」**（用户要求：缓存不过期）。
+  ///    原来超过 1 天会转成橙色警告「建议重新查询」；但成绩、考试这类数据
+  ///    本身低频变更，没必要催用户重查 —— 现在任何时候都是中性样式，
+  ///    只标注「本地缓存 · X 前」，查不查由用户自己决定。
   Widget _cacheHint(bool isDark) {
     if (_cacheSavedAt.isEmpty) return const SizedBox.shrink();
     DateTime? t;
@@ -354,7 +358,6 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     if (t == null) return const SizedBox.shrink();
 
     final diff = DateTime.now().difference(t);
-    final stale = diff.inDays >= 1;
     final ago = diff.inMinutes < 1
         ? '刚刚'
         : diff.inHours < 1
@@ -363,32 +366,24 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
                 ? '${diff.inHours} 小时前'
                 : '${diff.inDays} 天前';
 
-    final fg = stale
-        ? const Color(0xFFB45309)
-        : (isDark ? Colors.grey.shade500 : Colors.grey.shade500);
+    final fg = isDark ? Colors.grey.shade500 : Colors.grey.shade500;
 
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: stale
-            ? const Color(0xFFFFF7ED)
-            : (isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF9FAFB)),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-            color: stale
-                ? const Color(0xFFF59E0B).withOpacity(0.4)
-                : context.borderColor),
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF9FAFB),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+        border: Border.all(color: context.borderColor),
       ),
       child: Row(
         children: [
-          Icon(stale ? Icons.schedule_rounded : Icons.check_circle_outline_rounded,
-              size: 15, color: fg),
+          Icon(Icons.check_circle_outline_rounded, size: 15, color: fg),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              stale ? '本地缓存（$ago）· 建议重新查询' : '本地缓存 · $ago',
+              '本地缓存 · $ago',
               style: TextStyle(fontSize: 12, color: fg),
             ),
           ),
@@ -400,7 +395,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
   Widget _buildResult(bool isDark) {
     final summary = _selectedSemester;
     if (_message == null && summary == null) {
-      return _emptyState(isDark, Icons.assignment_outlined, '还没有查询结果，点上面的按钮开始查询');
+      return _emptyState(isDark, Icons.assignment_outlined, '还没有查询结果，点右上角刷新开始查询');
     }
     final color = _success ? const Color(0xFF10B981) : const Color(0xFFEF4444);
     return Column(
@@ -413,7 +408,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
               border: Border.all(color: color.withOpacity(0.45)),
             ),
             child: Row(
@@ -495,7 +490,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Row(
@@ -556,7 +551,7 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
       padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       ),
       child: Column(
         children: [

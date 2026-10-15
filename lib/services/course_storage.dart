@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/course_model.dart';
 import '../models/course_table.dart';
+import 'storage_service.dart';
 import 'widget_sync_service.dart';
 
 /// 课程表本地存储：用 SharedPreferences 持久化课程列表（自主添加 + 教务导入）
@@ -194,6 +195,9 @@ class CourseStorage {
     List<Course> courses = const <Course>[],
     DateTime? semesterStart,
     String semesterStartSource = CourseTable.srcAuto,
+    /// 课表来源：导入他人/班级的传 [CourseTable.kindImported] —— 这份不会被
+    /// 「我的教务」同步写入（2026-10-13 修跨表覆盖）。
+    String kind = CourseTable.kindOwn,
   }) async {
     final all = await _loadAll();
     final safeName = name.trim().isEmpty ? '未命名课表' : name.trim();
@@ -211,6 +215,11 @@ class CourseStorage {
         semesterStart: semesterStart,
         semesterStartSource:
             semesterStart == null ? CourseTable.srcAuto : semesterStartSource,
+        // 🔴 2026-10-14 修复：此前漏传 kind —— 参数默认 kindOwn，导致
+        //    「导入他人课表」也被存成 own，刷新时 resolveSyncTargetId 会认为
+        //    当前这份就是「我的课表」，直接把我的教务课表灌进去（用户报告：
+        //    新增第二份课表点刷新被同步成账号的课表）。
+        kind: kind,
       );
       await _writeAll([filled], filled.id);
       return filled.id;
@@ -224,6 +233,8 @@ class CourseStorage {
       semesterStart: semesterStart,
       semesterStartSource:
           semesterStart == null ? CourseTable.srcAuto : semesterStartSource,
+      // 🔴 同上：new 分支也要带上 kind（导入的课表必须标记 imported）
+      kind: kind,
     );
     await _writeAll([...all.tables, t], t.id);
     return t.id;
@@ -258,9 +269,14 @@ class CourseStorage {
     return true;
   }
 
-  /// 解析课程 JSON 列表。整串非法返回 null；单条非法只跳过该条。
+  /// 解析课程 JSON 列表。**空值/整串非法都返回 null**；单条非法只跳过该条。
+  ///
+  /// 🔴 2026-10-13 修复：原来空值返回 `[]`，导致调用方
+  /// `_parseCourses(_key) ?? _parseCourses(_keyBak) ?? <Course>[]`
+  /// 的**备份键兜底永远走不到** —— 主键一旦损坏就成了「空课表」，静默丢数据。
+  /// 现在空值返回 null，让 ?? 链真正生效。
   static List<Course>? _parseCourses(String? raw) {
-    if (raw == null || raw.isEmpty) return [];
+    if (raw == null || raw.isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return null;
@@ -303,16 +319,165 @@ class CourseStorage {
     return courses;
   }
 
+  /// 冲突课签名（v1.6.0）：用户在冲突弹窗里选择删除的教务课按此签名持久化，
+  /// 同步时过滤 —— 否则教务下次仍下发，用户删过的冲突课会复活。
+  /// 用业务字段而非 id：id 由导入方生成（imp_ / sync_ 前缀不统一）。
+  static String courseConflictKey(Course c) =>
+      '${c.name}|${c.teacher}|${c.weekday}|${c.startSlot}|${c.endSlot}|${c.weeks}';
+
+  /// 过滤掉「用户已选择删除」的教务课（冲突解决弹窗的落点）。
+  static Future<List<Course>> dropIgnored(List<Course> serverCourses) async {
+    if (serverCourses.isEmpty) return serverCourses;
+    final dropped = await StorageService.loadDroppedCourseKeys();
+    if (dropped.isEmpty) return serverCourses;
+    return serverCourses
+        .where((c) => !dropped.contains(courseConflictKey(c)))
+        .toList();
+  }
+
   /// 用教务系统返回的课程替换所有「server」来源的课程，保留「manual」来源
   static Future<List<Course>> mergeServerCourses(List<Course> serverCourses) async {
     final courses = await loadCourses();
+    // v1.6.0：先过滤用户此前选择删除的冲突课（否则同步后它们会复活）
+    final incoming = await dropIgnored(serverCourses);
     // ⚠️ 空列表直接返回：导入失败/解析失败时若照常「先删后加」，
     //    会把上次成功导入的课表整份清空（用户看到的就是「导入后课表没了」）。
-    if (serverCourses.isEmpty) return courses;
+    if (incoming.isEmpty) return courses;
     courses.removeWhere((c) => c.source == CourseSource.server);
-    courses.addAll(serverCourses);
+    courses.addAll(incoming);
     await saveCourses(courses);
     return courses;
+  }
+
+  /// 把教务抓来的课合并进**指定**课表（不是「当前激活那份」）。
+  ///
+  /// 2026-10-13 新增，配合 [resolveSyncTargetId] 修「同步写错表」的 bug：
+  /// 用户导入他人课表并切过去后，同步必须仍然写回**自己的**那份。
+  static Future<({List<Course> merged, List<CourseConflict> conflicts})>
+      mergeServerCoursesInto(
+    String tableId,
+    List<Course> serverCourses,
+  ) async {
+    final all = await _loadAll();
+    final idx = all.tables.indexWhere((t) => t.id == tableId);
+    if (idx < 0) return (merged: const <Course>[], conflicts: const <CourseConflict>[]);
+    final target = all.tables[idx];
+    // v1.6.0：先过滤用户此前选择删除的冲突课（否则同步后它们会复活）
+    final incoming = await dropIgnored(serverCourses);
+    // 空列表直接返回：导入失败/解析失败时不能「先删后加」把课表清空。
+    if (incoming.isEmpty) {
+      return (merged: target.courses, conflicts: const <CourseConflict>[]);
+    }
+    // 先把旧的教务课摘掉 —— 剩下的就是「本地课」（手动的），也是冲突排查对象。
+    final locals = List<Course>.of(target.courses)
+      ..removeWhere((c) => c.source == CourseSource.server);
+    // 2026-10-13（任务三）：检出「教务 vs 本地」的时间冲突，随结果带给界面。
+    final conflicts = detectConflicts(locals, incoming);
+    final courses = List<Course>.of(locals)..addAll(incoming);
+    final next = List<CourseTable>.of(all.tables);
+    next[idx] = target.copyWith(courses: courses);
+    await _writeAll(next, all.activeId);
+    // 目标可能不是当前激活那份 —— 但小组件显示的是哪份由它自己决定，
+    // 统一通知一次最省事（内容变了就该重算）。
+    unawaited(WidgetSyncService.syncTodayCourses());
+    return (merged: courses, conflicts: conflicts);
+  }
+
+  /// 检出 [incoming]（本次教务课）与 [existing]（本地课）的**时间冲突**。
+  ///
+  /// 判定：星期相同 + 节次区间有交集 + **存在某一周两门都上**
+  /// （周次判定复用 [Course.occursOn]，与课表网格同一口径，不另写一套）。
+  static List<CourseConflict> detectConflicts(
+    List<Course> existing,
+    List<Course> incoming,
+  ) {
+    final out = <CourseConflict>[];
+    for (final s in incoming) {
+      for (final l in existing) {
+        if (s.weekday != l.weekday) continue;
+        if (s.endSlot < l.startSlot || l.endSlot < s.startSlot) continue;
+        var overlapWeek = false;
+        for (var w = 1; w <= 20; w++) {
+          if (s.isActiveOnWeek(w) && l.isActiveOnWeek(w)) {
+            overlapWeek = true;
+            break;
+          }
+        }
+        if (overlapWeek) out.add(CourseConflict(server: s, local: l));
+      }
+    }
+    return out;
+  }
+
+  /// 检出**教务课表自己内部**的重叠（2026-10-13 用户澄清的真实诉求）。
+  ///
+  /// 和 [detectConflicts] 的区别：那个是「教务 vs 本地手动课」，
+  /// 这个是**教务下发的课程互相撞车** —— 比如某个晚上排了两门 9-10 节的课。
+  /// 这种情况用户改不了教务，但**必须让他知道**，否则课表上两门叠在一起
+  /// 看着像 App 出错。返回的每对里 server / local 两个字段都来自教务课。
+  static List<CourseConflict> detectSelfConflicts(List<Course> incoming) {
+    final out = <CourseConflict>[];
+    for (var i = 0; i < incoming.length; i++) {
+      for (var j = i + 1; j < incoming.length; j++) {
+        final a = incoming[i];
+        final b = incoming[j];
+        if (a.weekday != b.weekday) continue;
+        if (a.endSlot < b.startSlot || b.endSlot < a.startSlot) continue;
+        var overlapWeek = false;
+        for (var w = 1; w <= 20; w++) {
+          if (a.isActiveOnWeek(w) && b.isActiveOnWeek(w)) {
+            overlapWeek = true;
+            break;
+          }
+        }
+        if (overlapWeek) out.add(CourseConflict(server: a, local: b));
+      }
+    }
+    return out;
+  }
+
+  /// 按 id 批量删除**指定课表**里的课程（冲突解决用）。
+  static Future<List<Course>> removeCoursesFrom(
+    String tableId,
+    Iterable<String> ids,
+  ) async {
+    final kill = ids.toSet();
+    if (kill.isEmpty) return const <Course>[];
+    final all = await _loadAll();
+    final idx = all.tables.indexWhere((t) => t.id == tableId);
+    if (idx < 0) return const <Course>[];
+    final target = all.tables[idx];
+    final courses =
+        target.courses.where((c) => !kill.contains(c.id)).toList(growable: false);
+    final next = List<CourseTable>.of(all.tables);
+    next[idx] = target.copyWith(courses: courses);
+    await _writeAll(next, all.activeId);
+    unawaited(WidgetSyncService.syncTodayCourses());
+    return courses;
+  }
+
+  /// 当前激活课表的 id。
+  static Future<String> activeTableId() async => (await _loadAll()).activeId;
+
+  /// 自动更新 / 手动刷新**应该写哪一份课表**？（2026-10-13）
+  ///
+  /// 规则（用户要求「同步对应来源的课表」）：
+  ///   ① 当前激活的那份是「本人的课表」→ 写它（常见情形，行为与以前一致）；
+  ///   ② 激活的不是本人的（在看导入的班级课表）→ 写**唯一那份本人的**；
+  ///   ③ 一份「本人的课表」都没有 → 返回 null，调用方提示、**不写任何表**
+  ///      （绝不能拿我的教务去覆盖导入的别人的课表）。
+  static Future<String?> resolveSyncTargetId() async {
+    final all = await _loadAll();
+    if (all.tables.isEmpty) return null;
+    final own = all.tables.where((t) => t.syncableByMyCampus).toList();
+    if (own.isEmpty) return null;
+    final active = all.tables.where((t) => t.id == all.activeId).firstOrNull;
+    if (active != null && active.syncableByMyCampus) return active.id;
+    final owner = all.tables.firstWhere(
+      (t) => t.id == all.activeId,
+      orElse: () => own.first,
+    );
+    return owner.syncableByMyCampus ? owner.id : own.first.id;
   }
 
   // ---------------- 开学日期（教学周基准） ----------------
@@ -503,6 +668,11 @@ class CourseStorage {
   /// 用 JSON 存而不是独立 key：以后加字段不用改存储格式，缺字段自动补默认值。
   static const String _kDisplaySettings = 'course_display_settings_v1';
 
+  // 🔴 2026-10-13：「进入 App 自动更新课表」**默认关闭**（原来默认开）。
+  //    用户明确要求改默认关 —— 自动同步一旦写错表（见 CourseTable.kind），
+  //    后果是别人的课表被我的教务覆盖；默认关掉更安全，用户想要自动更新
+  //    可在课表设置页手动打开。手动刷新（右上角刷新键）不受影响。
+
   /// 网格线开关的**内存缓存**：供网格绘制组件（course_grid_widgets）直接读取，
   /// 避免「页面 → 网格 → 单元格」逐层传参。由课表页加载/刷新显示设置时同步更新。
   static bool showGridLinesCache = true;
@@ -510,21 +680,101 @@ class CourseStorage {
   /// 「显示非本周课程」开关的内存缓存（理由同 showGridLinesCache）。
   static bool showOtherWeeksCache = false;
 
+  /// 非本周课程的**颜色清淡度**（0.45~0.85，越大越淡：底色向页面背景色混合的
+  /// 比例；v1.5.0 新增，默认 0.75 比原来的写死 0.62 更清淡 —— 用户要求）。
+  ///
+  /// v1.6.9：语义从「向背景色混合」改为**「淡灰的深浅」** —— 非本周课程统一转成
+  /// 淡灰色（保留各课原色的明暗差异），这个值越大灰越淡。滑杆标题与取值范围不变。
+  static double otherWeeksDimCache = 0.75;
+
+  /// 课节色块**色彩方案**的内存缓存（v1.6.9）：方案一 / 方案二（柔彩）/ 方案三。
+  /// 只在渲染期参与颜色转换（见 [courseColorFor]），不改课程数据。
+  static CourseColorScheme schemeCache = CourseColorScheme.standard;
+
+  // ---- 课表布局（v1.6.4，仿掌上徐工的「课表网格」组）----
+
+  /// 课节高度（每行高，px）。**0 = 自动**（按可用高度均分，等同改造前行为）。
+  static double rowHeightCache = 0;
+
+  /// 时间列宽度（px）。开了「隐藏节次时间」时由 activeTimeColWidth 归零。
+  static double timeColWidthCache = 48;
+
+  /// 日期栏（周次 + 一周日期那行）高度（px）。
+  static double dateRowHeightCache = 56;
+
   /// 课表背景图路径的内存缓存（空串 = 无背景图）。理由同上。
   static String backgroundImageCache = '';
+
+  // ---------------- 课表外观设置（2026-10-13 v1.3.0：全滑杆）----------------
+  //
+  // 参照掌上徐工的「课程块精细样式组」，全部做成**连续滑杆**（用户要求：
+  // 不要再给几档预设，值得调的量都做成调节杆）。全部存进同一个 JSON，
+  // 缺字段自动补默认；旧的三档值在 loadDisplaySettings 里一次性换算。
+
+  /// 网格线粗细（0.5~2.5px）与深浅（0~1 连续，越大越深）。
+  static double gridLineWidthCache = 1.0;
+  static double gridLineDepthCache = 0.5;
+
+  /// 课程块圆角（0~24px 连续）。
+  static double blockRadiusCache = 6;
+
+  /// 课程块内边距（0~8px：文字到块边的距离）。
+  static double blockPadCache = 3.0;
+
+  /// 课程块块间距（0~6px：块到格子的距离）。
+  static double blockMarginCache = 1.8;
+
+  /// 课程块不透明度（0.1~1.0 连续）。
+  static double blockOpacityCache = 1.0;
+
+  /// 课程块边框：粗细 0~2px（0 = 无边框）、虚线开关、虚线密度 0.5~2×（越大越密）。
+  static double blockBorderWidthCache = 0.8;
+  static bool blockBorderDashedCache = false;
+  static double blockDashDensityCache = 1.0;
+
+  /// 课程卡内是否显示任课老师 / 教室。
+  static bool showTeacherOnCardCache = true;
+  static bool showClassroomOnCardCache = true;
+
+  /// 隐藏左侧节次时间列 / 隐藏日期栏里的「月/日」。
+  static bool hideSectionTimeCache = false;
+  static bool hideDateRowCache = false;
 
   /// 「进入 App 自动更新课表」开关的内存缓存（理由同上）。
   ///
   /// 默认**开**：开源版已经把「手动点按钮导入」这条路去掉了，同步对用户是隐形的；
   /// 默认关的话，大多数人永远不会去设置页打开它，课表就再也不更新了。
   /// 关了也安全 —— 只是不再自动同步，随时可用课表页右上角的刷新键手动同步。
-  static bool autoUpdateOnLaunchCache = true;
+  static bool autoUpdateOnLaunchCache = false;
 
   static Map<String, dynamic> defaultDisplaySettings() => <String, dynamic>{
         'showGridLines': true,
         'showOtherWeeks': false,
+        // v1.5.0：非本周课程颜色清淡度（0.45~0.85，越大越淡；默认比旧观感更清淡）
+        'otherWeeksDim': 0.75,
+        // v1.6.9：课节色块色彩方案（standard / soft / vivid，默认 = 改造前观感）
+        'scheme': 'standard',
+        // v1.6.4：课表布局（仿徐工）—— 0 = 课节高度自动（均分）
+        'rowHeight': 0,
+        'timeColWidth': 48,
+        'dateRowHeight': 56,
         'backgroundImage': '',
-        'autoUpdateOnLaunch': true,
+        'autoUpdateOnLaunch': false,
+        // 2026-10-13 新增（默认 = 改之前的观感，老用户升级无感）
+        // v1.3.0：三档字段全部换成连续值（旧值在 loadDisplaySettings 里换算）
+        'gridLineWidth': 1.0,
+        'gridLineDepth': 0.5,
+        'blockRadius': 6.0,
+        'blockPad': 3.0,
+        'blockMargin': 1.8,
+        'blockOpacity': 1.0,
+        'blockBorderWidth': 0.8,
+        'blockBorderDashed': false,
+        'blockDashDensity': 1.0,
+        'showTeacherOnCard': true,
+        'showClassroomOnCard': true,
+        'hideSectionTime': false,
+        'hideDateRow': false,
       };
 
   static Future<Map<String, dynamic>> loadDisplaySettings() async {
@@ -542,10 +792,58 @@ class CourseStorage {
         merged['_gridDefaultOn'] = true;
         await saveDisplaySettings(merged);
       }
+      // v1.3.0（2026-10-13）迁移：外观「三档」值 → 「连续滑杆」值。
+      // 判据：原数据里没有新键时按旧键换算（新用户两条都不成立、无副作用；
+      // 换算结果与旧档位视觉一致，老用户升级无感）。
+      if (!j.containsKey('gridLineDepth')) {
+        final s = (int.tryParse('${j['gridLineStrength'] ?? 1}') ?? 1).clamp(0, 2);
+        merged['gridLineDepth'] = const [0.25, 0.5, 0.75][s];
+      }
+      if (!j.containsKey('blockPad')) {
+        final d = (int.tryParse('${j['blockDensity'] ?? 1}') ?? 1).clamp(0, 2);
+        merged['blockPad'] = const [2.0, 3.0, 5.0][d];
+        merged['blockMargin'] = const [1.2, 1.8, 2.6][d];
+      }
+      if (!j.containsKey('blockBorderWidth')) {
+        final b = (int.tryParse('${j['blockBorder'] ?? 1}') ?? 1).clamp(0, 2);
+        merged['blockBorderWidth'] = b == 0 ? 0.0 : 0.8;
+        merged['blockBorderDashed'] = b == 2;
+      }
       return merged;
     } catch (_) {
       return base; // 损坏则回落默认值，不影响课表可用
     }
+  }
+
+  /// 把「显示设置」同步进内存缓存（课表页与课表设置页**共用**这一份逻辑）。
+  ///
+  /// 2026-10-13 v1.3.0：从 `course_table_home_page._loadDisplaySettings` 抽出 ——
+  /// 课表设置页改动滑杆时缓存必须**立即**更新（顶部实时预览 + 返回课表都读它），
+  /// 不能等返回课表页时才同步。
+  static void applyDisplayToCache(Map<String, dynamic> s) {
+    double d(Object? v, double fb) => double.tryParse('$v') ?? fb;
+    showGridLinesCache = s['showGridLines'] != false;
+    showOtherWeeksCache = s['showOtherWeeks'] == true;
+    otherWeeksDimCache = d(s['otherWeeksDim'], 0.75).clamp(0.45, 0.85);
+    schemeCache = CourseColorScheme.parse(s['scheme']);
+    rowHeightCache = d(s['rowHeight'], 0).clamp(0, 120);
+    timeColWidthCache = d(s['timeColWidth'], 48).clamp(28, 72);
+    dateRowHeightCache = d(s['dateRowHeight'], 56).clamp(36, 88);
+    backgroundImageCache = (s['backgroundImage'] ?? '').toString();
+    gridLineWidthCache = d(s['gridLineWidth'], 1.0);
+    gridLineDepthCache = d(s['gridLineDepth'], 0.5);
+    blockRadiusCache = d(s['blockRadius'], 6);
+    blockPadCache = d(s['blockPad'], 3.0);
+    blockMarginCache = d(s['blockMargin'], 1.8);
+    blockOpacityCache = d(s['blockOpacity'], 1.0);
+    blockBorderWidthCache = d(s['blockBorderWidth'], 0.8);
+    blockBorderDashedCache = s['blockBorderDashed'] == true;
+    blockDashDensityCache = d(s['blockDashDensity'], 1.0);
+    showTeacherOnCardCache = s['showTeacherOnCard'] != false;
+    showClassroomOnCardCache = s['showClassroomOnCard'] != false;
+    hideSectionTimeCache = s['hideSectionTime'] == true;
+    hideDateRowCache = s['hideDateRow'] == true;
+    autoUpdateOnLaunchCache = s['autoUpdateOnLaunch'] != false;
   }
 
   static Future<void> saveDisplaySettings(Map<String, dynamic> s) async {

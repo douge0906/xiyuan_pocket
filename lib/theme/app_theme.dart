@@ -28,6 +28,26 @@ class AppTheme {
   static void setPrimary(Color c) {
     if (primaryNotifier.value != c) primaryNotifier.value = c;
   }
+
+  /// 页面背景色（v1.5.0，2026-10-14）：**浅色模式生效**；null = 跟随默认
+  /// （[backgroundColor]）。深色模式固定深色背景，此设置不生效。
+  static final ValueNotifier<Color?> backgroundNotifier =
+      ValueNotifier<Color?>(null);
+
+  static void setBackground(Color? c) {
+    if (backgroundNotifier.value != c) backgroundNotifier.value = c;
+  }
+
+  /// 背景色预设（浅色系；深色模式不生效，设置页里该行会隐藏）。
+  /// v1.6.3：色值按同一明度层级重调（更柔和、彼此更协调）。
+  static const List<(String, Color)> backgroundPresets = [
+    ('默认', Color(0xFFF8F9FC)),
+    ('纯白', Color(0xFFFFFFFF)),
+    ('米黄', Color(0xFFFAF6EE)),
+    ('浅灰', Color(0xFFF1F2F5)),
+    ('淡蓝', Color(0xFFEDF3FA)),
+    ('淡绿', Color(0xFFEDF6F0)),
+  ];
   static const Color backgroundColor = Color(0xFFF8F9FC);
 
   // ---------------------------------------------------------------------------
@@ -99,14 +119,41 @@ class AppTheme {
   /// - [radiusSm] 24 — 小控件：标签、chip、小按钮
   /// - [radiusMd] 14 — 常规卡片、输入框、弹窗条目（**最常用**）
   /// - [radiusLg] 20 — 大容器、底部弹层、强调卡
-  static const double radiusSm = 12;
-  static const double radiusMd = 14;
-  static const double radiusLg = 20;
+  // 🔴 2026-10-13：圆角改为**可全局缩放**（设置 → 外观 → 圆角）。
+  //
+  // 做法：三个基准值仍是 12/14/20，但乘一个全局缩放系数。所有用到圆角的地方
+  // 统一走这三个 getter（脚本把 95 处 `BorderRadius.circular(12|14|20)` 字面量
+  // 全部换成了 getter），改缩放系数 + 通知重建 = 全 App 圆角一起变。
+  //
+  // 为什么能用 getter 而不是 const：改之前已确认**没有任何一处**在 const 上下文
+  // 里用这三个值（唯一一处 const BorderRadius.vertical 已一并去掉 const）。
+  static double _radiusScale = 1.0;
+
+  /// 全局圆角缩放（0.7 紧凑 / 1.0 标准 / 1.3 圆润）。
+  static double get radiusScale => _radiusScale;
+
+  /// 圆角缩放变化通知：main.dart 监听它做整树重建（与 [modeNotifier] 同一套路）。
+  static final ValueNotifier<double> radiusNotifier = ValueNotifier<double>(1.0);
+
+  static void setRadiusScale(double s) {
+    final v = s.clamp(0.5, 1.6);
+    if ((v - _radiusScale).abs() < 0.001) return;
+    _radiusScale = v;
+    radiusNotifier.value = v;
+  }
+
+  static double radiusSmRaw = 12;
+  static double radiusMdRaw = 14;
+  static double radiusLgRaw = 20;
+
+  static double get radiusSm => (radiusSmRaw * _radiusScale).roundToDouble();
+  static double get radiusMd => (radiusMdRaw * _radiusScale).roundToDouble();
+  static double get radiusLg => (radiusLgRaw * _radiusScale).roundToDouble();
 
   /// 常用圆角对象（省去每次 `BorderRadius.circular(...)`）。
-  static const BorderRadius radiusSmAll = BorderRadius.all(Radius.circular(radiusSm));
-  static const BorderRadius radiusMdAll = BorderRadius.all(Radius.circular(radiusMd));
-  static const BorderRadius radiusLgAll = BorderRadius.all(Radius.circular(radiusLg));
+  static BorderRadius get radiusSmAll => BorderRadius.all(Radius.circular(radiusSm));
+  static BorderRadius get radiusMdAll => BorderRadius.all(Radius.circular(radiusMd));
+  static BorderRadius get radiusLgAll => BorderRadius.all(Radius.circular(radiusLg));
 
   /// 间距（Gap）：4 的倍数，四档。
   ///
@@ -175,7 +222,9 @@ class AppTheme {
   static int _darkKey = -1;
 
   static ThemeData get lightTheme {
-    final key = primaryColor.value;
+    // 缓存 key 同时含主题色与背景色（背景色只影响浅色主题）
+    final bg = backgroundNotifier.value?.value ?? -1;
+    final key = primaryColor.value ^ (bg * 97);
     if (_lightCache == null || _lightKey != key) {
       _lightKey = key;
       _lightCache = _buildTheme(Brightness.light);
@@ -201,7 +250,9 @@ class AppTheme {
         seedColor: primaryColor,
         brightness: brightness,
       ),
-      scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : backgroundColor,
+      scaffoldBackgroundColor: isDark
+          ? const Color(0xFF121212)
+          : (backgroundNotifier.value ?? backgroundColor),
       appBarTheme: AppBarTheme(
         centerTitle: true,
         elevation: 0,
@@ -218,7 +269,7 @@ class AppTheme {
           backgroundColor: primaryColor,
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           ),
           padding: const EdgeInsets.symmetric(vertical: 14),
           textStyle: const TextStyle(
@@ -232,15 +283,15 @@ class AppTheme {
         fillColor: isDark ? const Color(0xFF2C2C2C) : Colors.white,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           borderSide: BorderSide(color: isDark ? borderDark : borderLight),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           borderSide: BorderSide(color: isDark ? borderDark : borderLight),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           borderSide: BorderSide(color: primaryColor, width: 1.5),
         ),
         hintStyle: TextStyle(color: isDark ? Colors.grey.shade500 : Colors.grey.shade400),
@@ -275,8 +326,12 @@ extension AppThemeContext on BuildContext {
   /// 表面色（卡片 / 弹窗底）：暗色 0xFF1E1E1E，亮色白。
   Color get surfaceColor => isDark ? AppTheme.surfaceDark : Colors.white;
 
-  /// 页面底色：暗色 0xFF121212，亮色 AppTheme.backgroundColor。
-  Color get scaffoldColor => isDark ? AppTheme.scaffoldDark : AppTheme.backgroundColor;
+  /// 页面底色：暗色固定 0xFF121212；亮色跟随用户的「背景色」设置
+  /// （v1.6.3 修复：此前亮色硬编码 [AppTheme.backgroundColor]，导致换背景色
+  ///  只有首页生效 —— 现在全 App 的页面底色统一走这里）。
+  Color get scaffoldColor => isDark
+      ? AppTheme.scaffoldDark
+      : (AppTheme.backgroundNotifier.value ?? AppTheme.backgroundColor);
 
   /// 主文字色：暗色白，亮色 0xFF1F2937。
   Color get textPrimary => isDark ? Colors.white : AppTheme.textPrimaryLight;

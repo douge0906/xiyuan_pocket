@@ -74,7 +74,7 @@ class _NotificationPageState extends State<NotificationPage>
   final GlobalKey _kAddChannelBtn = GlobalKey();
 
   // ---------------- 消息栏目样式（两套，默认纯白） ----------------
-  String _messageStyle = StorageService.kMessageStylePlain;
+  String _messageStyle = StorageService.kMessageStyleCard;
 
   /// 当前页签（顺序 = 注册顺序 = chip 顺序 = PageView 页序）。
   List<MessageChannel> get _tabs =>
@@ -329,7 +329,7 @@ class _NotificationPageState extends State<NotificationPage>
               height: 40,
               decoration: BoxDecoration(
                 color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 border: Border.all(color: context.borderColor),
               ),
               child: Icon(
@@ -389,7 +389,7 @@ class _NotificationPageState extends State<NotificationPage>
         selectedColor: AppTheme.primaryColor,
         side: BorderSide(color: context.borderColor),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 4),
         label: Text(
@@ -437,7 +437,7 @@ class _NotificationPageState extends State<NotificationPage>
         height: 44,
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(color: context.borderColor),
         ),
         child: TextField(
@@ -684,7 +684,7 @@ class _NotificationPageState extends State<NotificationPage>
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xF21E1E1E) : const Color(0xF2FFFFFF),
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: context.borderColor),
         boxShadow: [
           BoxShadow(
@@ -802,7 +802,7 @@ class _NotificationPageState extends State<NotificationPage>
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xE61E1E1E) : const Color(0xE6FFFFFF),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         border: Border.all(color: context.borderColor),
       ),
       child: Row(
@@ -841,7 +841,7 @@ class _NotificationPageState extends State<NotificationPage>
 
     return Scaffold(
       // 无缝白底：消息页整体铺白，行与行之间只靠 1px 灰线分隔。
-      backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
+      backgroundColor: context.scaffoldColor,
       body: SafeArea(
         child: Stack(
           children: [

@@ -56,7 +56,7 @@ class HomeTodayOverview extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 8), // v1.5.1 压缩：原 18
         decoration: BoxDecoration(
           color: surface,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           boxShadow: AppTheme.cardShadow,
           // v2.4.3：补灰线边框，与「服务」页卡片观感统一
           border: Border.all(color: context.borderColor, width: 1),

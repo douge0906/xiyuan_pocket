@@ -58,10 +58,12 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
 
   void _shiftMonth(int delta) {
     setState(() {
-      final m = _viewMonth.month + delta;
-      final y = _viewMonth.year + (m - 1) ~/ 12;
-      final mm = ((m - 1) % 12) + 1;
-      _viewMonth = DateTime(y, mm, 1);
+      // 🔴 2026-10-13 修复跨年错误：原实现用 `~/` 与 `%` 手算年月，
+      //    而 Dart 的 `~/` 是**向零截断** —— 1 月点「上个月」时
+      //    m=0、(0-1)~/12=0 → 年份不变、月份算成 12，结果跳到**同年 12 月**
+      //    （应为上一年 12 月）。开学季设置「第 1 周」最容易踩到。
+      //    交给 DateTime 自己规范化：month 传 0 / 13 会自动进位或退位。
+      _viewMonth = DateTime(_viewMonth.year, _viewMonth.month + delta, 1);
     });
   }
 
@@ -79,7 +81,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
 
     return Dialog(
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
@@ -208,7 +210,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
                   ),
                   child: const Text('确定', style: TextStyle(fontSize: 12.5)),
                 ),

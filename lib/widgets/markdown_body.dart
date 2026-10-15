@@ -1,3 +1,4 @@
+import '../theme/app_theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -129,7 +130,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
         widgets.add(Padding(
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             child: Image.network(
               imgOnly.group(1)!,
               width: double.infinity,

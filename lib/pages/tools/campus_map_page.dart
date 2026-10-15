@@ -94,8 +94,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
     final resetEnabled = _scale > 1.01 || _quarterTurns != 0;
 
     return Scaffold(
-      backgroundColor:
-          isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: _fullscreen
           ? null
           : AppBar(
@@ -103,7 +102,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
                   style: TextStyle(fontWeight: FontWeight.bold)),
               backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
               foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-              elevation: 0.5,
+              elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
               actions: [
                 IconButton(
                   onPressed: resetEnabled ? _reset : null,
@@ -157,7 +156,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                 child: Text(
-                  '双指缩放 · 拖动 · 右上角可旋转 / 全屏',
+                  '双指缩放 · 拖动 · 右上角可旋转或退出全屏',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12.5, color: muted),
                 ),

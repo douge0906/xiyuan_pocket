@@ -1,3 +1,4 @@
+import '../theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
 /// 外部站点快捷入口（成绩页 / 考试页共用，v2.4.7）。
@@ -43,7 +44,7 @@ class SiteLinksRow extends StatelessWidget {
                 side: BorderSide(color: side),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 shape:
-                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
               ),
             ),
           ),

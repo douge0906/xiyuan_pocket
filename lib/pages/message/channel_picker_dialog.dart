@@ -54,7 +54,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
     return Dialog(
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: 420, maxHeight: maxH),
         child: Padding(
@@ -111,7 +111,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                     ),
                   ),
                   child: const Text('完成'),
@@ -147,7 +147,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
           _sel.add(ch.id);
         }
       }),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(
@@ -158,7 +158,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
               height: 22,
               decoration: BoxDecoration(
                 color: on ? AppTheme.primaryColor : Colors.transparent,
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 border: Border.all(
                   color: on
                       ? AppTheme.primaryColor

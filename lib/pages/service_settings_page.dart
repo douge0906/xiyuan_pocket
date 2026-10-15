@@ -91,7 +91,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor
                       .withOpacity(context.isDark ? 0.20 : 0.10),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Icon(tool.icon, size: 19, color: AppTheme.primaryColor),
               ),

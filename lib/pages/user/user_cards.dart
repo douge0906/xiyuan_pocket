@@ -21,7 +21,7 @@ Widget userCard(
         color: Theme.of(context).brightness == Brightness.dark
             ? const Color(0xFF1E1E1E)
             : Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: context.borderColor),
         boxShadow: AppTheme.cardShadow,
       ),

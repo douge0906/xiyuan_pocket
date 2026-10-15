@@ -6,6 +6,12 @@ import 'course_date_picker.dart';
 
 /// 课表页表头：周次选择 + 一周日期行（v2.3.1 自 course_table_home_page 拆出）。
 const double kCourseTimeColWidth = 48.0;
+
+/// 运行时的时间列宽：设置里开了「隐藏节次时间」就归零（2026-10-13）；
+/// 否则读「课表布局 → 时间列宽度」滑杆（v1.6.4，默认 48）。
+double get activeTimeColWidth => CourseStorage.hideSectionTimeCache
+    ? 0.0
+    : CourseStorage.timeColWidthCache;
 const List<String> courseDayLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 class CourseDayHeader extends StatelessWidget {
@@ -33,7 +39,8 @@ class CourseDayHeader extends StatelessWidget {
     final surfaceColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
     return Container(
-      height: 56,
+      // v1.6.4：日期栏高度可调（课表布局滑杆，默认 56）
+      height: CourseStorage.dateRowHeightCache,
       decoration: BoxDecoration(
         color: surfaceColor,
         border: Border(bottom: BorderSide(color: context.borderColor)),
@@ -41,7 +48,7 @@ class CourseDayHeader extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: kCourseTimeColWidth,
+            width: activeTimeColWidth,
             child: InkWell(
               onTap: () => _pickWeek(context),
               child: Column(
@@ -71,20 +78,23 @@ class CourseDayHeader extends StatelessWidget {
                       color: i + 1 == todayWeekday ? AppTheme.primaryColor : (isDark ? Colors.grey.shade400 : const Color(0xFF6B7280)),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
-                    style: TextStyle(
-                      fontSize: 11,
+                  // 2026-10-13：设置里可隐藏「月/日」（只留周几）
+                  if (!CourseStorage.hideDateRowCache) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
+                      style: TextStyle(
+                        fontSize: 11,
                         color: i + 1 == todayWeekday
                             ? AppTheme.primaryColor.withOpacity(0.85)
                             : (isDark ? Colors.grey.shade600 : Colors.grey.shade500),
                       ),
                     ),
                   ],
-                ),
+                ],
               ),
             ),
+          ),
         ],
       ),
     );
@@ -126,7 +136,7 @@ class CourseDayHeader extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   border: Border.all(color: AppTheme.primaryColor.withOpacity(0.15)),
                 ),
                 child: Row(
@@ -135,7 +145,7 @@ class CourseDayHeader extends StatelessWidget {
                       padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
                         color: AppTheme.primaryColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(9),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                       ),
                       child:  Icon(Icons.event_rounded, size: 17, color: AppTheme.primaryColor),
                     ),
@@ -197,7 +207,7 @@ class CourseDayHeader extends StatelessWidget {
                               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                               decoration: BoxDecoration(
                                 color: AppTheme.primaryColor,
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                               ),
                               child: const Text('本周', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
                             )
@@ -217,7 +227,7 @@ class CourseDayHeader extends StatelessWidget {
                         style: TextStyle(fontSize: 11, color: isDark ? Colors.grey.shade600 : const Color(0xFF9CA3AF)),
                       ),
                       trailing: isSelected ?  Icon(Icons.check_circle_rounded, color: AppTheme.primaryColor, size: 20) : null,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
                       selectedTileColor: AppTheme.primaryColor.withOpacity(0.08),
                       onTap: () {
                         onWeekChanged(week);

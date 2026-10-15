@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/course_model.dart';
 import '../services/api_service.dart';
+import '../services/course_storage.dart';
 import '../theme/app_theme.dart';
 
 /// 跨专业自选 · 班级选择页。
@@ -130,9 +131,11 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
       final courses = <Course>[];
       for (final m in raw) {
         final name = (m['name'] ?? '').toString().trim();
-        final wd = (m['weekday'] as num?)?.toInt();
-        if (name.isEmpty || wd == null) continue;
-        final start = (m['start_slot'] as num?)?.toInt() ?? 1;
+        // v1.6.8：容错取整 —— 教务返回的字段可能是字符串（"3"），
+        // 原先 `as num?` 会抛 type cast 错误、整批导入失败。
+        final wd = _asInt(m['weekday'], 0);
+        if (name.isEmpty || wd <= 0) continue;
+        final start = _asInt(m['start_slot'], 1);
         courses.add(Course(
           id: 'cls_${bhId}_$wd-$start',
           name: name,
@@ -140,7 +143,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
           classroom: (m['classroom'] ?? '').toString().trim(),
           weekday: wd,
           startSlot: start,
-          endSlot: (m['end_slot'] as num?)?.toInt() ?? start,
+          endSlot: _asInt(m['end_slot'], start),
           weeks: (m['weeks'] ?? '').toString().trim(),
           colorValue: colorForName(name),
           source: CourseSource.server,
@@ -206,7 +209,9 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                             height: 8,
                             margin: const EdgeInsets.only(top: 6),
                             decoration: BoxDecoration(
-                                color: Color(c.colorValue),
+                                // v1.6.9：小圆点跟随课节色块的色彩方案
+                                color: courseColorFor(
+                                    c.colorValue, CourseStorage.schemeCache),
                                 shape: BoxShape.circle),
                           ),
                           const SizedBox(width: 8),
@@ -283,7 +288,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                   fillColor: _dark ? const Color(0xFF2A2A2A) : const Color(0xFFF3F4F6),
                   contentPadding: EdgeInsets.zero,
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                       borderSide: BorderSide.none),
                 ),
               ),
@@ -351,7 +356,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
           border: Border.all(
               color:
                   active ? AppTheme.primaryColor : subColor.withOpacity(0.35)),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Flexible(
@@ -420,20 +425,20 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Center(
                     child: Text('共 ${_shown.length} 个班（数据来自教务，仅供参考）',
-                        style: TextStyle(fontSize: 11.5, color: subColor))));
+                        style: TextStyle(fontSize: 12, color: subColor))));
           }
           final c = _shown[i];
           final bhId = (c['bh_id'] ?? '').toString();
           final busy = _loadingBhId == bhId;
           return InkWell(
             onTap: busy ? null : () => _pick(c),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: surface,
                 border: Border.all(color: line),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(AppTheme.radiusMd),
               ),
               child: Row(children: [
                 Expanded(
@@ -470,7 +475,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: AppTheme.primaryColor.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(7),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     ),
                     child: Text('${c["xkrs"] ?? "?"} 人',
                         style: TextStyle(
@@ -487,4 +492,12 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
       ),
     );
   }
+}
+
+/// 容错取整数（v1.6.8）：教务/班级接口返回的字段**有时是字符串**（"3"）有时是数字（3），
+/// 原先 `as num?` 硬转会在字符串时抛 type cast 错误，导致整批导入失败。
+int _asInt(dynamic v, int fallback) {
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v.trim()) ?? fallback;
+  return fallback;
 }

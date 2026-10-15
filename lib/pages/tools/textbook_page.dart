@@ -254,25 +254,20 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor:
-          isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('我的教材',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-        elevation: 0.5,
+        elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         actions: [
           IconButton(
             onPressed: _loading ? null : _query,
             tooltip: '刷新教材',
-            icon: _loading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
+            // 2026-10-13：加载中不再在 AppBar 里也转一圈 —— 正文已有
+            // 「正在获取教材信息，已等待 N 秒」的整块加载提示，同屏两个指示很吵。
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
@@ -293,14 +288,14 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   Widget _buildSemesterRow(bool isDark) {
     return Material(
       color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: _loading ? null : _pickSemester,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border: Border.all(color: context.borderColor),
           ),
           child: Row(
@@ -359,7 +354,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border:
                 Border.all(color: const Color(0xFFEF4444).withOpacity(0.45)),
           ),
@@ -423,7 +418,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF59E0B).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
                     _cacheUpdatedAt == null
@@ -457,7 +452,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   List<Map<String, dynamic>> get _visibleBooks {
     final sem = _xnm.trim();
     final term = _xqm.trim();
-    return _books.where((b) {
+    final filtered = _books.where((b) {
       // ① 没有教材信息 → 不显示
       if ((b['book'] ?? '').toString().trim().isEmpty) return false;
       // ② 学期不匹配 → 不显示（字段缺失时不参与判断）
@@ -467,6 +462,22 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
       if (bt.isNotEmpty && !_sameTerm(bt, term)) return false;
       return true;
     }).toList();
+
+    // 🔴 2026-10-13：缓存与当前筛选学期不一致时不要「装空」。
+    //    缓存可能是**别的学期**查的，而 _xnm/_xqm 是当前学期 —— 照原样过滤会把
+    //    整份缓存滤掉，页面显示「暂无教材」，其实数据就在本地（代码审查报告：
+    //    缓存学期过滤错 / 有数据却显示暂无教材）。
+    //    这里只在「来自缓存 + 过滤后为空 + 缓存里确有教材」时回退为不过滤，
+    //    正常联网查询的结果不受影响。
+    if (filtered.isEmpty && _fromCache && _books.isNotEmpty) {
+      final hasAny = _books.any((b) => (b['book'] ?? '').toString().trim().isNotEmpty);
+      if (hasAny) {
+        return _books
+            .where((b) => (b['book'] ?? '').toString().trim().isNotEmpty)
+            .toList();
+      }
+    }
+    return filtered;
   }
 
   /// 学年比较：兼容 `2026` / `2026-2027` / `2026学年` 等写法（取其中的四位年份）。
@@ -511,7 +522,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Column(
@@ -538,7 +549,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: muted.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(status,
                       style: TextStyle(
@@ -601,7 +612,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
       padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       ),
       child: Column(
         children: [

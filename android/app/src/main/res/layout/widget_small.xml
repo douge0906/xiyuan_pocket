@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 今日课表小组件 · 小尺寸（2×1）：白底圆角，单行显示下一节课 -->
+<!-- 今日课表小组件 · 小尺寸（2×1）：白底圆角，三行显示下一节课。
+     2026-10-12 改版：原来两行是「课程名 / 时间 教室」挤在一行，
+     现在拆成三行 —— 课程名 / 时间 / 教室，一行一件事。
+     ⚠️ 三行比两行高，minHeight 相应提到 60dp（见 widget_small_info.xml）。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
@@ -7,7 +10,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_card_bg_light"
-    android:padding="10dp">
+    android:padding="8dp">
 
     <ImageView
         android:id="@+id/widget_icon"
@@ -35,14 +38,24 @@
             android:text="下一节" />
 
         <TextView
-            android:id="@+id/widget_next_sub"
+            android:id="@+id/widget_next_time"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
+            android:layout_marginTop="1dp"
             android:textSize="10sp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textColor="#667085"
             android:text="周三 · 第3周" />
+
+        <TextView
+            android:id="@+id/widget_next_place"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textSize="10sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#667085" />
     </LinearLayout>
 </LinearLayout>

@@ -17,20 +17,36 @@ class CampusStore {
 
   static const String _kSession = 'local_campus_session';
   static const String _kSessionAt = 'local_campus_session_at';
+  /// 🔴 会话归属人（2026-10-13 修跨账号数据串台）。
+  static const String _kSessionUser = 'local_campus_session_user';
 
   /// 会话缓存有效期（保守 20 分钟；教务侧约 30 分钟不活动才过期）
   static const Duration sessionTtl = Duration(minutes: 20);
 
-  static Future<void> saveSession(Map<String, String> cookies) async {
+  /// 保存会话：**连同账号一起存**。
+  ///
+  /// 为什么必须带账号：cookie 是账号绑定的凭证，只存 cookie 不加归属，
+  /// 下次换账号登录就会复用上一个人的会话 —— 查到**别人的成绩/课表**
+  /// （代码审查报告：严重·跨账号数据错误）。
+  static Future<void> saveSession(
+    Map<String, String> cookies, {
+    required String username,
+  }) async {
     await _secure.write(key: _kSession, value: jsonEncode(cookies));
     await _secure.write(
         key: _kSessionAt, value: DateTime.now().toIso8601String());
+    await _secure.write(key: _kSessionUser, value: username);
   }
 
-  static Future<Map<String, String>?> loadFreshSession() async {
+  /// 读取会话：**只有归属人与本次请求的账号一致**才复用。
+  static Future<Map<String, String>?> loadFreshSession(
+      {required String username}) async {
     final at = await _secure.read(key: _kSessionAt);
     final raw = await _secure.read(key: _kSession);
+    final owner = await _secure.read(key: _kSessionUser);
     if (at == null || raw == null || raw.isEmpty) return null;
+    // 账号不符 / 老数据没有归属人 → 一律不复用（宁可多登一次，也不能查错人）
+    if (owner == null || owner.isEmpty || owner != username) return null;
     final savedAt = DateTime.tryParse(at);
     if (savedAt == null ||
         DateTime.now().difference(savedAt) >= sessionTtl) {
@@ -46,6 +62,7 @@ class CampusStore {
   static Future<void> clearSession() async {
     await _secure.delete(key: _kSession);
     await _secure.delete(key: _kSessionAt);
+    await _secure.delete(key: _kSessionUser);
   }
 }
 
@@ -79,7 +96,7 @@ class LocalCampusService {
     if (_session != null && _sessionUser == username) return _session!;
 
     final s = CampusSession();
-    final cached = await CampusStore.loadFreshSession();
+    final cached = await CampusStore.loadFreshSession(username: username);
     if (cached != null && cached.isNotEmpty) {
       s.importCookies(cached);
       _session = s;
@@ -99,7 +116,7 @@ class LocalCampusService {
       throw CampusException(res.note,
           needRelogin: res.status == CasClient.badCredential);
     }
-    await CampusStore.saveSession(s.exportCookies());
+    await CampusStore.saveSession(s.exportCookies(), username: username);
     _session = s;
     _sessionUser = username;
   }
@@ -163,7 +180,8 @@ class LocalCampusService {
     try {
       final ok = await CasClient.ssoTo(session, res.tgt!);
       if (ok) {
-        await CampusStore.saveSession(session.exportCookies());
+        await CampusStore.saveSession(session.exportCookies(),
+            username: username);
         _session = session;
         _sessionUser = username;
         return;

@@ -106,9 +106,9 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     final attachments = _detail?.attachments ?? const [];
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
-        backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+        backgroundColor: context.scaffoldColor,
         elevation: 0,
         scrolledUnderElevation: 0,
         title: Text(widget.sourceName,
@@ -227,7 +227,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 13),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                           ),
                         ),
                       ),
@@ -247,14 +247,14 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: url.isNotEmpty ? () => _openLink(url) : null,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
               border: Border.all(color: context.borderColor),
             ),
             child: Row(

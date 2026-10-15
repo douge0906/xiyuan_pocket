@@ -1,16 +1,23 @@
 import 'package:flutter/material.dart';
-import '../theme/app_theme.dart';
 
-/// 设置页：外观（明暗模式 + 主题色）+ 账户。
+import '../services/storage_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/color_wheel_picker.dart';
+import 'nav_bar_settings_page.dart';
+import 'user/user_cards.dart';
+
+/// 设置页：个性化（明暗 / 主题色 / 背景色 / 圆角 / 底部导航）+ 账户。
+///
+/// v1.5.0（2026-10-14）外观区重做 —— 仿「课表设置页」板块样式：
+///  · 一个「个性化主题」折叠板块（**默认展开**），内部五行横排紧凑排列：
+///    ① 明暗模式：浅色 / 深色 / 跟随系统（三选一横排）
+///    ② 主题色：一排色点 + 末尾彩色圆盘（自定义 RGB）
+///    ③ 背景色：一排色点（仅浅色模式显示）
+///    ④ 圆角：连续滑杆（v1.4.0 已就绪）
+///    ⑤ 底部导航（v1.7.0）：隐藏 / 排序，独立子页面
+///  · 删掉原来的底部引导小字（用户：不堆小字、紧凑排列）
 ///
 /// 上课提醒设置已迁移至：课表页顶部 → 提醒按钮（v2.3.0）。
-///
-/// v1.9.1 两个修复：
-///  · 改为 StatefulWidget —— 原为 StatelessWidget，`themeMode` 是构造时传入的快照，
-///    点击切换后**本页实例的 themeMode 不会更新**，导致「对勾停在上一个选项」。
-///    现在本地维护一份状态，点击立即更新勾选，再回调父级持久化。
-///  · 勾选位改为**固定宽度**占位 —— 无勾选时不再是 null，避免标题因 trailing
-///    宽度变化而左右跳动。
 class SettingsPage extends StatefulWidget {
   final Future<void> Function() onLogout;
   final ThemeMode themeMode;
@@ -36,15 +43,51 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late ThemeMode _mode;
 
+  /// 「个性化主题」板块默认展开（用户要求）。
+  bool _themeOpen = true;
+
+  /// 全局圆角缩放系数（0.5~1.6），见 AppTheme.setRadiusScale。
+  double _radiusScale = 1.0;
+
+  /// 页面背景色（null = 默认；仅浅色模式生效）。
+  Color? _bgColor;
+
   @override
   void initState() {
     super.initState();
     _mode = widget.themeMode;
+    // 2026-10-13：全局圆角（紧凑 / 标准 / 圆润）
+    StorageService.loadUiRadiusScale().then((v) {
+      if (mounted) setState(() => _radiusScale = v);
+    });
+    // v1.5.0：页面背景色
+    StorageService.loadUiBackgroundColor().then((v) {
+      if (mounted) setState(() => _bgColor = v);
+    });
+  }
+
+  /// 应用全局圆角：立刻生效（main.dart 监听 radiusNotifier 整树重建）+ 存盘。
+  Future<void> _applyRadius(double v) async {
+    AppTheme.setRadiusScale(v);
+    await StorageService.saveUiRadiusScale(v);
+  }
+
+  /// 切换主题色：通知器立即全局生效 + 回调父级持久化。
+  Future<void> _applyPrimary(Color c) async {
+    AppTheme.setPrimary(c);
+    await widget.onPrimaryChanged(c);
+  }
+
+  /// 切换背景色（null = 默认）：立即全局生效 + 存盘。
+  Future<void> _applyBackground(Color? c) async {
+    setState(() => _bgColor = c);
+    AppTheme.setBackground(c);
+    await StorageService.saveUiBackgroundColor(c);
   }
 
   Future<void> _pickMode(ThemeMode m) async {
     if (_mode == m) return;
-    setState(() => _mode = m);      // 立刻反映勾选，不等父级回调
+    setState(() => _mode = m); // 立刻反映勾选，不等父级回调
     await widget.onThemeChanged(m);
   }
 
@@ -53,8 +96,8 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('退出账户',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        content: const Text('确定要退出当前账户吗？\n退出后云端账号将不再与本机绑定。',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        content: const Text('确定要退出登录吗？\n退出后本机的课表、待办、成绩等数据会被清空。',
             style: TextStyle(fontSize: 14, height: 1.5)),
         actions: [
           TextButton(
@@ -80,239 +123,424 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final titleColor = context.textPrimary;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('设置',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
         children: [
-          _sectionTitle(isDark, '外观'),
-          _card(
-            isDark,
-            children: [
-              _modeOption(titleColor, '浅色', ThemeMode.light),
-              const Divider(height: 1),
-              _modeOption(titleColor, '深色', ThemeMode.dark),
-              const Divider(height: 1),
-              _primaryEntry(isDark, titleColor),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _sectionTitle(isDark, '账户'),
-          _card(
-            isDark,
-            children: [
-              ListTile(
-                onTap: _confirmLogout,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.logout_rounded, color: Color(0xFFE24B4A)),
-                title: Text('退出账户', style: TextStyle(fontSize: 14, color: titleColor)),
-                trailing: const Icon(Icons.chevron_right, color: Color(0xFF9CA3AF)),
-              ),
-            ],
-          ),
+          _themeSection(isDark),
           const SizedBox(height: 12),
-          Text(
-            '上课提醒请到：课表页右上角 · 铃铛按钮',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade500),
-          ),
+          _accountSection(),
         ],
       ),
     );
   }
 
-  /// 明暗模式选项。勾选位固定 24px 宽，避免标题左右跳动。
-  Widget _modeOption(Color titleColor, String label, ThemeMode mode) {
-    final selected = _mode == mode;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      onTap: () => _pickMode(mode),
-      title: Text(
-        label,
-        style: TextStyle(
-          fontSize: 14,
-          color: titleColor,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-        ),
-      ),
-      trailing: SizedBox(
-        width: 24,
-        child: selected
-            ? Icon(Icons.check_rounded, color: AppTheme.primaryColor, size: 20)
-            : null,
-      ),
-    );
-  }
+  // ------------------------------------------------------------ 个性化主题
 
-  /// 「主题色」入口：右侧色点预览（v2.5.1：去掉「实验性」标签，与在线版一致）。
-  Widget _primaryEntry(bool isDark, Color titleColor) {
-    return ValueListenableBuilder<Color>(
-      valueListenable: widget.primaryColor,
-      builder: (ctx, current, __) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        onTap: () => _pickPrimaryColor(current),
-        title: Text('主题色', style: TextStyle(fontSize: 14, color: titleColor)),
-        trailing: SizedBox(
-          width: 24,
-          child: Center(
-            child: Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                color: current,
-                shape: BoxShape.circle,
-                border: Border.all(
-                    color: isDark ? Colors.grey.shade700 : context.borderColor),
+  Widget _themeSection(bool isDark) {
+    return userCard(
+      context,
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _themeOpen = !_themeOpen),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            child: SizedBox(
+              height: 52,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(Icons.palette_rounded,
+                        size: 20, color: AppTheme.primaryColor),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text('个性化主题',
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            color: context.textPrimary,
+                          )),
+                    ),
+                    AnimatedRotation(
+                      turns: _themeOpen ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: Icon(Icons.keyboard_arrow_down_rounded,
+                          size: 20, color: context.textTertiary),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
+          if (_themeOpen) ...[
+            Divider(height: 1, color: context.borderColor),
+            _modeRow(),
+            Divider(height: 1, color: context.borderColor),
+            _primaryRow(),
+            // 背景色仅浅色模式有意义（深色固定深色背景）
+            if (!isDark) ...[
+              Divider(height: 1, color: context.borderColor),
+              _backgroundRow(),
+            ],
+            Divider(height: 1, color: context.borderColor),
+            _radiusTile(),
+            Divider(height: 1, color: context.borderColor),
+            // v1.7.0：底部导航自定义（隐藏 / 排序）——独立子页面
+            _navLayoutTile(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// ⑤ 底部导航：入口行（图标 + 标题 + 右箭头），点进去做隐藏 / 排序。
+  Widget _navLayoutTile() {
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+            builder: (_) => const NavBarSettingsPage()),
+      ),
+      child: SizedBox(
+        height: 52,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Icon(Icons.view_agenda_outlined,
+                  size: 20, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('底部导航',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                      color: context.textPrimary,
+                    )),
+              ),
+              Icon(Icons.chevron_right, size: 20, color: context.textTertiary),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Future<void> _pickPrimaryColor(Color current) async {
-    final picked = await showModalBottomSheet<Color>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        final dark = Theme.of(ctx).brightness == Brightness.dark;
-        return Container(
+  /// ① 明暗模式：浅色 / 深色 / 跟随系统，横排三选一。
+  Widget _modeRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Row(
+        children: [
+          _modePill('浅色', Icons.light_mode_rounded, ThemeMode.light),
+          const SizedBox(width: 8),
+          _modePill('深色', Icons.dark_mode_rounded, ThemeMode.dark),
+          const SizedBox(width: 8),
+          _modePill('跟随系统', Icons.brightness_auto_rounded, ThemeMode.system),
+        ],
+      ),
+    );
+  }
+
+  Widget _modePill(String label, IconData icon, ThemeMode mode) {
+    final selected = _mode == mode;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _pickMode(mode),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: 40,
           decoration: BoxDecoration(
-            color: dark ? const Color(0xFF1E1E1E) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(AppTheme.radiusLg)),
+            color: selected
+                ? AppTheme.primaryColor.withOpacity(0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            border: Border.all(
+              color: selected ? AppTheme.primaryColor : context.borderColor,
+              width: selected ? 1.2 : 1,
+            ),
           ),
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+              Icon(icon,
+                  size: 16,
+                  color:
+                      selected ? AppTheme.primaryColor : context.textTertiary),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  color: selected
+                      ? AppTheme.primaryColor
+                      : context.textSecondary,
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text('主题色',
-                  style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                      color: context.textPrimary)),
-              const SizedBox(height: 4),
-              Text('影响按钮、选中态与强调色；个别页面适配中，若发现异常请反馈',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
-              const SizedBox(height: 18),
-              // 固定列宽（每行 4 个），避免 Wrap 因数量/宽度不同导致对齐不齐
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: AppTheme.primaryPresets.take(4).map((e) {
-                  return _swatch(ctx, e.$1, e.$2, current);
-                }).toList(),
-              ),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: AppTheme.primaryPresets.skip(4).map((e) {
-                  return _swatch(ctx, e.$1, e.$2, current);
-                }).toList(),
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
-    if (picked != null) await widget.onPrimaryChanged(picked);
   }
 
-  /// 单个色点。选中时**外圈加环 + 内嵌对勾**，不改变色块尺寸
-  /// （避免选中/未选中尺寸不同造成的错位感）。
-  Widget _swatch(BuildContext ctx, String label, Color color, Color current) {
-    final dark = Theme.of(ctx).brightness == Brightness.dark;
-    final selected = color.value == current.value;
-    return GestureDetector(
-      onTap: () => Navigator.of(ctx).pop(color),
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 62,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  /// ② 主题色：一排预设色点 + 末尾彩色圆盘（自定义）。
+  Widget _primaryRow() {
+    return ValueListenableBuilder<Color>(
+      valueListenable: AppTheme.primaryNotifier,
+      builder: (ctx, current, __) => _rowShell(
+        title: '主题色',
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected ? color : Colors.transparent,
-                  width: 0, // 尺寸稳定：选中效果用外环而非改尺寸
-                ),
-              ),
-              child: Center(
-                child: Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: selected
-                        ? Border.all(
-                            color: context.textPrimary,
-                            width: 2)
-                        : null,
-                  ),
-                  child: selected
-                      ? const Icon(Icons.check_rounded, color: Colors.white, size: 20)
-                      : null,
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: dark ? Colors.grey.shade400 : Colors.grey.shade600,
-              ),
-            ),
+            for (final e in AppTheme.primaryPresets)
+              _colorDot(e.$2, e.$2.value == current.value,
+                  () => _applyPrimary(e.$2)),
+            _customDot(current),
           ],
         ),
       ),
     );
   }
 
-  Widget _sectionTitle(bool isDark, String text) => Padding(
-        padding: const EdgeInsets.only(left: 4, bottom: 8),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
+  /// ③ 背景色：一排预设色点 + 末尾彩色圆盘（自定义，仅浅色模式渲染）。
+  Widget _backgroundRow() {
+    return _rowShell(
+      title: '背景色',
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          ...AppTheme.backgroundPresets.map((e) {
+            final isDefault = e.$1 == '默认';
+            final selected =
+                isDefault ? _bgColor == null : _bgColor?.value == e.$2.value;
+            return GestureDetector(
+              onTap: () => _applyBackground(isDefault ? null : e.$2),
+              child: Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: e.$2,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? AppTheme.primaryColor : context.borderColor,
+                    width: selected ? 2 : 1,
+                  ),
+                ),
+                child: selected
+                    ? Icon(Icons.check_rounded,
+                        size: 16,
+                        color: e.$2.computeLuminance() > 0.7
+                            ? Colors.black54
+                            : Colors.white)
+                    : null,
+              ),
+            );
+          }),
+          _customBgDot(),
+        ],
+      ),
+    );
+  }
+
+  /// 自定义背景色圆盘：彩虹扫掠渐变；当前为自定义色时显示勾。
+  Widget _customBgDot() {
+    final isCustom = _bgColor != null &&
+        !AppTheme.backgroundPresets.any((e) => e.$2.value == _bgColor!.value);
+    return GestureDetector(
+      onTap: _pickCustomBgColor,
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const SweepGradient(colors: _rainbow),
+          border: Border.all(
+            color: isCustom ? AppTheme.primaryColor : context.borderColor,
+            width: isCustom ? 2 : 1,
           ),
         ),
-      );
+        child: isCustom
+            ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+            : null,
+      ),
+    );
+  }
 
-  Widget _card(bool isDark, {required List<Widget> children}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  /// 自定义背景色（v1.6.3）：改用色盘选择器（仿掌上徐工），可拖出任意颜色。
+  Future<void> _pickCustomBgColor() async {
+    final picked = await showColorWheelPicker(
+      context,
+      initial: _bgColor ?? AppTheme.backgroundColor,
+      title: '自定义背景色',
+    );
+    if (picked != null) await _applyBackground(picked);
+  }
+
+  /// ④ 圆角：连续滑杆（两端方向词，无百分比）。
+  Widget _radiusTile() {
+    final v = _radiusScale.clamp(0.5, 1.6).toDouble();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.rounded_corner_rounded,
+                  size: 20, color: Color(0xFF9CA3AF)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('圆角',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: context.textPrimary)),
+              ),
+            ],
+          ),
+          SizedBox(
+            height: 32,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2.5,
+                activeTrackColor: AppTheme.primaryColor,
+                inactiveTrackColor: context.borderColor,
+                thumbColor: AppTheme.primaryColor,
+                overlayColor: AppTheme.primaryColor.withOpacity(0.12),
+                thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 7, elevation: 0),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
+              ),
+              child: Slider(
+                value: v,
+                min: 0.5,
+                max: 1.6,
+                divisions: 22,
+                onChanged: (nv) => setState(() => _radiusScale = nv),
+                onChangeEnd: _applyRadius,
+              ),
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('紧凑',
+                  style:
+                      TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              Text('圆润',
+                  style:
+                      TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 行容器：小标题 + 控件（与课表设置页滑杆行一致的紧凑结构）。
+  Widget _rowShell({required String title, required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: context.textPrimary,
+              )),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _colorDot(Color color, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 30,
+        height: 30,
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          boxShadow: AppTheme.cardShadow,
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? context.textPrimary : context.borderColor,
+            width: selected ? 2 : 1,
+          ),
         ),
-        child: Column(children: children),
-      );
+        child: selected
+            ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+            : null,
+      ),
+    );
+  }
+
+  /// 自定义颜色圆盘：彩虹扫掠渐变暗示"任意色"；当前为自定义色时显示勾。
+  static const _rainbow = <Color>[
+    Color(0xFFEF4444), Color(0xFFF59E0B), Color(0xFFEAB308),
+    Color(0xFF22C55E), Color(0xFF06B6D4), Color(0xFF3B82F6),
+    Color(0xFF8B5CF6), Color(0xFFEF4444),
+  ];
+
+  Widget _customDot(Color current) {
+    final isCustom =
+        !AppTheme.primaryPresets.any((e) => e.$2.value == current.value);
+    return GestureDetector(
+      onTap: _pickCustomColor,
+      child: Container(
+        width: 30,
+        height: 30,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const SweepGradient(colors: _rainbow),
+          border: Border.all(
+            color: isCustom ? context.textPrimary : context.borderColor,
+            width: isCustom ? 2 : 1,
+          ),
+        ),
+        child: isCustom
+            ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+            : null,
+      ),
+    );
+  }
+
+  /// 自定义主题色（v1.6.3）：改用色盘选择器（仿掌上徐工），可拖出任意颜色。
+  Future<void> _pickCustomColor() async {
+    final picked = await showColorWheelPicker(
+      context,
+      initial: AppTheme.primaryColor,
+      title: '自定义主题色',
+    );
+    if (picked != null) await _applyPrimary(picked);
+  }
+
+
+  // ------------------------------------------------------------ 账户
+
+  Widget _accountSection() {
+    return userCard(
+      context,
+      padding: EdgeInsets.zero,
+      child: ListTile(
+        onTap: _confirmLogout,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: const Icon(Icons.logout_rounded,
+            color: Color(0xFFE24B4A), size: 20),
+        title: Text('退出账户',
+            style: TextStyle(fontSize: 14, color: context.textPrimary)),
+      ),
+    );
+  }
 }

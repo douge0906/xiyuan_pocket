@@ -16,7 +16,7 @@ Widget courseField(String label, Widget child, bool isDark) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 5),
           child: Text(label,
               style: TextStyle(
                   fontSize: 12.5,

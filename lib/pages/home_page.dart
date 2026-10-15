@@ -227,7 +227,7 @@ class HomePageState extends ConsumerState<HomePage>
       backgroundColor: Colors.transparent,
       builder: (ctx) => AddTodoSheet(initialDate: _selectedDate),
     );
-    if (result != null) {
+    if (result != null && mounted) {
       setState(() => _selectedDate = result);
       _load();
       _loadOverview();
@@ -399,7 +399,7 @@ class HomePageState extends ConsumerState<HomePage>
                           color: isSelected
                               ? AppTheme.textPrimaryLight
                               : (context.surfaceColor),
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                           boxShadow: isSelected
                               ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 4))]
                               : AppTheme.cardShadow,
@@ -465,7 +465,7 @@ child: HomeTodayOverview(
                     color: Colors.transparent,
                     shape: const CircleBorder(),
                     child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                       key: _kAddTodo, // v2.4.0 教程锚点
                       onTap: () => showAddTodoSheet(),
                       child: Padding(

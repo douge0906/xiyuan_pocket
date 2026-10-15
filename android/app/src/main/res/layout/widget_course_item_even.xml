@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 平分条目（中号 2×2 / 大号 4×4 共用，v1.6.4）：
+     root 用 height=0dp + weight=1 —— 让每门课**平分所在容器的高度**：
+     中号 2 门各占一半、大号 4 门各占四分之一，不再堆在顶部留一片空白。
+     注意：色条必须用 LinearLayout（裸 <View> 会导致 AppWidget inflate 失败）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item_root"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="2dp"
+    android:paddingBottom="2dp"
+    android:paddingStart="6dp"
+    android:paddingEnd="6dp"
+    android:background="@drawable/widget_course_item_bg">
+
+    <LinearLayout
+        android:id="@+id/item_color_bar"
+        android:layout_width="3dp"
+        android:layout_height="18dp"
+        android:background="#F8D2D7" />
+
+    <TextView
+        android:id="@+id/item_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="7dp"
+        android:textSize="11.5sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/item_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:textSize="9.5sp"
+        android:maxLines="1"
+        android:textColor="#667085" />
+</LinearLayout>

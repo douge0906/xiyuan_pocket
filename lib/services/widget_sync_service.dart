@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:home_widget/home_widget.dart';
 import '../models/course_model.dart';
+import '../models/course_table.dart';
 import 'course_storage.dart';
+import 'widget_prefs.dart';
 
 /// 桌面小组件（今日课表）Flutter 侧同步服务。
 ///
@@ -66,8 +68,24 @@ class WidgetSyncService {
   /// 回到前台等时机调用；失败静默（不影响主流程）。
   static Future<void> syncTodayCourses() async {
     try {
-      final courses = await CourseStorage.loadCourses();
-      final start = await CourseStorage.loadSemesterStart() ??
+      // 2026-10-12：支持「小组件显示哪份课表」——
+      // 设置里指定了就跟随那份；没指定（或那份已被删）则跟随当前激活的课表。
+      final tables = await CourseStorage.loadTables();
+      final wantedId = await WidgetPrefs.tableId();
+      CourseTable? table;
+      if (wantedId.isNotEmpty) {
+        for (final t in tables) {
+          if (t.id == wantedId) {
+            table = t;
+            break;
+          }
+        }
+      }
+      table ??= await CourseStorage.activeTable();
+
+      final courses = table.courses;
+      final start = table.semesterStart ??
+          await CourseStorage.loadSemesterStart() ??
           CourseStorage.defaultSemesterStart(DateTime.now());
       final now = DateTime.now();
       final week = CourseStorage.teachingWeek(now, start);
@@ -90,6 +108,8 @@ class WidgetSyncService {
         'semesterWeek': week,
         'weekday': todayWeekday,
         'hasSchedule': todayCourses.isNotEmpty,
+        // 个性化设置：原生侧按这些字段决定主题 / 字号 / 显示哪些内容
+        'prefs': await WidgetPrefs.toJson(),
         'courses': todayCourses
             .map((c) => {
                   'name': c.name,
@@ -97,7 +117,11 @@ class WidgetSyncService {
                   'classroom': c.classroom,
                   'startSlot': c.startSlot,
                   'endSlot': c.endSlot,
-                  'color': c.colorValue,
+                  // v1.6.9：色条跟随「课节色块色彩方案」——在 Dart 侧就把颜色算成
+                  // 最终值下发，原生侧不用再实现一遍调色逻辑（改方案后重新同步即可）。
+                  'color': courseColorFor(
+                          c.colorValue, CourseStorage.schemeCache)
+                      .value,
                   'timeText': timeTextFor(c, slotTimes),
                   // v2.2.14：分钟制起止时刻，供原生「下一节课」按当前时间精确切换
                   'startMinute': _slotMinute(c.startSlot, slotTimes, isStart: true),

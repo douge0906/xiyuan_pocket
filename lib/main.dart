@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/splash_page.dart';
 import 'services/course_reminder_service.dart';
+import 'services/nav_prefs.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'services/seed_data.dart';
@@ -23,6 +24,9 @@ void main() async {
   // 反了的话，种子会给老用户写回一份**更旧**的快照。
   await MessageMigration.ensureMigrated();
   await SeedData.ensureApplied();
+  // v1.7.0 底部导航布局（顺序 / 隐藏）：**首帧之前**读完，
+  // 否则启动会先按出厂顺序画一遍导航条、再跳成用户的顺序，肉眼可见地闪。
+  await NavPrefs.ensureLoaded();
   // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
   WidgetSyncService.syncTodayCourses();
   // v2.2.14 外部打开 App（冷启动）使用次数 +1（静默，失败不影响）
@@ -69,8 +73,16 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadMode();
+    // 2026-10-13：圆角缩放变化 → 整树重建（圆角是 getter，必须重建才生效）
+    AppTheme.radiusNotifier.addListener(() {
+      if (mounted) setState(() {});
+    });
     AppTheme.modeNotifier.addListener(() {
       if (mounted) setState(() => _mode = AppTheme.modeNotifier.value);
+    });
+    // v1.5.0：页面背景色变化 → 整树重建（主题缓存按 主色+背景色 做 key）
+    AppTheme.backgroundNotifier.addListener(() {
+      if (mounted) setState(() {});
     });
   }
 
@@ -96,6 +108,9 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
     if (config.primaryColor != 0) {
       AppTheme.setPrimary(Color(config.primaryColor));
     }
+    // v1.5.0：恢复页面背景色（浅色模式生效；null = 默认）
+    final bg = await StorageService.loadUiBackgroundColor();
+    if (bg != null) AppTheme.setBackground(bg);
     if (mounted) setState(() => _mode = config.themeMode);
   }
 

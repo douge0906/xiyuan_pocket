@@ -48,7 +48,12 @@ class DataWipe {
     'secure_school_password',
     // 旧版本可能残留的登录令牌 —— 留着以便升级安装时清掉，新版本不再产生
     'secure_auth_token',
-  ];
+  
+    // 2026-10-13：教务会话 cookie 必须清 —— 不清的话退出后 20 分钟内
+    // 它仍能代表用户访问教务（代码审查报告：退出清理不彻底）。
+    'local_campus_session',
+    'local_campus_session_at',
+    'local_campus_session_user',];
 
   /// 清空全部本地数据。返回被清除的 SP 键数（用于提示，不含敏感值）。
   static Future<int> wipeAll() async {

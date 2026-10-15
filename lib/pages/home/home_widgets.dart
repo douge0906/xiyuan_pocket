@@ -101,7 +101,7 @@ class TodoTimelineItem extends StatelessWidget {
               : (todo.completed
                   ? (isDark ? const Color(0xFF161616) : const Color(0xFFF3F4F6))
                   : (context.surfaceColor)),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           boxShadow: AppTheme.cardShadow,
           // v2.4.3：补灰线边框，与「服务」页卡片观感一致
           // （原来首页卡片只有阴影、服务页有细灰线，切页时"分量"不同）。
@@ -238,7 +238,7 @@ class TodoTimelineItem extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: const Color(0xFFEF4444),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           ),
           alignment: Alignment.centerRight,
           padding: const EdgeInsets.only(right: 24),

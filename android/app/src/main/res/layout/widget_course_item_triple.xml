@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 三行条目（中号 2×2 / 大号 4×4 共用，v1.6.7）：
+     三行排列信息与小号一致 —— **课程名 / 上课时间 / 教室**，一行一件事
+     （此前中、大号把时间和教室挤在一行，信息被截断，用户反馈设计有误）。
+
+     尺寸适配：
+     · root 用 height=0 + weight=1 —— 中号 2 门各占一半、大号 4 门各占四分之一；
+     · 字号刻意压小（名 10.5sp / 副行 8.5sp），因为中号平分后每门只剩约 31dp，
+       大号格子高（约 100dp）则由 fontScale 放大后依然宽松。
+
+     注意：色条必须用 LinearLayout（裸 <View> 会导致 AppWidget inflate 失败）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item_root"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="1dp"
+    android:paddingBottom="1dp"
+    android:paddingStart="6dp"
+    android:paddingEnd="6dp"
+    android:background="@drawable/widget_course_item_bg">
+
+    <LinearLayout
+        android:id="@+id/item_color_bar"
+        android:layout_width="3dp"
+        android:layout_height="26dp"
+        android:background="#F8D2D7" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="6dp"
+        android:orientation="vertical">
+
+        <!-- 第 1 行：课程名（开「任课老师」时拼上老师） -->
+        <TextView
+            android:id="@+id/item_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="10.5sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:textColor="#1F2937" />
+
+        <!-- 第 2 行：上课时间 -->
+        <TextView
+            android:id="@+id/item_time"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="8.5sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:textColor="#667085" />
+
+        <!-- 第 3 行：教室 -->
+        <TextView
+            android:id="@+id/item_room"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="8.5sp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:includeFontPadding="false"
+            android:textColor="#667085" />
+    </LinearLayout>
+</LinearLayout>

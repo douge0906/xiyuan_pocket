@@ -197,7 +197,7 @@ class _BalanceCard extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         boxShadow: AppTheme.cardShadow,
       ),
       child: Column(
@@ -210,7 +210,7 @@ class _BalanceCard extends StatelessWidget {
                 height: 30,
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(9),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Icon(icon, size: 17, color: color),
               ),

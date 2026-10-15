@@ -169,13 +169,13 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
     final bgColor = isDark ? const Color(0xFF1A1A1A) : Colors.white;
 
     return Scaffold(
-      backgroundColor: isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('无锡学院校历',
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
-        elevation: 0.5,
+        elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -188,7 +188,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
             padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
             decoration: BoxDecoration(
               color: bgColor,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
               border: Border.all(color: borderColor),
             ),
             child: Column(
@@ -217,7 +217,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(
             color: context.borderColor),
       ),
@@ -228,7 +228,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
             height: 40,
             decoration: BoxDecoration(
               color: _accent.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             ),
             child: const Icon(Icons.calendar_month_rounded,
                 size: 22, color: _accent),
@@ -263,7 +263,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF3F4F6),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       ),
       child: Row(
         children: [
@@ -277,7 +277,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
                   padding: const EdgeInsets.symmetric(vertical: 9),
                   decoration: BoxDecoration(
                     color: _term == i ? _accent : Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Center(
                     child: Text(
@@ -343,7 +343,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       decoration: isCurrentWeek
           ? BoxDecoration(
               color: _accent.withOpacity(isDark ? 0.16 : 0.07),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             )
           : null,
       child: Row(
@@ -448,7 +448,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
               row.holidayName!,
               maxLines: 1,
               style: const TextStyle(
-                fontSize: 8.5,
+                fontSize: 11, // 2026-10-13：8.5px 几乎读不了，按最小可读字号提上来
                 height: 1.1,
                 fontWeight: FontWeight.w600,
                 color: _weekendColor,
@@ -512,7 +512,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         border: Border.all(
             color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF1F2F4)),
       ),

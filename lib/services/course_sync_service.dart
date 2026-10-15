@@ -20,6 +20,8 @@ class CourseSyncResult {
     required this.message,
     this.fetched = 0,
     this.totalCourses = 0,
+    this.conflicts = const <CourseConflict>[],
+    this.selfConflicts = const <CourseConflict>[],
   });
 
   /// 成功且**真的写进了课表**。
@@ -33,6 +35,17 @@ class CourseSyncResult {
 
   /// 合并后课表里的课程总数。
   final int totalCourses;
+
+  /// 本次同步检出的「教务课 ↔ 本地课」时间冲突（2026-10-13，任务三）。
+  /// 非空时由课表页弹「怎么处理」的对话框。
+  final List<CourseConflict> conflicts;
+
+  /// 教务课表**自己内部**的重叠（例如某晚两门课撞在一起，2026-10-13）。
+  /// 用户改不了教务，只做**提示**，不给删除选项。
+  final List<CourseConflict> selfConflicts;
+
+  /// 要不要给用户弹冲突提示（两类冲突任一非空）。
+  bool get hasAnyConflict => conflicts.isNotEmpty || selfConflicts.isNotEmpty;
 
   /// 已有一趟在跑时的返回值（不是失败，只是被挡下了）。
   static const CourseSyncResult busy =
@@ -128,6 +141,9 @@ class CourseSyncService {
       // 不需要再写「回滚空表 + 切回原来那份」那套逻辑（在线版同理）。
       final asNew = asNewTableName;
       final List<Course> merged;
+      var conflicts = const <CourseConflict>[];
+      // 教务自己排课就撞上的（用户改不了，只提示）—— 先算，两条路径都要用。
+      final selfConflicts = CourseStorage.detectSelfConflicts(parsed);
       if (asNew != null) {
         await CourseStorage.createTable(
           name: asNew,
@@ -135,11 +151,41 @@ class CourseSyncService {
           semesterStart: asNewTableStart,
           // 第 1 周是用户在对话框里选的 → 记成 user，别再弹「请确认第 1 周」
           semesterStartSource: CourseTable.srcUser,
+          // 2026-10-13：这是「导入一份（他人的）课表」→ 标记为 imported，
+          // 今后自动更新/手动刷新都不会写它（防止被我的教务覆盖）。
+          kind: CourseTable.kindImported,
         );
         await notifier.load();
         merged = await CourseStorage.loadCourses();
       } else {
-        merged = await notifier.mergeServer(parsed);
+        // 🔴 2026-10-13：**只写"本人的课表"**。
+        //    原来写的是「当前激活那份」—— 用户导入他人的课表并切过去之后，
+        //    自动更新/手动刷新会把我自己的教务课表灌进去，把别人的课表覆盖掉。
+        final targetId = await CourseStorage.resolveSyncTargetId();
+        if (targetId == null) {
+          return const CourseSyncResult(
+            ok: false,
+            message: '当前没有「我的课表」可更新（现有课表都是导入或手动建的）',
+          );
+        }
+        final res = await notifier.mergeServerInto(targetId, parsed);
+        merged = res.merged;
+        conflicts = res.conflicts;
+        final targetName =
+            (await CourseStorage.loadTables()).firstWhere((t) => t.id == targetId).name;
+        final activeId = await CourseStorage.activeTableId();
+        if (activeId != targetId) {
+          // 目标不是当前看的那份 → 明确告诉用户写了哪份，避免"我明明在看这份"
+          return CourseSyncResult(
+            ok: true,
+            fetched: parsed.length,
+            totalCourses: merged.length,
+            message: '已更新「$targetName」，共 ${merged.length} 门课程（当前查看的是导入的课表，未改动）'
+                '${selfConflicts.isEmpty ? '' : '，教务课表内有 ${selfConflicts.length} 处冲突'}',
+            conflicts: conflicts,
+            selfConflicts: selfConflicts,
+          );
+        }
       }
 
       // 开学日期不是无条件写 —— 见 shouldAdoptSemesterStart 的说明。
@@ -160,7 +206,9 @@ class CourseSyncService {
         ok: true,
         fetched: parsed.length,
         totalCourses: merged.length,
-        message: '课表已同步，共 ${merged.length} 门课程',
+        message: _syncMessage(merged.length, conflicts.length, selfConflicts.length),
+        conflicts: conflicts,
+        selfConflicts: selfConflicts,
       );
     } catch (e) {
       // 文案已由服务层统一成中文（未登录 / 会话过期 / 网络异常），直接展示即可。
@@ -172,6 +220,14 @@ class CourseSyncService {
     } finally {
       _running = false;
     }
+  }
+
+  /// 拼同步结果的一句话（把两类冲突都说清楚，2026-10-13）。
+  static String _syncMessage(int total, int crossCount, int selfCount) {
+    final parts = <String>['课表已同步，共 $total 门课程'];
+    if (selfCount > 0) parts.add('教务课表内有 $selfCount 处冲突');
+    if (crossCount > 0) parts.add('与本地课程有 $crossCount 处冲突');
+    return parts.join('，');
   }
 
   /// 同步拿到的开学日，该不该覆盖本机已存的？

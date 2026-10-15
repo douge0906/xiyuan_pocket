@@ -323,7 +323,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
     required VoidCallback onTap,
   }) {
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -362,8 +362,11 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
       width: double.infinity,
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        // 2026-10-13：原来硬编码白底 —— 深色模式下整页白卡刺眼，改为跟随主题。
+        color: Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xFF1E1E1E)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         boxShadow: AppTheme.cardShadow,
       ),
       child: child,
@@ -405,7 +408,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                     color: promotedOk == true
                         ? const Color(0xFF22C55E).withOpacity(0.15)
                         : const Color(0xFFF59E0B).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
                     !supported
@@ -597,7 +600,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
   Widget build(BuildContext context) {
     final allOk = _notifOk && _exactOk;
     return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('上课提醒',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
@@ -713,7 +716,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                       disabledForegroundColor: Colors.grey.shade600,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
                     ),
                   ),
                 ),

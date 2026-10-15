@@ -11,9 +11,11 @@ import 'user/user_cards.dart';
 import 'settings_page.dart';
 import '../services/data_wipe.dart';
 import '../services/widget_sync_service.dart';
+import 'widget_settings_page.dart';
 import '../providers/course_provider.dart';
 import '../providers/grade_provider.dart';
 import '../providers/user_config_provider.dart';
+import '../services/campus/campus_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 /// 「我的」页。
@@ -185,6 +187,10 @@ class _UserPageState extends State<UserPage> {
 
   /// 退出登录：清空全部本地数据（含账号），回到登录页。
   Future<void> _logout() async {
+    // 2026-10-13：退出时把内存里的教务会话也清掉 ——
+    // 否则同进程内继续查询仍会复用上一个账号的会话（配合 DataWipe 清落盘部分）。
+    LocalCampusService.clear();
+
     // 全量清空本地数据（含待办、课表、成绩、已读、订阅、教程标记）
     await DataWipe.wipeAll();
 
@@ -236,8 +242,7 @@ class _UserPageState extends State<UserPage> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     if (_loading) {
       return Scaffold(
-        backgroundColor:
-            isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+        backgroundColor: context.scaffoldColor,
         body: const SizedBox.shrink(),
       );
     }
@@ -248,8 +253,7 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildLoginPage(bool isDark) {
     return Scaffold(
-      backgroundColor:
-          isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -392,7 +396,7 @@ class _UserPageState extends State<UserPage> {
                         AppTheme.primaryColor.withOpacity(0.5),
                     elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     ),
                   ),
                   child: _loggingIn
@@ -421,6 +425,32 @@ class _UserPageState extends State<UserPage> {
                   color: isDark
                       ? Colors.grey.shade600
                       : const Color(0xFF9CA3AF),
+                ),
+              ),
+
+              const SizedBox(height: 6),
+
+              // v1.6.5：新生账户激活指引（与在线版同一文案 + 同一跳转地址）
+              GestureDetector(
+                onTap: () => launchUrl(
+                  Uri.parse(
+                      'https://wxcas.cwxu.edu.cn/lyuapServer/login'
+                      '?service=https://my.cwxu.edu.cn/shiro-cas'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    '新生需要进行统一认证登录账户激活 点击跳转',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      height: 1.6,
+                      color: AppTheme.primaryColor,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
                 ),
               ),
 
@@ -457,15 +487,15 @@ class _UserPageState extends State<UserPage> {
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
           borderSide: BorderSide(color: context.borderColor),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
           borderSide: BorderSide(color: AppTheme.primaryColor, width: 1.5),
         ),
         disabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
           borderSide: BorderSide(color: context.borderColor),
         ),
       );
@@ -474,8 +504,7 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildProfilePage(bool isDark) {
     return Scaffold(
-      backgroundColor:
-          isDark ? const Color(0xFF121212) : AppTheme.backgroundColor,
+      backgroundColor: context.scaffoldColor,
       body: CustomScrollView(
         slivers: [
           // 顶部：居中加粗「掌上锡院」+ 右上角设置齿轮
@@ -524,7 +553,12 @@ class _UserPageState extends State<UserPage> {
                   _sectionTitle('桌面小组件'),
                   _card(
                     child: InkWell(
-                      onTap: _openWidgetGuide,
+                      // 2026-10-12：改成**独立页面**（不再用上滑弹窗）
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const WidgetSettingsPage(),
+                        ),
+                      ),
                       child: _listTile(
                         icon: Icons.widgets_outlined,
                         title: '今日课表',
@@ -587,59 +621,6 @@ class _UserPageState extends State<UserPage> {
 
   // ------------------------------------------------------------ 页面小工具
 
-  /// 桌面小组件引导。
-  ///
-  /// 小组件（今日课表）的代码与数据同步一直齐全（Dart 侧 + 原生 4 个文件），
-  /// 但 App 内原本**没有任何入口**，用户无从知道它存在 —— 这里补上说明与手动刷新。
-  Future<void> _openWidgetGuide() async {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('今日课表小组件',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 14),
-              _widgetStep('1', '长按手机桌面空白处'),
-              _widgetStep('2', '点「小组件」，找到「掌上锡院」'),
-              _widgetStep('3', '选一个尺寸，拖到桌面上'),
-              const SizedBox(height: 6),
-              Text(
-                '小组件显示今天的课，App 没打开也能看，系统会定期自动刷新。',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _refreshWidget();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text('立即刷新数据'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   /// 手动把最新课表推给小组件（平时靠系统定期自动刷新）。
   Future<void> _refreshWidget() async {
     await WidgetSyncService.syncTodayCourses();
@@ -648,32 +629,6 @@ class _UserPageState extends State<UserPage> {
       const SnackBar(content: Text('小组件数据已刷新')),
     );
   }
-
-  /// 引导弹窗里的序号圆点。
-  Widget _widgetStep(String n, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 20,
-              height: 20,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(n,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.primaryColor)),
-            ),
-            const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(fontSize: 13.5))),
-          ],
-        ),
-      );
 
   String get _themeLabel {
     switch (_config.themeMode) {
@@ -708,7 +663,7 @@ class _UserPageState extends State<UserPage> {
           color: Theme.of(context).brightness == Brightness.dark
               ? const Color(0xFF1E1E1E)
               : Colors.white,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           border: Border.all(color: context.borderColor),
           boxShadow: AppTheme.cardShadow,
         ),

@@ -50,7 +50,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
       firstDate: now.subtract(const Duration(days: 365)),
       lastDate: now.add(const Duration(days: 365 * 5)),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null && mounted) setState(() => _date = picked);
   }
 
   Future<void> _pickTime() async {
@@ -58,7 +58,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
       context: context,
       initialTime: _reminderTime ?? TimeOfDay.now(),
     );
-    if (picked != null) setState(() => _reminderTime = picked);
+    if (picked != null && mounted) setState(() => _reminderTime = picked);
   }
 
   Future<void> _save() async {
@@ -94,6 +94,8 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
       // v2.4.0：权限被拒时给出引导（此前完全静默，用户会误以为提醒已生效）。
       // 提醒仍会入库与尝试排程，只是明确告知「可能不响」。
       final granted = await TodoRepository.instance.ensureNotificationPermission();
+      // 等待期间用户可能已关闭本页 —— 后面还要用 context 弹提示，先守一道
+      if (!mounted) return;
       permissionDenied = !granted;
     }
 
@@ -250,7 +252,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
                 decoration: BoxDecoration(
                   border: Border.all(color: context.borderColor),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -281,7 +283,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
                   padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
                   decoration: BoxDecoration(
                     border: Border.all(color: context.borderColor),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -304,7 +306,7 @@ class _AddTodoSheetState extends State<AddTodoSheet> {
                   backgroundColor: AppTheme.primaryColor,
                   foregroundColor: Colors.white,
                   disabledBackgroundColor: AppTheme.primaryColor.withAlpha(150),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
                 ),
                 child: _saving
                     ? const SizedBox(

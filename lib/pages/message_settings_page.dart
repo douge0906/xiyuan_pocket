@@ -27,7 +27,7 @@ class MessageSettingsPage extends StatefulWidget {
 }
 
 class _MessageSettingsPageState extends State<MessageSettingsPage> {
-  String _style = StorageService.kMessageStylePlain;
+  String _style = StorageService.kMessageStyleCard;
   int _count = StorageService.kMessageSyncCountDefault;
   bool _autoRefresh = StorageService.kMessageAutoRefreshDefault;
   bool _loading = true;
@@ -74,6 +74,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
       builder: (_) => _StyleDialog(current: _style),
     );
     if (picked == null || picked == _style) return;
+    if (!mounted) return; // 弹窗期间页面可能已被关闭
     setState(() => _style = picked); // 立即生效，不回读存储 → 选中态不闪
     await StorageService.saveMessageStyle(picked);
   }
@@ -91,6 +92,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
       builder: (_) => _SyncCountDialog(current: _count),
     );
     if (picked == null || picked == _count) return;
+    if (!mounted) return; // 弹窗期间页面可能已被关闭
 
     final old = _count;
     setState(() => _count = picked);
@@ -184,7 +186,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
   Widget _card(List<Widget> children) => Container(
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           border: Border.all(color: context.borderColor),
           boxShadow: AppTheme.cardShadow,
         ),
@@ -303,7 +305,7 @@ class _DialogShell extends StatelessWidget {
     return Dialog(
       backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
         child: Padding(
@@ -392,11 +394,11 @@ class _StyleDialog extends StatelessWidget {
     final on = current == value;
     return InkWell(
       onTap: () => Navigator.of(context).pop(value),
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(
             color: on ? AppTheme.primaryColor : context.borderColor,
           ),
@@ -529,7 +531,7 @@ class _SyncCountDialogState extends State<_SyncCountDialog> {
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 13),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                 ),
               ),
               child: const Text('确定'),
@@ -547,12 +549,12 @@ class _SyncCountDialogState extends State<_SyncCountDialog> {
         _ctl.text = '$n';
         _error = null;
       }),
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: on ? AppTheme.primaryColor : Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           border: Border.all(
             color: on ? AppTheme.primaryColor : context.borderColor,
           ),

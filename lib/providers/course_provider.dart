@@ -89,6 +89,37 @@ class CourseNotifier extends Notifier<CourseState> {
   Future<List<Course>> mergeServer(List<Course> serverCourses) async =>
       _commit(await CourseStorage.mergeServerCourses(serverCourses));
 
+  /// 把教务课合并进**指定**课表（2026-10-13）。
+  ///
+  /// 与 [mergeServer] 的区别：目标表由 [CourseStorage.resolveSyncTargetId]
+  /// 决定，可能**不是**当前页面正在看的那份 —— 那种情况下只落盘，
+  /// **不要**用它的内容覆盖页面状态（否则用户眼前的导入课表会突然变成我的）。
+  Future<({List<Course> merged, List<CourseConflict> conflicts})> mergeServerInto(
+    String tableId,
+    List<Course> serverCourses,
+  ) async {
+    final res = await CourseStorage.mergeServerCoursesInto(tableId, serverCourses);
+    final merged = res.merged;
+    if (merged.isEmpty && serverCourses.isNotEmpty) {
+      return (merged: state.courses, conflicts: res.conflicts);
+    }
+    final activeId = await CourseStorage.activeTableId();
+    if (activeId == tableId) {
+      state = state.copyWith(courses: merged, loading: false);
+    }
+    return (merged: merged, conflicts: res.conflicts);
+  }
+
+  /// 冲突解决：按 id 批量删除某份课表里的课程（2026-10-13，任务三）。
+  Future<List<Course>> removeManyFrom(String tableId, Iterable<String> ids) async {
+    final left = await CourseStorage.removeCoursesFrom(tableId, ids);
+    final activeId = await CourseStorage.activeTableId();
+    if (activeId == tableId) {
+      state = state.copyWith(courses: left, loading: false);
+    }
+    return left;
+  }
+
   Future<List<Course>> clear() async => _commit(const <Course>[]);
 
   Future<DateTime> setSemesterStart(DateTime date) async {

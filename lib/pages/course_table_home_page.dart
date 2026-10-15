@@ -33,6 +33,9 @@ class CourseTableHomePage extends ConsumerStatefulWidget {
 }
 
 class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
+  /// 本会话是否已自动提示过「教务课表内部冲突」（避免反复弹）。
+  bool _warnedSelfConflict = false;
+
   // ---------------- 功能教程锚点（v1.9.0）----------------
   // 用 GlobalKey 标记要讲解的按钮，教程浮层据此取屏幕坐标做高亮挖洞。
   final GlobalKey _kAlarmBtn = GlobalKey();
@@ -52,6 +55,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   List<CourseTable> _tables = const [];
   /// 顶部「课表名」下方的切换面板是否展开（向下展开，不用居中弹窗）。
   bool _tablePanelOpen = false;
+
+  /// 正在导入课表（v1.6.8）：抓教务期间盖一层加载遮罩，避免"点了没反应"。
+  bool _importing = false;
   late int _selectedWeek;
   DateTime? _semesterStart;
   /// v2.4.0：改为 getter——原先 `final` 只在 initState 取一次，
@@ -203,12 +209,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   Future<void> _loadDisplaySettings() async {
     final s = await CourseStorage.loadDisplaySettings();
     if (!mounted) return;
-    // v1.1.0：显示设置同步到内存缓存（供网格绘制组件直接读取）
-    CourseStorage.showGridLinesCache = s['showGridLines'] != false;
-    CourseStorage.showOtherWeeksCache = s['showOtherWeeks'] == true;
-    CourseStorage.backgroundImageCache = (s['backgroundImage'] ?? '').toString();
-    // 缺字段时给默认值（true）——老用户升级上来不会因为没这个 key 而变成「不自动更新」
-    CourseStorage.autoUpdateOnLaunchCache = s['autoUpdateOnLaunch'] != false;
+    // v1.3.0：缓存同步统一走 CourseStorage.applyDisplayToCache
+    // （课表设置页改滑杆时也调它，共用一份映射，防止两边口径漂移）。
+    CourseStorage.applyDisplayToCache(s);
     setState(() {}); // 触发重建，让网格按新设置重绘
   }
 
@@ -226,7 +229,208 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     // 只提示，不 setState 课表：课程列表由 `ref.listen(courseProvider)` 统一镜像，
     // 免得这里和监听器各写一份、日后口径不一致。
     _toast(r.message);
+    // 2026-10-13（任务三）：同步后若有冲突就提示 ——
+    //   · 教务课表**自己内部**撞车（如某晚两门课重叠）：只提示；
+    //   · 与**本地手动课**冲突：给三个选项。
+    if (r.hasAnyConflict && mounted) {
+      await _resolveConflicts(_conflictGroups(r.conflicts, r.selfConflicts));
+    }
   }
+
+  /// 进课表时**自动提示一次**教务课表的内部冲突（2026-10-13）。
+  ///
+  /// 为什么要有这个：自动更新现在默认关，用户可能很久不手动刷新 ——
+  /// 那些"教务早就排重了"的课表就永远看不到提示。这里在页面拿到课程后
+  /// 兜一次（每会话只弹一次，不打扰）。
+  void _maybeWarnSelfConflicts() {
+    if (_warnedSelfConflict || _courses.isEmpty) return;
+    final serverCourses =
+        _courses.where((c) => c.source == CourseSource.server).toList();
+    if (serverCourses.isEmpty) return;
+    final self = CourseStorage.detectSelfConflicts(serverCourses);
+    if (self.isEmpty) return;
+    _warnedSelfConflict = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _resolveConflicts(self.map((c) => <Course>[c.server, c.local]).toList());
+      }
+    });
+  }
+
+  /// 把两类冲突（教务 vs 手动 / 教务内部撞车）转成统一的「冲突组」列表。
+  List<List<Course>> _conflictGroups(
+      List<CourseConflict> cross, List<CourseConflict> self) {
+    final groups = <List<Course>>[];
+    for (final c in cross) {
+      groups.add(<Course>[c.server, c.local]);
+    }
+    for (final c in self) {
+      groups.add(<Course>[c.server, c.local]);
+    }
+    return groups;
+  }
+
+  /// 冲突解决弹窗（v1.6.0 重做）—— 两类冲突统一处理：
+  /// 每组（一个冲突时段）列出涉及的多门课程，用户**逐组选择保留哪一门**
+  /// （默认第一门；也可选「都保留」）。被删掉的教务课会记入忽略名单，
+  /// 下次同步不再下发（否则教务一同步它们又回来）。
+  ///
+  /// 触发场景：① 手动同步后（教务内部撞车 / 教务 vs 手动）② 进课表页兜一次
+  /// ③ 用户直接点课表上的冲突格。
+  Future<void> _resolveConflicts(List<List<Course>> groups) async {
+    if (groups.isEmpty || !mounted) return;
+    final activeId = await CourseStorage.activeTableId();
+    if (!mounted) return;
+
+    // 每组的选择：null = 都保留；否则为保留的课程下标（默认 0 = 第一门）
+    final picked = List<int?>.filled(groups.length, 0);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+          title: const Text('时间冲突',
+              style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: 340,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('以下时段有多门课程，请选择每个时段要保留的一门',
+                      style: TextStyle(
+                          fontSize: 12.5, color: context.textTertiary)),
+                  const SizedBox(height: 12),
+                  for (int g = 0; g < groups.length; g++) ...[
+                    if (g > 0) const Divider(height: 22),
+                    _conflictGroup(groups[g], picked[g],
+                        (v) => setModal(() => picked[g] = v)),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('都保留全部',
+                  style: TextStyle(color: Colors.grey)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+              ),
+              child: const Text('保留选择'),
+            ),
+          ],
+        );
+      }),
+    );
+    if (!mounted) return;
+    if (ok != true) {
+      _toast('已保留全部课程');
+      return;
+    }
+    // 应用选择：删掉每组里未选中的；被删的教务课进忽略名单（防同步复活）
+    final toDelete = <Course>[];
+    final dropped = <String>[];
+    for (int g = 0; g < groups.length; g++) {
+      final keep = picked[g];
+      if (keep == null) continue;
+      final group = groups[g];
+      for (int i = 0; i < group.length; i++) {
+        if (i == keep) continue;
+        toDelete.add(group[i]);
+        if (group[i].source == CourseSource.server) {
+          dropped.add(CourseStorage.courseConflictKey(group[i]));
+        }
+      }
+    }    if (toDelete.isNotEmpty) {
+      await ref
+          .read(courseProvider.notifier)
+          .removeManyFrom(activeId, toDelete.map((c) => c.id));
+    }
+    if (dropped.isNotEmpty) {
+      final keys = await StorageService.loadDroppedCourseKeys();
+      await StorageService.saveDroppedCourseKeys(<String>[...keys, ...dropped]);
+    }
+    if (!mounted) return;
+    _toast(toDelete.isEmpty ? '没有需要删除的课程' : '已删除 ${toDelete.length} 门冲突课程');
+  }
+
+  /// 单个冲突时段的选项组：课程 radio 列表 + 「都保留」。
+  Widget _conflictGroup(
+      List<Course> group, int? keep, ValueChanged<int?> onPick) {
+    final first = group.first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_slotLabel(first),
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: context.textPrimary)),
+        const SizedBox(height: 2),
+        for (int i = 0; i < group.length; i++)
+          RadioListTile<int>(
+            value: i,
+            groupValue: keep ?? -1,
+            onChanged: (v) => onPick(v),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            activeColor: AppTheme.primaryColor,
+            title: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    // v1.6.9：小圆点跟随课节色块的色彩方案
+                    color: courseColorFor(
+                        group[i].colorValue, CourseStorage.schemeCache),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(group[i].name,
+                      style: const TextStyle(fontSize: 13.5),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  group[i].source == CourseSource.server ? '教务' : '手动',
+                  style: TextStyle(
+                      fontSize: 11, color: context.textTertiary),
+                ),
+              ],
+            ),
+            subtitle: (group[i].teacher.isNotEmpty ||
+                    group[i].classroom.isNotEmpty)
+                ? Text(
+                    [group[i].teacher, group[i].classroom]
+                        .where((s) => s.isNotEmpty)
+                        .join(' · '),
+                    style: const TextStyle(fontSize: 11.5))
+                : null,
+          ),
+        RadioListTile<int>(
+          value: -1,
+          groupValue: keep ?? -1,
+          onChanged: (_) => onPick(null),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          activeColor: AppTheme.primaryColor,
+          title: const Text('都保留', style: TextStyle(fontSize: 13)),
+        ),
+      ],
+    );
+  }
+
 
   /// 打开「课表设置」页（v1.1.0：取代原来的「三个点」菜单）。
   ///
@@ -272,6 +476,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     await CourseTodoService.autoCompleteFinishedCourses();
     // 首次有课表时提醒确认「第 1 周」（只弹一次）
     unawaited(_maybeAskSemesterStart());
+    // 2026-10-13：进课表也兜一次「教务课表内部冲突」提示（每会话一次）
+    _maybeWarnSelfConflicts();
   }
 
   void _toast(String msg) {
@@ -424,10 +630,56 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   }
 
   Future<void> _saveCourse(Course course) async {
+    // v1.6.1：手动添加/编辑课程也查时间冲突（此前只有同步与冲突格才检测）——
+    // 与表内其它课「同星期 + 节次相交 + 有共同周」即提示，用户可坚持保存。
+    final conflicts = CourseStorage.detectConflicts(
+      _courses.where((c) => c.id != course.id).toList(),
+      <Course>[course],
+    );
+    if (conflicts.isNotEmpty && mounted) {
+      final other = conflicts.first.local; // local = 表内已有的那门
+      final more = conflicts.length > 1 ? '（等 ${conflicts.length} 处）' : '';
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
+          title: const Text('时间冲突',
+              style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold)),
+          content: Text(
+            '「${course.name}」与「${other.name}」（${_slotLabel(other)}）时间重叠$more。\n'
+            '仍然保存吗？',
+            style: const TextStyle(fontSize: 13.5, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('返回修改', style: TextStyle(color: Colors.grey)),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.primaryColor),
+              child: const Text('仍然保存'),
+            ),
+          ],
+        ),
+      );
+      if (go != true || !mounted) return;
+    }
     final list = await ref.read(courseProvider.notifier).upsert(course);
     if (!mounted) return;
     setState(() => _courses = list);
     CourseReminderService.rescheduleAll(); // v2.2.21 课表变更→重排上课提醒
+  }
+
+  /// 「周X 第a-b节」时段文案（冲突弹窗共用）。
+  String _slotLabel(Course c) {
+    final wd = switch (c.weekday) {
+      0 => '每天',
+      -1 => '工作日',
+      _ => '周${c.weekday}',
+    };
+    return '$wd 第${c.startSlot}-${c.endSlot}节';
   }
 
   Future<void> _deleteCourse(Course course) async {
@@ -456,12 +708,12 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     final fg = AppTheme.primaryColor;
     return InkWell(
       onTap: () => setState(() => _tablePanelOpen = !_tablePanelOpen),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         decoration: BoxDecoration(
           border: Border.all(color: fg.withOpacity(0.28)),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -507,7 +759,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               decoration: BoxDecoration(
                 border: Border.all(color: context.borderColor),
                 color: surfaceColor,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(AppTheme.radiusMd),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -668,7 +920,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   ///    之后在顶部那个列表里随时切着看。
   ///
   /// 版式与在线版一致：可选项统一实底 + 细边框、不放说明性小字、
-  /// 第 1 周默认学期估算值（秋季 9.7）、导入方式可展开。
+  /// 第 1 周默认学期估算值（秋季 9.7）、导入方式平铺直选。
   Future<void> _showNewTableImportDialog() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final nowYear = DateTime.now().year;
@@ -677,7 +929,6 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     var xqm = '3';
     var start = CourseStorage.autoSemesterStart('$nowYear', '3');
     var method = _kMethodAccount;
-    var methodOpen = false;
     final nameCtl = TextEditingController(text: '课表 ${_tables.length + 1}');
     final fg = isDark ? Colors.white : context.textPrimary;
     final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
@@ -686,7 +937,21 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          title: const Text('导入一份新课表', style: TextStyle(fontSize: 16)),
+          // 弹窗本体也走 App 的标准卡片风格：白底 + 1px 细边框 + 20 圆角 + 无阴影。
+          // 以前是默认 AlertDialog（自带阴影和系统圆角），和全 App 的卡片风格不搭。
+          backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(
+                color:
+                    isDark ? Colors.grey.shade800 : const Color(0xFFE5E7EB)),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+          actionsPadding: const EdgeInsets.fromLTRB(12, 0, 16, 10),
+          title: const Text('导入一份新课表',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -776,41 +1041,20 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                     ]),
                   ),
                 ),
-                const SizedBox(height: 10),
-                InkWell(
-                  onTap: () => setDlg(() => methodOpen = !methodOpen),
-                  child: _dialogBox(
+                const SizedBox(height: 12),
+                // 导入方式：**直接平铺、常显**，选中的带 ✓。
+                // 以前是「一行显示当前方式 + 点开才出卡片」—— 选中项会出现两次
+                //（行上一次、卡片上一次），看着像两条重复的「跨专业自选」，
+                // 还多点一次才能换。平铺后所见即所选。
+                for (final entry in _kMethods.entries) ...[
+                  _methodCard(
                     isDark,
-                    child: Row(children: [
-                      Icon(_kMethods[method]!.$2, size: 16, color: sub),
-                      const SizedBox(width: 8),
-                      Text(_kMethods[method]!.$1,
-                          style: TextStyle(fontSize: 14, color: fg)),
-                      const Spacer(),
-                      AnimatedRotation(
-                        turns: methodOpen ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 160),
-                        child: Icon(Icons.keyboard_arrow_down_rounded,
-                            size: 18, color: sub),
-                      ),
-                    ]),
+                    title: entry.value.$1,
+                    icon: entry.value.$2,
+                    selected: method == entry.key,
+                    onTap: () => setDlg(() => method = entry.key),
                   ),
-                ),
-                if (methodOpen) ...[
                   const SizedBox(height: 8),
-                  for (final entry in _kMethods.entries) ...[
-                    _methodCard(
-                      isDark,
-                      title: entry.value.$1,
-                      icon: entry.value.$2,
-                      selected: method == entry.key,
-                      onTap: () => setDlg(() {
-                        method = entry.key;
-                        methodOpen = false;
-                      }),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
                 ],
               ],
             ),
@@ -820,8 +1064,19 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               onPressed: () => Navigator.of(ctx).pop(false),
               child: const Text('取消', style: TextStyle(color: Colors.grey)),
             ),
-            TextButton(
+            // 主动作用「黑底白字」实心按钮：整个弹窗唯一的主按钮，
+            // 黑白极简风里比灰色文字按钮更有分量。
+            ElevatedButton(
               onPressed: () => Navigator.of(ctx).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+              ),
               child: const Text('开始导入',
                   style: TextStyle(fontWeight: FontWeight.w600)),
             ),
@@ -834,40 +1089,57 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     final name = nameCtl.text.trim().isEmpty
         ? '课表 ${_tables.length + 1}'
         : nameCtl.text.trim();
-    setState(() => _tablePanelOpen = false);
+    setState(() {
+      _tablePanelOpen = false;
+      // v1.6.8：抓教务要几秒到十几秒，此前**没有任何反馈**（用户反馈
+      // 「导入他人课表交互不明显」）—— 现在拉起加载遮罩，直到出结果。
+      _importing = true;
+    });
 
     final beforeTableId = _activeTableId;
     List<Course>? imported;
-    if (method == _kMethodAccount) {
-      // 账密：问「导入谁的课表」，拿对方的账密去取
-      final cred = await _askOtherAccount();
-      if (cred == null || !mounted) return;
-      final resp = await ApiService.fetchSchedule(
-        username: cred.$1,
-        password: cred.$2,
-        xnm: xnm,
-        xqm: xqm,
-      );
-      final data = resp['data'] as Map<String, dynamic>? ?? {};
-      final raw = (data['courses'] as List? ?? [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-      imported = raw.map(_courseFromJson).toList();
-    } else {
-      // 跨专业自选：进班级选择页挑班 → 预览确认
-      final result = await Navigator.of(context).push(
-        MaterialPageRoute<Map<String, dynamic>>(
-          builder: (_) => ClassPickerPage(xnm: xnm, xqm: xqm),
-        ),
-      );
-      if (result == null || !mounted) return;
-      imported =
-          (result['courses'] as List? ?? []).whereType<Course>().toList();
+    // 🔴 v1.6.3：整段导入流程此前**没有异常兜底** —— 教务侧任何失败（验证码识别、
+    // 账密错误、网络异常）都会静默中断，用户看到的就是「点了导入没反应」。
+    // 现在统一捕获并把原因提示出来。
+    try {
+      if (method == _kMethodAccount) {
+        // 账密：问「导入谁的课表」，拿对方的账密去取
+        final cred = await _askOtherAccount();
+        if (cred == null || !mounted) return;
+        final resp = await ApiService.fetchSchedule(
+          username: cred.$1,
+          password: cred.$2,
+          xnm: xnm,
+          xqm: xqm,
+        );
+        final data = resp['data'] as Map<String, dynamic>? ?? {};
+        final raw = (data['courses'] as List? ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        imported = raw.map(_courseFromJson).toList();
+      } else {
+        // 跨专业自选：进班级选择页挑班 → 预览确认
+        final result = await Navigator.of(context).push(
+          MaterialPageRoute<Map<String, dynamic>>(
+            builder: (_) => ClassPickerPage(xnm: xnm, xqm: xqm),
+          ),
+        );
+        if (result == null || !mounted) return;
+        imported =
+            (result['courses'] as List? ?? []).whereType<Course>().toList();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _importing = false);
+        _toast('导入失败：${e.toString().replaceFirst('Exception: ', '')}');
+      }
+      return;
     }
 
     if (!mounted) return;
     if (imported.isEmpty) {
+      setState(() => _importing = false);
       _toast('该班级本学期没有已发布的课表数据');
       return;
     }
@@ -877,10 +1149,14 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       semesterStart: start,
       // 第 1 周是用户亲手选的 → 记成 user，别再弹「请确认第 1 周」
       semesterStartSource: CourseTable.srcUser,
+      // 2026-10-13：班级课表是**别人的/其他专业的** —— 标记 imported，
+      // 今后「我的教务」同步绝不会写它（防跨表覆盖）。
+      kind: CourseTable.kindImported,
     );
     await ref.read(courseProvider.notifier).load();
     await _load();
     if (!mounted) return;
+    setState(() => _importing = false);
     if (_activeTableId != beforeTableId) {
       // 桌面小组件与上课提醒不认 provider，切表后要主动通知
       unawaited(WidgetSyncService.syncTodayCourses());
@@ -889,11 +1165,65 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     }
   }
 
+  /// 导入课表时的加载遮罩（v1.6.8）。
+  ///
+  /// 抓教务要几秒到十几秒，此前点完「开始导入」**没有任何反馈**（用户反馈
+  /// 「导入他人课表交互不明显」）—— 现在盖一层遮罩：转圈 + 说明，直到出结果。
+  Widget _buildImportingOverlay(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withOpacity(0.35),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 22),
+            decoration: BoxDecoration(
+              color: context.surfaceColor,
+              borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                const SizedBox(height: 14),
+                Text('正在登录教务并抓取课表…',
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: isDark
+                            ? Colors.white
+                            : AppTheme.textPrimaryLight)),
+                const SizedBox(height: 4),
+                Text('首次登录会慢一些，请稍候',
+                    style:
+                        TextStyle(fontSize: 11.5, color: context.textTertiary)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 容错取整数（v1.6.8）：教务/班级接口返回的字段**有时是字符串**（"3"）
+  /// 有时是数字（3）。原先是 `as num?` 硬转 —— 只要有一个字段是字符串就抛
+  /// 「type 'String' is not a subtype of type 'num?' in type cast」，
+  /// **整批导入直接失败**（用户实测截图）。这里三种情况都接住。
+  int _asInt(dynamic v, int fallback) {
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v.trim()) ?? fallback;
+    return fallback;
+  }
+
   /// 把班级/教务接口返回的课程字典转成 [Course]。
   Course _courseFromJson(Map<String, dynamic> m) {
     final name = (m['name'] ?? '').toString().trim();
-    final wd = (m['weekday'] as num?)?.toInt() ?? 1;
-    final start = (m['start_slot'] as num?)?.toInt() ?? 1;
+    final wd = _asInt(m['weekday'], 1);
+    final start = _asInt(m['start_slot'], 1);
     return Course(
       id: 'imp_${name}_$wd-$start',
       name: name.isEmpty ? '未命名' : name,
@@ -901,7 +1231,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       classroom: (m['classroom'] ?? '').toString().trim(),
       weekday: wd,
       startSlot: start,
-      endSlot: (m['end_slot'] as num?)?.toInt() ?? start,
+      endSlot: _asInt(m['end_slot'], start),
       weeks: (m['weeks'] ?? '').toString().trim(),
       colorValue: colorForName(name),
       source: CourseSource.server,
@@ -1008,7 +1338,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
           color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
           border: Border.all(
               color: isDark ? Colors.grey.shade700 : const Color(0xFFE5E7EB)),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         ),
         child: child,
       );
@@ -1023,18 +1353,22 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   }) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+          // 选中：**同样的 1px 细边框**，只是换成主题色，再垫一层极淡的底色 ——
+          // 不再用加粗边框（1.2px 黑边和周围的细边框放一起会显得突兀）。
+          color: selected && !isDark
+              ? AppTheme.primaryColor.withOpacity(0.04)
+              : (isDark ? const Color(0xFF2A2A2A) : Colors.white),
           border: Border.all(
             color: selected
                 ? AppTheme.primaryColor
                 : (isDark ? Colors.grey.shade700 : const Color(0xFFE5E7EB)),
-            width: selected ? 1.2 : 1,
+            width: 1,
           ),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
         ),
         child: Row(children: [
           Icon(icon, size: 17, color: AppTheme.primaryColor),
@@ -1071,6 +1405,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     );
     if (confirmed == true) {
       await ref.read(courseProvider.notifier).clear();
+      if (!mounted) return; // 等待期间页面可能已被卸载
       setState(() => _courses = []);
     }
   }
@@ -1091,6 +1426,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       // 本页已建好、自动同步才回来的情况（登录后 / 启动时那两趟），
       // 也要在这里补一次首次提醒 —— 否则用户永远等不到那个对话框。
       unawaited(_maybeAskSemesterStart());
+      _maybeWarnSelfConflicts();
     });
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1108,7 +1444,10 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     return Scaffold(
       backgroundColor: bgColor,
       // v2.3.9 适配：底部也留安全区，避免课程表最后一行被全面屏手势条遮挡
-      body: SafeArea(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          SafeArea(
         child: Column(
           children: [
             _buildHomeHeader(context, isDark, surfaceColor, now, monday, todayCount),
@@ -1144,7 +1483,10 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               ),
             ),
           ],
-        ),
+            ),
+          ),
+          if (_importing) _buildImportingOverlay(context),
+        ],
       ),
     );
   }
@@ -1152,7 +1494,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// 构建某一教学周的课表网格。
   /// 课程卡片作为绝对定位的 overlay，支持连续多节合并成一块。
   Widget _buildWeekGrid(int week, bool isDark, Color surfaceColor) {
-    return CourseWeekGrid(
+    final grid = CourseWeekGrid(
       blocks: _blocks,
       todayWeekday: _todayWeekday,
       selectedWeek: week,
@@ -1190,6 +1532,19 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
           ),
         ),
       ),
+      // v1.6.0：点冲突格 → 冲突解决弹窗（选保留哪门 / 都保留）
+      onResolveConflict: (conflicting) => _resolveConflicts([conflicting]),
+    );
+    // v1.6.4：课节高度滑杆 > 0 时按固定行高铺开 —— 装得下就底部留白，
+    // 装不下（行高调大）就纵向滚动，不再被压扁。
+    final fixedRow = CourseStorage.rowHeightCache;
+    if (fixedRow <= 0) return grid;
+    final dividerH = CourseStorage.showGridLinesCache
+        ? CourseStorage.gridLineWidthCache
+        : 0.0;
+    final total = _blocks.length * fixedRow + (_blocks.length - 1) * dividerH;
+    return SingleChildScrollView(
+      child: SizedBox(height: total, child: grid),
     );
   }
 
@@ -1209,7 +1564,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       decoration: BoxDecoration(
         border: Border.all(color: context.borderColor),
         color: surfaceColor,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.03),
@@ -1245,7 +1600,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1.5),
                       decoration: BoxDecoration(
                         color: AppTheme.primaryColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(7),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                       ),
                       child: Text(
                         '今日 $todayCount 门',
