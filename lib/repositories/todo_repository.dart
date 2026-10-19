@@ -93,6 +93,30 @@ class TodoRepository {
     return updated;
   }
 
+  /// 切换**某一天**的完成态（2026-10-18，重复任务用）。
+  ///
+  /// 非重复任务等价于 [toggleComplete]；重复任务只翻转当天在
+  /// [Todo.completedDates] 里的记录，不影响其它日期。
+  Future<Todo> toggleCompleteOn(Todo todo, DateTime day) async {
+    final list = await _db.readAll();
+    final idx = list.indexWhere((t) => t.id == todo.id);
+    if (idx < 0) return todo;
+    final cur = list[idx];
+    final Todo updated;
+    if (cur.isRepeating) {
+      final key = Todo.dayKey(day);
+      final dates = List<String>.from(cur.completedDates);
+      if (!dates.remove(key)) dates.add(key);
+      updated = cur.copyWith(completedDates: dates);
+    } else {
+      updated = cur.copyWith(completed: !cur.completed);
+    }
+    list[idx] = updated;
+    await _db.writeAll(list);
+    await _syncNotification(updated);
+    return updated;
+  }
+
   /// 批量标记完成（一次读、一次写、一次落库）。
   /// 用于「课程结束后自动划掉」这类批量场景，避免逐条 toggle 造成 N 次整表读写。
   /// 返回实际改变的条数。

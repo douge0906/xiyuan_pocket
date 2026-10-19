@@ -325,6 +325,15 @@ class CourseStorage {
   static String courseConflictKey(Course c) =>
       '${c.name}|${c.teacher}|${c.weekday}|${c.startSlot}|${c.endSlot}|${c.weeks}';
 
+  /// 冲突**组**的签名：组内各课签名**排序后**拼接（与组内顺序无关）。
+  ///
+  /// 用途：记住「这组冲突用户已经处理过」（含选「都保留」），
+  /// 之后进课表页不再重复自动弹冲突提醒（2026-10-16）。
+  static String conflictGroupKey(List<Course> group) {
+    final parts = group.map(courseConflictKey).toList()..sort();
+    return parts.join('&');
+  }
+
   /// 过滤掉「用户已选择删除」的教务课（冲突解决弹窗的落点）。
   static Future<List<Course>> dropIgnored(List<Course> serverCourses) async {
     if (serverCourses.isEmpty) return serverCourses;
@@ -775,7 +784,44 @@ class CourseStorage {
         'showClassroomOnCard': true,
         'hideSectionTime': false,
         'hideDateRow': false,
+        // 2026-10-16：**每种色彩方案各自存一套外观值**（切换时互不干扰，
+        // 见 [switchScheme]）。空表示三档都还没被改过 → 一律用方案预设。
+        'schemeOverrides': <String, dynamic>{},
       };
+
+  /// 切换色彩方案（2026-10-16：**每种方案各自保存自己那套手动调整**）。
+  ///
+  /// 用户要求：「色彩方案里手动更改不变，指的是**每种方案各自的手动更改不变**」
+  /// —— 三档互不干扰：
+  ///  · 先把当前这份设置里的外观值**归档到「当前方案」名下**；
+  ///  · 再看「目标方案」名下有没有存过 —— 存过就用它（你在该方案下调过的那套），
+  ///    没存过就用 [SchemePreset.of] 的出厂预设；
+  ///  · 配色 `scheme` 直接换成目标方案。
+  ///
+  /// 于是「在方案二里把圆角调圆 → 切回方案一 → 再切回方案二」仍然是你调过的那套。
+  /// 只有「恢复默认设置」才会把三档一起清空。
+  static Map<String, dynamic> switchScheme(
+      Map<String, dynamic> display, CourseColorScheme to) {
+    final cur = CourseColorScheme.parse(display['scheme']);
+    final raw = display['schemeOverrides'];
+    final overrides = <String, dynamic>{
+      ...(raw is Map
+          ? Map<String, dynamic>.from(raw)
+          : const <String, dynamic>{}),
+      // 当前方案当前这套值，原样归档
+      cur.name: SchemePreset.appearanceOf(display),
+    };
+    final saved = overrides[to.name];
+    final target = saved is Map
+        ? Map<String, dynamic>.from(saved)
+        : SchemePreset.of(to).toDisplayPatch();
+    return <String, dynamic>{
+      ...display,
+      ...target,
+      'scheme': to.name,
+      'schemeOverrides': overrides,
+    };
+  }
 
   static Future<Map<String, dynamic>> loadDisplaySettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -785,6 +831,9 @@ class CourseStorage {
     try {
       final j = jsonDecode(raw) as Map<String, dynamic>;
       final merged = <String, dynamic>{...base, ...j};
+      // 2026-10-16：`_custom`（上一版的全局"手调键"清单）已被
+      // `schemeOverrides`（每档各存一套）取代 —— 顺手清掉，别留在存储里。
+      merged.remove('_custom');
       // v1.1.1 一次性迁移：网格线默认开启。老数据里没有标记时（用户此前测试
       // 关过一次就一直关着，导致课表看不到任何网格线）统一置为开启，只做一次。
       if (merged['_gridDefaultOn'] != true) {
@@ -849,5 +898,123 @@ class CourseStorage {
   static Future<void> saveDisplaySettings(Map<String, dynamic> s) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kDisplaySettings, jsonEncode(s));
+  }
+}
+
+/// 「色彩方案」的**整套外观预设**（2026-10-16）。
+///
+/// 用户要求：方案不能只管配色 —— **圆角 / 内边距 / 块间距 / 边框 / 课节高度 /
+/// 网格线 / 非本周淡化 也要跟着方案一起变**，具体数值照参考截图来。
+/// 切换方案 = 一键套用这一整套搭配；套完下面的滑杆仍然可以继续微调。
+///
+/// 数值来源（两张 867×1920 参考截图，按 2.41 密度折 dp）：
+///  · 图1 → 方案二：块宽 101px、圆角 ≈20px（≈8.3dp）、块间距 ≈3dp(margin 1.5)、
+///    1 节课高 152px（≈63dp）、无边框；
+///  · 图2 → 方案三：块宽 110px、圆角 ≈5px（≈2dp）、块间距 ≈1.2dp(margin 0.6)、
+///    1 节课高 167px（≈69dp）、细边框。
+class SchemePreset {
+  const SchemePreset({
+    required this.blockRadius,
+    required this.blockPad,
+    required this.blockMargin,
+    required this.blockBorderWidth,
+    required this.rowHeight,
+    required this.showGridLines,
+    required this.gridLineWidth,
+    required this.gridLineDepth,
+    required this.otherWeeksDim,
+  });
+
+  final double blockRadius;
+  final double blockPad;
+  final double blockMargin;
+  final double blockBorderWidth;
+
+  /// 课节高度：0 = 自动均分（沿用改造前行为）。
+  final double rowHeight;
+  final bool showGridLines;
+  final double gridLineWidth;
+  final double gridLineDepth;
+  final double otherWeeksDim;
+
+  /// 本预设覆盖的显示设置键 —— 也是「自定义优先」的判定范围。
+  static const Set<String> keys = <String>{
+    'blockRadius',
+    'blockPad',
+    'blockMargin',
+    'blockBorderWidth',
+    'rowHeight',
+    'showGridLines',
+    'gridLineWidth',
+    'gridLineDepth',
+    'otherWeeksDim',
+  };
+
+  /// 展开成 display settings 的补丁（多 key 一起写）。
+  Map<String, dynamic> toDisplayPatch() => <String, dynamic>{
+        'blockRadius': blockRadius,
+        'blockPad': blockPad,
+        'blockMargin': blockMargin,
+        'blockBorderWidth': blockBorderWidth,
+        'rowHeight': rowHeight,
+        'showGridLines': showGridLines,
+        'gridLineWidth': gridLineWidth,
+        'gridLineDepth': gridLineDepth,
+        'otherWeeksDim': otherWeeksDim,
+      };
+
+  /// 从一份 display settings 里**摘出本预设覆盖的那几个键的当前值**。
+  ///
+  /// 用途：切换方案时，先把「当前方案自己那套值」原样存下来（见
+  /// [CourseStorage.switchScheme]）。
+  static Map<String, dynamic> appearanceOf(Map<String, dynamic> display) =>
+      <String, dynamic>{
+        for (final k in keys)
+          if (display.containsKey(k)) k: display[k],
+      };
+
+  /// 取某方案的外观预设。
+  static SchemePreset of(CourseColorScheme s) {
+    switch (s) {
+      case CourseColorScheme.standard:
+        // 方案一 = 改造前的中性观感，值就是出厂默认（谁手调过也不会被它带跑）
+        return const SchemePreset(
+          blockRadius: 6,
+          blockPad: 3.0,
+          blockMargin: 1.8,
+          blockBorderWidth: 0.8,
+          rowHeight: 0,
+          showGridLines: true,
+          gridLineWidth: 1.0,
+          gridLineDepth: 0.5,
+          otherWeeksDim: 0.75,
+        );
+      case CourseColorScheme.soft:
+        // 方案二（复刻图 1）：圆角大、块间距略宽、无边框、课节 63
+        return const SchemePreset(
+          blockRadius: 8,
+          blockPad: 4.5,
+          blockMargin: 1.5,
+          blockBorderWidth: 0,
+          rowHeight: 63,
+          showGridLines: true,
+          gridLineWidth: 1.0,
+          gridLineDepth: 0.3,
+          otherWeeksDim: 0.78,
+        );
+      case CourseColorScheme.vivid:
+        // 方案三（复刻图 2）：圆角很小、块几乎贴满、细边框、课节 69
+        return const SchemePreset(
+          blockRadius: 2,
+          blockPad: 4.0,
+          blockMargin: 0.6,
+          blockBorderWidth: 0.8,
+          rowHeight: 69,
+          showGridLines: true,
+          gridLineWidth: 1.0,
+          gridLineDepth: 0.35,
+          otherWeeksDim: 0.75,
+        );
+    }
   }
 }

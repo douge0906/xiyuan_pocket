@@ -103,26 +103,8 @@ class CourseSyncService {
       final parsed = <Course>[];
       for (final item in rawList) {
         if (item is! Map) continue;
-        final m = Map<String, dynamic>.from(item);
-        // ⚠️ 抓取器返回的是**字符串**字段：
-        //    weekday = "1".."7"，slots = "1-2"（区间串）。
-        //    这里必须转换，不能直接当成 int / start_slot。
-        final wd = parseWeekday(m['weekday']);
-        if (wd == null) continue;
-        final (start, end) = parseSlots(m['slots'], m['start_slot'], m['end_slot']);
-        final name = (m['name'] ?? '').toString().trim();
-        parsed.add(Course(
-          id: 'srv_${name}_$wd-$start',
-          name: name.isEmpty ? '未命名' : name,
-          teacher: (m['teacher'] ?? '').toString().trim(),
-          classroom: (m['classroom'] ?? '').toString().trim(),
-          weekday: wd,
-          startSlot: start,
-          endSlot: end,
-          weeks: (m['weeks'] ?? '').toString().trim(),
-          colorValue: colorForName(name),
-          source: CourseSource.server,
-        ));
+        final c = courseFromRaw(Map<String, dynamic>.from(item));
+        if (c != null) parsed.add(c);
       }
 
       // 🔴 失败 ≠ 空：教务没返回课程 → 明确告知，且**不动**已有课表。
@@ -243,6 +225,40 @@ class CourseSyncService {
   static bool shouldAdoptSemesterStart(DateTime? stored, DateTime computed) {
     if (stored == null) return true;
     return stored.difference(computed).inDays.abs() > 30;
+  }
+
+  /// 把抓取器返回的**一行课程 JSON** 转成 [Course]（全 App **唯一**的解析入口）。
+  ///
+  /// 抓取器有两种形状，都要吃下：
+  ///  · **个人课表**（「我的课表同步」和「账密导入他人课表」走这条）：
+  ///    `weekday` 可能是字符串，节次**只有区间串** `slots: "1-2"`，
+  ///    **没有** `start_slot` / `end_slot`；
+  ///  · **班级课表**（跨专业自选）：`weekday` / `start_slot` / `end_slot` 都是 int。
+  ///
+  /// 🔴 2026-10-16：账密导入那条链路此前**自己抄了一份**只读 `start_slot` 的解析，
+  ///    而个人课表根本没有这个字段 → 每门课都吃到兜底值 1
+  ///    ⇒ 用户看到「账密导入他人课表，全部导入到第一节」。
+  ///    现在两条链路共用这一份，杜绝再各写各的。
+  ///
+  /// [prefix] 只影响生成的课程 id（同步用 `srv`、导入用 `imp`）。
+  /// 返回 null = 星期认不出来，该条应当**跳过**（绝不生成"第一节"的假课）。
+  static Course? courseFromRaw(Map<String, dynamic> m, {String prefix = 'srv'}) {
+    final wd = parseWeekday(m['weekday']);
+    if (wd == null) return null;
+    final (start, end) = parseSlots(m['slots'], m['start_slot'], m['end_slot']);
+    final name = (m['name'] ?? '').toString().trim();
+    return Course(
+      id: '${prefix}_${name}_$wd-$start',
+      name: name.isEmpty ? '未命名' : name,
+      teacher: (m['teacher'] ?? '').toString().trim(),
+      classroom: (m['classroom'] ?? '').toString().trim(),
+      weekday: wd,
+      startSlot: start,
+      endSlot: end,
+      weeks: (m['weeks'] ?? '').toString().trim(),
+      colorValue: colorForName(name),
+      source: CourseSource.server,
+    );
   }
 
   /// 星期：抓取器给的是字符串（"1".."7"，个别版本会是「周一」），统一转成 1..7。

@@ -9,7 +9,6 @@ import 'pages/course_table_home_page.dart';
 import 'services/nav_prefs.dart';
 import 'services/course_storage.dart';
 import 'services/course_sync_service.dart';
-import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
 /// 小组件点击 → 切 Tab 的全局桥（2026-10-12，v1.7.0 改为按页面身份寻址）。
@@ -84,7 +83,7 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     _controllers[_current]!.value = 1.0;
     // 用户在设置页改了导航（隐藏 / 排序）→ 立即重排底部导航
     NavPrefs.notifier.addListener(_onNavLayoutChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showDisclaimerIfNeeded());
+    // 2026-10-18 用户要求：**删除免责声明弹窗**（不再在启动时弹）。
     WidgetsBinding.instance.addPostFrameCallback((_) => _autoUpdateCourseTable());
     _registerTabBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) => _handleWidgetClick());
@@ -149,49 +148,7 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
   }
 
 
-  Future<void> _showDisclaimerIfNeeded() async {
-    final dismissed = await StorageService.loadDisclaimerDismissed();
-    if (!mounted || dismissed) return;
-    _showDisclaimer();
-  }
-
-  void _showDisclaimer() {
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.orange),
-            SizedBox(width: 8),
-            Text('免责声明', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: const SingleChildScrollView(
-          child: Text(
-            '1. 本工具由个人开发者与 AI 辅助设计，并非无锡学院官方产品，与学校无隶属或合作关系。\n\n'
-            '2. 通过非官方客户端访问教务系统可能违反学校相关规定；若学校禁止第三方工具，请立即停止使用。\n\n'
-            '3. 本app数据已进行加密，因使用本工具导致的任何账号、数据风险及后果，由使用者自行承担，开发者不承担责任。',
-            style: TextStyle(fontSize: 12.5, height: 1.6),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await StorageService.saveDisclaimerDismissed(true);
-              if (ctx.mounted) Navigator.of(ctx).pop();
-            },
-            child: const Text('不再提醒', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('我已知晓并继续使用', style: TextStyle(fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-  }
+  // 2026-10-18：免责声明弹窗按用户要求**整段删除**（连同「不再提醒」的读写入口）。
 
   @override
   void dispose() {

@@ -68,6 +68,19 @@ android {
             minifyEnabled false
             shrinkResources false
         }
+
+        // 2026-10-18：debug 构建也使用正式签名。
+        //
+        // 原因：手机上装的是正式签名的发布版，debug 默认签名与之不同，直接
+        // `flutter run` 会报 INSTALL_FAILED_UPDATE_INCOMPATIBLE；唯一的绕法是
+        // 先卸载，但卸载会清掉本地课表与设置，不可接受。
+        // 有 key.properties 时用正式签名 → debug 包可覆盖安装、数据保留；
+        // 没有时回退 debug 签名，贡献者仍然能正常调试。
+        debug {
+            signingConfig = keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
+        }
     }
 
     // 方案B：恢复 .so 以 DEFLATE 压缩进 APK，显著减小安装包体积

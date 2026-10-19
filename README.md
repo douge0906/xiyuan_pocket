@@ -2,47 +2,36 @@
 
 # 掌上锡院
 
-**无锡学院非官方校园助手** · 纯客户端 · 无服务器 · 永久开源
+**无锡学院校园助手**（非官方）
 
-Flutter 3.24.3 · Android arm64 · MIT License
+开源的校园工具：课表、成绩、待办、日历装在一起。
+
+Android · Flutter · MIT License
 
 </div>
 
 ---
 
-## 这是什么
+## 简介
 
-给无锡学院学生用的工具 App。**没有自建服务器**：账密只存你手机本地，
-App 在设备上直接与学校系统通信（统一身份认证 CAS / 正方教务 / 融合门户），
-不经过任何第三方服务器，也不上传任何个人数据。
-
-- 包名 `icu.wxxydouge.wxxy_pocket`，App 显示名「掌上锡院」
-- 仓库地址：<https://github.com/douge0906/xiyuan_pocket>
+给无锡学院同学用的校园工具。把每天要看的几件事——今天上什么课、哪些作业要交、
+考试还有几天——放在一个地方，打开就能看到。
 
 ## 功能
 
-| 功能 | 说明 |
+| 板块 | 内容 |
 |---|---|
-| 课程表 | 教务导入 / 手动添加 / 桌面小组件 |
-| 成绩 · 考试 · 教材 | 按学期查询，本地缓存，拉取失败不覆盖旧数据 |
-| 一卡通 · 电费余额 | 走融合门户，显示在服务页顶部 |
-| 教务处公告 · 校园资讯 | 内置快照：首次打开即有内容，之后联网刷新 |
-| 校历 · 校园地图 | 离线内置 |
-| 上课提醒 | 本地通知，无推送服务 |
+| **课程表** | 教务导入、手动添加、桌面小组件、上课提醒、多套配色与布局 |
+| **待办** | 快速添加、今天 / 之后 / 逾期分组、重复任务（每天、每周几）、到期倒计时 |
+| **待办日历** | 月视图按待办数量显示深浅，点日期直接看当天清单 |
+| **成绩 · 考试 · 教材** | 按学期查询，本地缓存，换网络也不丢 |
+| **一卡通 · 电费** | 融合门户余额，显示在服务页顶部 |
+| **校历 · 校园地图** | 内置，离线可用 |
+| **外观** | 深色模式、主题色、字体大小、首页板块自由组合 |
 
-## 项目的组织方式
+## 安装
 
-```
-lib/
-├── main.dart / app.dart      入口与外壳（导航、主题）
-├── pages/                    页面（首页 / 课表 / 消息 / 服务 / 我的 + tools/）
-├── services/campus/          ★ 与学校系统交互的全部实现
-│                             （CAS 登录 · 验证码 · 教务 · 一卡通 · 公告）
-├── services/                 本地存储、通知、登录闸门、退出清数据
-├── models/ providers/ widgets/ theme/
-third_party/                  flutter_local_notifications 源码副本（锁版本用）
-test/                         单元测试
-```
+下载 APK 直接安装（arm64，Android 8 及以上）。
 
 ## 构建
 
@@ -50,31 +39,28 @@ test/                         单元测试
 
 ```bash
 flutter pub get
-flutter run                                            # 真机调试
-flutter test                                           # 单元测试
+flutter run
+flutter test
 flutter build apk --release --target-platform android-arm64
 ```
 
-- 不本地构建也行：push 后 GitHub Actions 自动跑检查、测试并构建 APK（Actions → Artifacts 下载）。
-- 仓库不含签名文件：维护者本地有则用正式签名，贡献者 clone 后自动回退 debug 签名，可直接构建 release。
+推送代码后 GitHub Actions 会自动跑检查和测试，产物在 Actions → Artifacts。
 
-## 登录说明
+## 开发
 
-需要能访问 `jwgl.cwxu.edu.cn` 的网络（校园网内最稳），用统一认证账号（学号 + 密码）登录。
-账号密码只存本机 secure storage，退出登录时全部清除。
-
-## 贡献
-
-欢迎 Issue / PR。提交前请跑：
+提交前请跑：
 
 ```bash
-flutter analyze lib   # 期望 No issues found
-flutter test          # 期望全部通过
+flutter analyze lib
+flutter test
 ```
 
-> 与学校系统交互的功能（成绩/考试/教材/一卡通）需在校园网环境下真机验证。
+更细的架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-更详细的架构与改动指引见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+## 登录
+
+使用学校统一认证账号（学号 + 密码）登录。账号密码保存在手机本地安全存储，
+退出登录时一并清除。
 
 ## 许可证
 

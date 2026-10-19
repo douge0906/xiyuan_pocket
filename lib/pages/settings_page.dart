@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'home_layout_settings_page.dart';
+
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/color_wheel_picker.dart';
@@ -195,8 +197,42 @@ class _SettingsPageState extends State<SettingsPage> {
             Divider(height: 1, color: context.borderColor),
             // v1.7.0：底部导航自定义（隐藏 / 排序）——独立子页面
             _navLayoutTile(),
+            Divider(height: 1, color: context.borderColor),
+            // 2026-10-17：首页板块显隐（原首页右上角按钮，移到这里）
+            _homeLayoutTile(),
           ],
         ],
+      ),
+    );
+  }
+
+  /// ⑥ 首页个性化：入口行（2026-10-17 从首页右上角移到这里）。
+  Widget _homeLayoutTile() {
+    return InkWell(
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+            builder: (_) => const HomeLayoutSettingsPage()),
+      ),
+      child: SizedBox(
+        height: 52,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Icon(Icons.tune_rounded, size: 20, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('首页个性化',
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                      color: context.textPrimary,
+                    )),
+              ),
+              Icon(Icons.chevron_right, size: 20, color: context.textTertiary),
+            ],
+          ),
+        ),
       ),
     );
   }

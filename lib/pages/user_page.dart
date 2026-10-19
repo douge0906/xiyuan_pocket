@@ -416,20 +416,10 @@ class _UserPageState extends State<UserPage> {
 
               const SizedBox(height: 16),
 
-              Text(
-                '登录即表示已阅读并同意相关说明。密码仅保存在本机，不发送给任何服务器。',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  height: 1.6,
-                  color: isDark
-                      ? Colors.grey.shade600
-                      : const Color(0xFF9CA3AF),
-                ),
-              ),
-
-              const SizedBox(height: 6),
-
+              // v1.7.2：**替换**掉原来那句合规小字（“登录即表示已阅读并同意相关说明…
+              // 密码仅保存在本机，不发送给任何服务器。”）—— 用户当时的原话是
+              // 「统一认证登录页面下方小字修改 修改为 新生需要进行统一认证登录账户激活
+              // 点击跳转（…）直接这样就行」，即只留这一行可点击指引，不再有两行小字。
               // v1.6.5：新生账户激活指引（与在线版同一文案 + 同一跳转地址）
               GestureDetector(
                 onTap: () => launchUrl(
@@ -620,15 +610,6 @@ class _UserPageState extends State<UserPage> {
   }
 
   // ------------------------------------------------------------ 页面小工具
-
-  /// 手动把最新课表推给小组件（平时靠系统定期自动刷新）。
-  Future<void> _refreshWidget() async {
-    await WidgetSyncService.syncTodayCourses();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('小组件数据已刷新')),
-    );
-  }
 
   String get _themeLabel {
     switch (_config.themeMode) {

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/splash_page.dart';
 import 'services/course_reminder_service.dart';
+import 'services/home_prefs.dart';
 import 'services/nav_prefs.dart';
 import 'services/notification_service.dart';
 import 'services/storage_service.dart';
@@ -27,6 +28,9 @@ void main() async {
   // v1.7.0 底部导航布局（顺序 / 隐藏）：**首帧之前**读完，
   // 否则启动会先按出厂顺序画一遍导航条、再跳成用户的顺序，肉眼可见地闪。
   await NavPrefs.ensureLoaded();
+  // v1.7.2 首页板块显隐（首页个性化设置）：同样在**首帧之前**读完 ——
+  // 否则被隐藏掉的板块会先按默认画一帧再消失，肉眼可见地闪。
+  await HomePrefs.ensureLoaded();
   // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
   WidgetSyncService.syncTodayCourses();
   // v2.2.14 外部打开 App（冷启动）使用次数 +1（静默，失败不影响）

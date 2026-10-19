@@ -219,7 +219,10 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   ///
   /// 和自动同步走**同一条** [CourseSyncService.sync]，只是这里要说话：
   /// 转圈 + 一句结果提示。自动同步那两处是静默的（用户没主动要求，不该被打扰）。
-  Future<void> _syncNow() async {
+  /// [promptConflicts] = false：同步完**不弹**冲突弹窗。
+  /// 只给「都保留全部」触发的**恢复同步**用 —— 用户刚刚明确表示"全都保留"，
+  /// 恢复回来的课当然也算保留，再弹一次弹窗纯属骚扰。
+  Future<void> _syncNow({bool promptConflicts = true}) async {
     if (_syncing) return;
     setState(() => _syncing = true);
     final r = await CourseSyncService.sync(
@@ -232,7 +235,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     // 2026-10-13（任务三）：同步后若有冲突就提示 ——
     //   · 教务课表**自己内部**撞车（如某晚两门课重叠）：只提示；
     //   · 与**本地手动课**冲突：给三个选项。
-    if (r.hasAnyConflict && mounted) {
+    if (promptConflicts && r.hasAnyConflict && mounted) {
       await _resolveConflicts(_conflictGroups(r.conflicts, r.selfConflicts));
     }
   }
@@ -240,19 +243,32 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// 进课表时**自动提示一次**教务课表的内部冲突（2026-10-13）。
   ///
   /// 为什么要有这个：自动更新现在默认关，用户可能很久不手动刷新 ——
-  /// 那些"教务早就排重了"的课表就永远看不到提示。这里在页面拿到课程后
-  /// 兜一次（每会话只弹一次，不打扰）。
-  void _maybeWarnSelfConflicts() {
+  /// 那些"教务早就排重了"的课表就永远看不到提示。这里在页面拿到课程后兜一次。
+  ///
+  /// 🔴 2026-10-16：去重粒度从「每会话一次」改成「**每组冲突只弹一次**」。
+  ///    原来选「都保留」不删课 = 冲突依然在 ⇒ 每次重进课表页又弹一遍（用户报告
+  ///    「重新进入课表页面又会触发冲突提醒，影响体验」）。现在用户处理过的冲突组
+  ///    会记进已确认表，之后不再自动弹（冲突格上的轮播/圆点标记照旧可见，
+  ///    用户仍可点开处理）。
+  Future<void> _maybeWarnSelfConflicts() async {
     if (_warnedSelfConflict || _courses.isEmpty) return;
     final serverCourses =
         _courses.where((c) => c.source == CourseSource.server).toList();
     if (serverCourses.isEmpty) return;
     final self = CourseStorage.detectSelfConflicts(serverCourses);
     if (self.isEmpty) return;
+    final acked = (await StorageService.loadAcknowledgedConflicts()).toSet();
+    if (!mounted) return;
+    final pending = self
+        .where((c) => !acked.contains(
+            CourseStorage.conflictGroupKey(<Course>[c.server, c.local])))
+        .toList();
+    if (pending.isEmpty) return;
     _warnedSelfConflict = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _resolveConflicts(self.map((c) => <Course>[c.server, c.local]).toList());
+        _resolveConflicts(
+            pending.map((c) => <Course>[c.server, c.local]).toList());
       }
     });
   }
@@ -275,6 +291,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// （默认第一门；也可选「都保留」）。被删掉的教务课会记入忽略名单，
   /// 下次同步不再下发（否则教务一同步它们又回来）。
   ///
+  /// 「都保留全部」= 我全都要：**除了这次不删，还会清空忽略名单并重新同步一次**，
+  /// 把此前被忽略的课一并恢复（2026-10-16 修复，见下方分支里的说明）。
+  ///
   /// 触发场景：① 手动同步后（教务内部撞车 / 教务 vs 手动）② 进课表页兜一次
   /// ③ 用户直接点课表上的冲突格。
   Future<void> _resolveConflicts(List<List<Course>> groups) async {
@@ -282,8 +301,13 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     final activeId = await CourseStorage.activeTableId();
     if (!mounted) return;
 
-    // 每组的选择：null = 都保留；否则为保留的课程下标（默认 0 = 第一门）
-    final picked = List<int?>.filled(groups.length, 0);
+    // 每组的选择：null = 都保留；否则为保留的课程下标。
+    //
+    // 🔴 2026-10-16：默认值从「0 = 保留第一门」改成 **null = 都保留**。
+    //    用户报告「在已有课程的基础上刷新，虽然提示了冲突，但还是自动忽略了一节」——
+    //    默认预选第一门时，直接点确定就等于把其余门删掉，看起来就是「自动忽略」。
+    //    改成默认都保留后，**必须显式选中某一门**才会删。
+    final picked = List<int?>.filled(groups.length, null);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
@@ -299,7 +323,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('以下时段有多门课程，请选择每个时段要保留的一门',
+                  Text('同一时段多门课，默认全部保留',
                       style: TextStyle(
                           fontSize: 12.5, color: context.textTertiary)),
                   const SizedBox(height: 12),
@@ -323,23 +347,27 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               style: FilledButton.styleFrom(
                 backgroundColor: AppTheme.primaryColor,
               ),
-              child: const Text('保留选择'),
+              child: const Text('确定'),
             ),
           ],
         );
       }),
     );
     if (!mounted) return;
+    // 🔴 2026-10-16：不论用户怎么选（删掉某几门 / 都保留 / 直接关掉弹窗），
+    //    这组冲突都算「已经处理过」—— 记下来，之后进课表页不再自动重复提醒。
+    await _ackConflicts(groups);
     if (ok != true) {
-      _toast('已保留全部课程');
+      // 「都保留全部」= 我全都要。
+      await _keepEverythingAndRestoreIgnored();
       return;
     }
-    // 应用选择：删掉每组里未选中的；被删的教务课进忽略名单（防同步复活）
+    // 应用选择：删掉每组里未被选中的；被删的教务课进忽略名单（防同步复活）
     final toDelete = <Course>[];
     final dropped = <String>[];
     for (int g = 0; g < groups.length; g++) {
       final keep = picked[g];
-      if (keep == null) continue;
+      if (keep == null) continue; // 该组保持「都保留」
       final group = groups[g];
       for (int i = 0; i < group.length; i++) {
         if (i == keep) continue;
@@ -348,17 +376,55 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
           dropped.add(CourseStorage.courseConflictKey(group[i]));
         }
       }
-    }    if (toDelete.isNotEmpty) {
-      await ref
-          .read(courseProvider.notifier)
-          .removeManyFrom(activeId, toDelete.map((c) => c.id));
     }
+    if (toDelete.isEmpty) {
+      // 一门都没删（默认就是「都保留」）→ 与「都保留全部」同一语义：
+      // 顺手把此前忽略名单里的课也恢复回来，否则用户以为全留了、实际还有课被永久过滤。
+      await _keepEverythingAndRestoreIgnored();
+      return;
+    }
+    await ref
+        .read(courseProvider.notifier)
+        .removeManyFrom(activeId, toDelete.map((c) => c.id));
     if (dropped.isNotEmpty) {
       final keys = await StorageService.loadDroppedCourseKeys();
       await StorageService.saveDroppedCourseKeys(<String>[...keys, ...dropped]);
     }
     if (!mounted) return;
-    _toast(toDelete.isEmpty ? '没有需要删除的课程' : '已删除 ${toDelete.length} 门冲突课程');
+    _toast('已删除 ${toDelete.length} 门冲突课程');
+  }
+
+  /// 记下「这些冲突组用户已经处理过」→ 进课表页不再自动重复提醒。
+  ///
+  /// 为什么要记：「都保留」不删课 ⇒ 冲突依然存在，若只按"有没有冲突"判断，
+  /// 就会每次进课表页都弹一遍（用户报告「重新进入课表页面又会触发冲突提醒」）。
+  /// 冲突格上的轮播 / 圆点标记照旧可见，用户仍能点开重新处理。
+  Future<void> _ackConflicts(List<List<Course>> groups) async {
+    final saved = await StorageService.loadAcknowledgedConflicts();
+    final merged = <String>{
+      ...saved,
+      ...groups.map(CourseStorage.conflictGroupKey),
+    }.toList();
+    await StorageService.saveAcknowledgedConflicts(merged);
+  }
+
+  /// 「我全都要」：不删任何课，并且把**此前进过忽略名单的课也恢复回来**。
+  ///
+  /// 为什么不能只是"这次不删"：被忽略的课在**每次同步**时都会被
+  /// `CourseStorage.dropIgnored()` 静默滤掉，名单不清空它就永远回不来
+  /// （2026-10-16 用户报告：刷新后提示了冲突，保留全部却仍少一门）。
+  /// 所以这里要把名单清空，再同步一次把这些课带回课表。
+  Future<void> _keepEverythingAndRestoreIgnored() async {
+    final ignored = await StorageService.loadDroppedCourseKeys();
+    if (ignored.isEmpty) {
+      _toast('已保留全部课程');
+      return;
+    }
+    await StorageService.saveDroppedCourseKeys(const <String>[]);
+    if (!mounted) return;
+    _toast('已恢复 ${ignored.length} 门课');
+    // 恢复同步不再弹冲突弹窗 —— 用户刚说了全都保留，别再问一遍（也避免死循环）。
+    await _syncNow(promptConflicts: false);
   }
 
   /// 单个冲突时段的选项组：课程 radio 列表 + 「都保留」。
@@ -476,8 +542,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     await CourseTodoService.autoCompleteFinishedCourses();
     // 首次有课表时提醒确认「第 1 周」（只弹一次）
     unawaited(_maybeAskSemesterStart());
-    // 2026-10-13：进课表也兜一次「教务课表内部冲突」提示（每会话一次）
-    _maybeWarnSelfConflicts();
+    // 2026-10-13：进课表也兜一次「教务课表内部冲突」提示（每组冲突只弹一次）
+    unawaited(_maybeWarnSelfConflicts());
   }
 
   void _toast(String msg) {
@@ -1117,7 +1183,10 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
-        imported = raw.map(_courseFromJson).toList();
+        imported = raw
+            .map(_courseFromJson)
+            .whereType<Course>()
+            .toList();
       } else {
         // 跨专业自选：进班级选择页挑班 → 预览确认
         final result = await Navigator.of(context).push(
@@ -1209,34 +1278,15 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     );
   }
 
-  /// 容错取整数（v1.6.8）：教务/班级接口返回的字段**有时是字符串**（"3"）
-  /// 有时是数字（3）。原先是 `as num?` 硬转 —— 只要有一个字段是字符串就抛
-  /// 「type 'String' is not a subtype of type 'num?' in type cast」，
-  /// **整批导入直接失败**（用户实测截图）。这里三种情况都接住。
-  int _asInt(dynamic v, int fallback) {
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v.trim()) ?? fallback;
-    return fallback;
-  }
-
-  /// 把班级/教务接口返回的课程字典转成 [Course]。
-  Course _courseFromJson(Map<String, dynamic> m) {
-    final name = (m['name'] ?? '').toString().trim();
-    final wd = _asInt(m['weekday'], 1);
-    final start = _asInt(m['start_slot'], 1);
-    return Course(
-      id: 'imp_${name}_$wd-$start',
-      name: name.isEmpty ? '未命名' : name,
-      teacher: (m['teacher'] ?? '').toString().trim(),
-      classroom: (m['classroom'] ?? '').toString().trim(),
-      weekday: wd,
-      startSlot: start,
-      endSlot: _asInt(m['end_slot'], start),
-      weeks: (m['weeks'] ?? '').toString().trim(),
-      colorValue: colorForName(name),
-      source: CourseSource.server,
-    );
-  }
+  /// 抓取器一行 JSON → [Course]。
+  ///
+  /// 🔴 2026-10-16 修复「账密导入他人课表 → 全部落到第一节」：
+  ///    这里原本**自己抄了一份**解析，直接读 `start_slot` 并用 1 兜底，
+  ///    而个人课表返回的是区间串 `slots: "1-2"`、**没有** `start_slot`
+  ///    ⇒ 每门课的节次都变成 1，全挤在第一节。
+  ///    现在统一走 [CourseSyncService.courseFromRaw]（与「我的课表同步」同一份解析）。
+  Course? _courseFromJson(Map<String, dynamic> m) =>
+      CourseSyncService.courseFromRaw(m, prefix: 'imp');
 
   /// 问「要导入谁的课表」—— 同学/朋友的统一认证学号与密码。
   ///
@@ -1405,6 +1455,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     );
     if (confirmed == true) {
       await ref.read(courseProvider.notifier).clear();
+      // 「已确认过的冲突」一并清掉 —— 以后重新导入同样的课表，该提醒还是要提醒
+      // （否则一次"清空"会把冲突提示永久静音）。
+      await StorageService.saveAcknowledgedConflicts(const <String>[]);
       if (!mounted) return; // 等待期间页面可能已被卸载
       setState(() => _courses = []);
     }
@@ -1426,7 +1479,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       // 本页已建好、自动同步才回来的情况（登录后 / 启动时那两趟），
       // 也要在这里补一次首次提醒 —— 否则用户永远等不到那个对话框。
       unawaited(_maybeAskSemesterStart());
-      _maybeWarnSelfConflicts();
+      unawaited(_maybeWarnSelfConflicts());
     });
 
     final isDark = Theme.of(context).brightness == Brightness.dark;

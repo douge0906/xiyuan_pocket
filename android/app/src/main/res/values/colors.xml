@@ -4,4 +4,6 @@
     <color name="launch_bg">#F8F9FC</color>
     <!-- 应用主色（与 Flutter AppTheme.primaryColor 0xFF1F2937 一致） -->
     <color name="app_primary">#1F2937</color>
+    <!-- 自适应图标背景层（2026-10-19 新图标：黑底紫格 + 右向箭头） -->
+    <color name="ic_launcher_background">#0E1016</color>
 </resources>

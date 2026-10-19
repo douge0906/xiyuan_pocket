@@ -10,9 +10,17 @@ import '../services/course_todo_service.dart';
 import '../services/exam_storage.dart';
 import '../services/notification_service.dart';
 import '../services/campus_net_service.dart';
+import '../services/home_prefs.dart';
 import '../theme/app_theme.dart';
 
 import 'add_todo_sheet.dart';
+import 'home_new_view.dart';
+import 'settings_page.dart';
+import 'todo_calendar_page.dart';
+import '../providers/grade_provider.dart';
+import '../providers/user_config_provider.dart';
+import '../services/campus/campus_store.dart';
+import '../services/data_wipe.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -246,25 +254,120 @@ class HomePageState extends ConsumerState<HomePage>
     final bg = Theme.of(context).scaffoldBackgroundColor;
     return Scaffold(
       backgroundColor: bg,
-      body: _body(isDark),
+      // 2026-10-16：首页板块显隐变了 → 立即重建（不用手动 listener）
+      body: ValueListenableBuilder<int>(
+        valueListenable: HomePrefs.notifier,
+        builder: (_, __, ___) => _body(isDark),
+      ),
+    );
+  }
+
+  /// 打开**设置页**（2026-10-17：右上角原「首页个性化」按钮改为设置页入口）。
+  ///
+  /// 「首页个性化」的入口已移到设置页里 —— 否则那个页面就再也进不去了。
+  /// 设置页需要的几个回调在这里就地实现（与用户页同一套动作）。
+  Future<void> _openSettings() async {
+    final cfg = ref.read(userConfigProvider);
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SettingsPage(
+          onLogout: _logoutAll,
+          themeMode: cfg.themeMode,
+          onThemeChanged: _setThemeMode,
+          primaryColor: AppTheme.primaryNotifier,
+          onPrimaryChanged: _setPrimaryColor,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    AppTheme.setMode(mode);
+    final cfg = ref.read(userConfigProvider);
+    await ref.read(userConfigProvider.notifier).update(
+          cfg.copyWith(themeMode: mode),
+        );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setPrimaryColor(Color c) async {
+    AppTheme.setPrimary(c);
+    final cfg = ref.read(userConfigProvider);
+    await ref.read(userConfigProvider.notifier).update(
+          cfg.copyWith(primaryColor: c.value),
+        );
+    if (mounted) setState(() {});
+  }
+
+  /// 退出登录：清会话 + 清本地数据 + 重置内存态 provider（与用户页同一套）。
+  Future<void> _logoutAll() async {
+    LocalCampusService.clear();
+    await DataWipe.wipeAll();
+    if (!mounted) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    container.invalidate(courseProvider);
+    container.invalidate(gradeProvider);
+    container.invalidate(userConfigProvider);
+  }
+
+  /// 首页 AppBar：设置页入口 + 新版/旧版切换（两版首页共用同一个顶栏）。
+  AppBar _homeAppBar() {
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      // M3 的 AppBar 在内容滚到其下方（scrolledUnder）时会自动叠加
+      // surfaceTint + 阴影，表现为顶部突现一块固定的"导航栏"色块，故禁用。
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 0,
+      automaticallyImplyLeading: false,
+      actions: [
+        // 2026-10-18：右上角待办日历入口（月历热力图 + 当天待办清单）。
+        IconButton(
+          onPressed: () => TodoCalendarPage.open(context),
+          tooltip: '待办日历',
+          icon: Icon(Icons.calendar_month_outlined,
+              size: 21, color: context.textTertiary),
+        ),
+        IconButton(
+          onPressed: _openSettings,
+          tooltip: '设置',
+          icon: Icon(Icons.settings_outlined,
+              size: 21, color: context.textTertiary),
+        ),
+        IconButton(
+          onPressed: () => HomePrefs.setNewHome(!HomePrefs.newHome),
+          tooltip: HomePrefs.newHome ? '切换到旧版首页' : '切换到新版首页',
+          icon: Icon(
+            HomePrefs.newHome
+                ? Icons.view_agenda_outlined
+                : Icons.swap_horiz_rounded,
+            size: 22,
+            color: context.textTertiary,
+          ),
+        ),
+        const SizedBox(width: 4),
+      ],
     );
   }
 
   Widget _body(bool isDark) {
+    // 2026-10-17：可切换到**新版首页**（原逻辑整段保留，两版互不影响）。
+    if (HomePrefs.newHome) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        appBar: _homeAppBar(),
+        body: const HomeNewView(),
+      );
+    }
     final weekStart = _selectedDate.subtract(Duration(days: _selectedDate.weekday - 1));
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        // M3 的 AppBar 在内容滚到其下方（scrolledUnder）时会自动叠加
-        // surfaceTint + 阴影，表现为顶部突现一块固定的"导航栏"色块，故禁用。
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        automaticallyImplyLeading: false,
-      ),
+      appBar: _homeAppBar(),
       body: CustomScrollView(
         slivers: [
+          // ---------------- 信息栏（首页个性化：可隐藏）----------------
+          if (HomePrefs.showHeader)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
@@ -342,6 +445,8 @@ class HomePageState extends ConsumerState<HomePage>
               ),
             ),
           ),
+          // ---------------- 周次选择栏（首页个性化：可隐藏）----------------
+          if (HomePrefs.showWeekStrip)
           SliverToBoxAdapter(
             child: Padding(
               // v1.5.1 压缩：原 vertical:20，让「待办事项」上移
@@ -439,6 +544,8 @@ class HomePageState extends ConsumerState<HomePage>
           ),
         ),
           ),
+          // ---------------- 今日待办小卡片 · 今日概览（首页个性化：可隐藏）----------------
+          if (HomePrefs.showOverview)
           SliverToBoxAdapter(
 child: HomeTodayOverview(
               key: _kOverview,
@@ -450,6 +557,8 @@ child: HomeTodayOverview(
               nextExam: _nextExam,
             ),
           ),
+          // ---------------- 待办事项：标题栏（含 + 号）（首页个性化：可隐藏）----------------
+          if (HomePrefs.showTodos)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
@@ -478,6 +587,8 @@ child: HomeTodayOverview(
               ),
             ),
           ),
+          // ---------------- 待办事项：列表本体（首页个性化：可隐藏）----------------
+          if (HomePrefs.showTodos)
           if (_todos.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,

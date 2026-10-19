@@ -50,7 +50,6 @@ class StorageService {
   static const String _kThemeMode = 'user_theme_mode';
   static const String _kPrimaryColor = 'user_primary_color'; // v1.8.0 自定义主题色
   static const String _kStudentName = 'student_name'; // 学生姓名缓存（「我的」页展示）
-  static const String _kDisclaimerDismissed = 'disclaimer_dismissed';
   static const String _kJwglNoticeDismissed = 'jwgl_notice_dismissed';
   static const String _kHiddenServices = 'hidden_services'; // v1.9.0 服务页显示/隐藏
 
@@ -151,18 +150,8 @@ class StorageService {
     return prefs.getString(_kStudentName) ?? '';
   }
 
-  // ---- 免责声明与公告弹窗「不再提醒」持久化 ----
-
-  static Future<bool> loadDisclaimerDismissed() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_kDisclaimerDismissed) ?? false;
-  }
-
-  static Future<void> saveDisclaimerDismissed(bool dismissed) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kDisclaimerDismissed, dismissed);
-  }
-
+  // ---- 公告弹窗「不再提醒」持久化 ----
+  // 2026-10-18：免责声明弹窗已按用户要求整段删除，这两个读写方法一并移除。
 
   /// 教务系统时段提示（温馨提示）是否已被用户选择「不再提醒」。
   static Future<bool> loadJwglNoticeDismissed() async {
@@ -313,6 +302,22 @@ class StorageService {
   static Future<void> saveDroppedCourseKeys(List<String> keys) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_kDroppedCourseKeys, keys);
+  }
+
+  // ---------------- 已确认过的冲突组（2026-10-16）----------------
+  // 「进课表页自动提示一次教务内部冲突」用过的去重表：用户处理过的冲突组
+  // （**包括选「都保留」**——那也是一种明确处理）记在这里，之后进页面不再自动弹。
+  // 否则「都保留」不删课 = 冲突还在 → 每次进课表页都再弹一遍，很打扰。
+  static const String _kAckedConflicts = 'acked_conflict_groups';
+
+  static Future<List<String>> loadAcknowledgedConflicts() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kAckedConflicts) ?? const <String>[];
+  }
+
+  static Future<void> saveAcknowledgedConflicts(List<String> keys) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kAckedConflicts, keys);
   }
 
   static Future<String> loadMessageStyle() async {

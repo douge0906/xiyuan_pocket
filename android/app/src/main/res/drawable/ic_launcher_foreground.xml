@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标前景层（108dp 视口，内容收在中心 66dp 安全区内）。
+  图形与 mipmap 里的 PNG 同源：三格 + 右向箭头，缩放比例 0.72、水平偏移 0.36。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 左上：亮紫格 -->
+    <path
+        android:fillColor="#D98B5CF6"
+        android:pathData="M32.04,24.48 H42.12 A7.2,7.2 0 0 1 49.32,31.68 V41.76 A7.2,7.2 0 0 1 42.12,48.96 H32.04 A7.2,7.2 0 0 1 24.84,41.76 V31.68 A7.2,7.2 0 0 1 32.04,24.48 Z" />
+
+    <!-- 右上：暗紫格 -->
+    <path
+        android:fillColor="#596D4FD0"
+        android:pathData="M66.6,24.48 H76.68 A7.2,7.2 0 0 1 83.88,31.68 V41.76 A7.2,7.2 0 0 1 76.68,48.96 H66.6 A7.2,7.2 0 0 1 59.4,41.76 V31.68 A7.2,7.2 0 0 1 66.6,24.48 Z" />
+
+    <!-- 左下：暗紫格 -->
+    <path
+        android:fillColor="#596D4FD0"
+        android:pathData="M32.04,59.4 H42.12 A7.2,7.2 0 0 1 49.32,66.6 V76.68 A7.2,7.2 0 0 1 42.12,83.88 H32.04 A7.2,7.2 0 0 1 24.84,76.68 V66.6 A7.2,7.2 0 0 1 32.04,59.4 Z" />
+
+    <!-- 右向箭头：横杆 + 箭头头部，圆角端点与圆角连接 -->
+    <path
+        android:strokeColor="#C4B5FD"
+        android:strokeWidth="6.48"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M60.84,71.28 L81,71.28" />
+    <path
+        android:strokeColor="#C4B5FD"
+        android:strokeWidth="6.48"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M73.08,62.64 L83.16,71.28 L73.08,79.92" />
+</vector>

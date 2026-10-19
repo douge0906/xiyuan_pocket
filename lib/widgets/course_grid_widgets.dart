@@ -549,8 +549,7 @@ class CourseCardWidget extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // v1.6.9：色彩方案只在**渲染期**转换（不改课程数据）——
-    // 方案一 = 课程原色；方案二 = 柔彩（饱和度温柔下压一档，仍是有色的）；
-    // 方案三 = 提饱和压暗。
+    // 方案一 = 课程原色；方案二 / 三 = 提饱和 + 压明度（2026-10-16 按参考图重定的 S/L）。
     final bg = courseColorFor(course.colorValue, CourseStorage.schemeCache);
 
     // 2026-10-13 v1.3.0：圆角 / 内边距 / 块间距 / 不透明度 / 边框（粗细·实虚·虚线密度）
@@ -576,8 +575,6 @@ class CourseCardWidget extends StatelessWidget {
     Widget card = Container(
       width: double.infinity,
       height: double.infinity,
-      padding: EdgeInsets.only(
-          left: pad, right: pad, top: pad, bottom: pad > 1 ? pad - 1 : pad),
       decoration: BoxDecoration(
         color: surface,
         borderRadius: BorderRadius.circular(radius),
@@ -585,42 +582,72 @@ class CourseCardWidget extends StatelessWidget {
             ? Border.all(color: borderColor, width: borderW)
             : null,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.start,
-        children: [
-          Text(
-            course.name,
-            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: fg, height: 1.25),
-            maxLines: 3,
-            overflow: TextOverflow.clip,
-            softWrap: true,
+      // 2026-10-16（用户：「非本周课程 颜色灰白虚度增加 并且打上多道斜线」）：
+      // 非本周课程在底色上再叠一层 **45° 多道斜线**。
+      // 注意结构：斜线画在 **padding 之外 + ClipRRect 裁到圆角内**，
+      // 且用 `painter`（背景层）而不是 foregroundPainter ⇒ 斜线**在文字下面**，
+      // 不会糊住课程名。
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: CustomPaint(
+          painter: dimmed
+              ? _DiagonalHatchPainter(
+                  color: isDark
+                      ? Colors.white.withOpacity(0.10)
+                      : Colors.black.withOpacity(0.07),
+                  spacing: 7,
+                  strokeWidth: 1,
+                )
+              : null,
+          child: Padding(
+            padding: EdgeInsets.only(
+                left: pad,
+                right: pad,
+                top: pad,
+                bottom: pad > 1 ? pad - 1 : pad),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: [
+                Text(
+                  course.name,
+                  style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: fg,
+                      height: 1.25),
+                  maxLines: 3,
+                  overflow: TextOverflow.clip,
+                  softWrap: true,
+                ),
+                if (course.teacher.isNotEmpty &&
+                    CourseStorage.showTeacherOnCardCache)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1.5),
+                    child: Text(
+                      course.teacher,
+                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
+                      maxLines: 2,
+                      overflow: TextOverflow.clip,
+                      softWrap: true,
+                    ),
+                  ),
+                if (course.classroom.isNotEmpty &&
+                    CourseStorage.showClassroomOnCardCache)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1.5),
+                    child: Text(
+                      '@${course.classroom}',
+                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
+                      maxLines: 2,
+                      overflow: TextOverflow.clip,
+                      softWrap: true,
+                    ),
+                  ),
+              ],
+            ),
           ),
-          if (course.teacher.isNotEmpty &&
-              CourseStorage.showTeacherOnCardCache)
-            Padding(
-              padding: const EdgeInsets.only(top: 1.5),
-              child: Text(
-                course.teacher,
-                style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                maxLines: 2,
-                overflow: TextOverflow.clip,
-                softWrap: true,
-              ),
-            ),
-          if (course.classroom.isNotEmpty &&
-              CourseStorage.showClassroomOnCardCache)
-            Padding(
-              padding: const EdgeInsets.only(top: 1.5),
-              child: Text(
-                '@${course.classroom}',
-                style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                maxLines: 2,
-                overflow: TextOverflow.clip,
-                softWrap: true,
-              ),
-            ),
-        ],
+        ),
       ),
     );
 
@@ -647,6 +674,47 @@ class CourseCardWidget extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 非本周课程的斜线纹理画笔（2026-10-16）。
+///
+/// 在课程卡底色之上铺一层等距 **45° 斜线**（左下 → 右上，即 `///` 方向），
+/// 把「非本周课程」和本周课程一眼分开 —— 用户要求「打上多道斜线」。
+///
+/// 只管画线、不管裁剪：调用方在外面套 `ClipRRect(圆角)`，把线裁在卡片圆角内。
+class _DiagonalHatchPainter extends CustomPainter {
+  const _DiagonalHatchPainter({
+    required this.color,
+    this.spacing = 7,
+    this.strokeWidth = 1,
+  });
+
+  final Color color;
+
+  /// 相邻两条斜线的**水平**间距（越小越密）。
+  final double spacing;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.butt
+      ..style = PaintingStyle.stroke;
+    final gap = spacing.clamp(2.0, 40.0);
+    // 起点从 -height 开始，斜线才能把整块（含左上角）铺满。
+    for (double x = -size.height; x < size.width; x += gap) {
+      canvas.drawLine(Offset(x, size.height), Offset(x + size.height, 0), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DiagonalHatchPainter old) =>
+      old.color != color ||
+      old.spacing != spacing ||
+      old.strokeWidth != strokeWidth;
 }
 
 /// 虚线圆角边框画笔（v1.3.0）。

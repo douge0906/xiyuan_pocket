@@ -1,7 +1,8 @@
 name: CI
 
 # 每次 push / PR 自动做两件事：
-#   ① flutter analyze  —— 静态检查（warning 会让 CI 变红，info 不会）
+#   ① flutter analyze  —— 静态检查（**任何 issue 都算失败，包括 info**；
+#                          想放宽要显式加 --no-fatal-infos）
 #   ② flutter test     —— 单元测试
 # 目的：任何贡献者的改动都在干净的机器上先体检一遍，不依赖维护者本地环境。
 on:

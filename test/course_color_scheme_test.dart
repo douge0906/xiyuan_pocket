@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:xiyuan_pocket/models/course_model.dart';
+import 'package:xiyuan_pocket/services/course_storage.dart';
 
 /// 课节色块「色彩方案」、课程自动分色（暖色优先）、非本周「淡灰」的回归测试。
 ///
@@ -27,28 +28,33 @@ void main() {
   });
 
   group('courseColorFor', () {
-    test('方案一 = 原色，不做任何转换', () {
+    test('方案一：色相不变、在调色板上**轻微加深**（2026-10-16 用户：「颜色变深一点」）', () {
       for (final v in coursePalette) {
-        expect(
-          courseColorFor(v, CourseColorScheme.standard).value,
-          v,
-          reason: '方案一必须原样返回调色板颜色',
-        );
+        final base = Color(v);
+        final std = courseColorFor(v, CourseColorScheme.standard);
+        expect(hue(std), closeTo(hue(base), 3.0), reason: '色相必须保住');
+        expect(light(std), lessThan(light(base)), reason: '方案一要比原色深一点');
+        expect(sat(std), greaterThanOrEqualTo(sat(base) - 0.001));
+        // 幅度必须**小于**方案二 / 三，否则三档分不出层次
+        expect(light(std),
+            greaterThan(light(courseColorFor(v, CourseColorScheme.soft))),
+            reason: '方案一应比方案二浅');
+        expect(light(std),
+            greaterThan(light(courseColorFor(v, CourseColorScheme.vivid))),
+            reason: '方案一应比方案三浅');
       }
     });
 
-    test('方案二（柔彩）：色相不变、饱和度下压但**不发白**', () {
+    test('方案二：色相不变、提饱和 + 压明度（2026-10-16 复刻参考图 1）', () {
       for (final v in coursePalette) {
         final base = Color(v);
         final soft = courseColorFor(v, CourseColorScheme.soft);
         expect(hue(soft), closeTo(hue(base), 3.0), reason: '色相必须保住');
-        expect(sat(soft), lessThanOrEqualTo(sat(base) + 0.001));
-        // 🔴 柔彩的命门：饱和度必须有下限。
-        //    上一版把饱和度压到 ×0.40 又提亮 12%，色块变成「发白的灰粉 / 灰蓝」，
-        //    这就是用户说的「色彩方案不对」。钉住下限 = 再也不会退回去。
-        expect(sat(soft), greaterThanOrEqualTo(0.30),
-            reason: '柔彩仍必须是一块有颜色的色块，不能洗成灰白');
-        expect(light(soft), inInclusiveRange(0.84, 0.94));
+        expect(sat(soft), greaterThan(sat(base)), reason: '方案二要更有颜色');
+        expect(light(soft), lessThan(light(base)), reason: '方案二明度略降');
+        // 🔴 命门：无论是哪一档，都不能洗成灰白 —— 灰白是「非本周课程」的样子。
+        expect(sat(soft), greaterThan(0.5),
+            reason: '本周的课必须是一块明确的彩色色块，不能洗成灰白');
       }
     });
 
@@ -80,6 +86,91 @@ void main() {
         expect(b == c, isFalse);
         expect(a == c, isFalse);
       }
+    });
+  });
+
+  group('SchemePreset 整套外观预设（2026-10-16）', () {
+    test('方案一 = 出厂默认（不会把用户手调带跑）', () {
+      final a = SchemePreset.of(CourseColorScheme.standard);
+      final d = CourseStorage.defaultDisplaySettings();
+      expect(a.blockRadius, d['blockRadius']);
+      expect(a.blockPad, d['blockPad']);
+      expect(a.blockMargin, d['blockMargin']);
+      expect(a.blockBorderWidth, d['blockBorderWidth']);
+      expect(a.rowHeight, d['rowHeight']);
+    });
+
+    test('方案二 / 三 必须真的改了外观（否则「换方案」等于没换）', () {
+      final a = SchemePreset.of(CourseColorScheme.standard);
+      for (final s in [CourseColorScheme.soft, CourseColorScheme.vivid]) {
+        final p = SchemePreset.of(s);
+        expect(p.blockRadius, isNot(a.blockRadius), reason: '${s.label} 圆角没变');
+        expect(p.rowHeight, isNot(a.rowHeight), reason: '${s.label} 课节高度没变');
+      }
+    });
+
+    test('圆角方向复刻参考图：图1（方案二）圆、图2（方案三）方', () {
+      final b = SchemePreset.of(CourseColorScheme.soft);
+      final c = SchemePreset.of(CourseColorScheme.vivid);
+      expect(b.blockRadius, greaterThan(c.blockRadius),
+          reason: '方案二（图1）圆角应明显大于方案三（图2）');
+      expect(c.blockMargin, lessThan(b.blockMargin),
+          reason: '方案三（图2）的色块几乎贴满列宽');
+    });
+
+    test('补丁写进显示设置后真的被采纳（不能写了不生效）', () {
+      final p = SchemePreset.of(CourseColorScheme.soft);
+      final s = <String, dynamic>{
+        ...CourseStorage.defaultDisplaySettings(),
+        ...p.toDisplayPatch(),
+      };
+      CourseStorage.applyDisplayToCache(s);
+      expect(CourseStorage.blockRadiusCache, p.blockRadius);
+      expect(CourseStorage.rowHeightCache, p.rowHeight);
+      expect(CourseStorage.blockBorderWidthCache, p.blockBorderWidth);
+      expect(CourseStorage.blockMarginCache, closeTo(p.blockMargin, 1e-9));
+      expect(CourseStorage.otherWeeksDimCache, closeTo(p.otherWeeksDim, 1e-9));
+      expect(CourseStorage.showGridLinesCache, p.showGridLines);
+    });
+
+    test('切换方案：每档各自保存自己那套手动调整，互不干扰', () {
+      // 方案一下把圆角调成 20（= 方案一自己的手动值）
+      var d = <String, dynamic>{
+        ...CourseStorage.defaultDisplaySettings(),
+        'blockRadius': 20.0,
+      };
+      // 切到方案二 → 用方案二的出厂预设（圆角 8），不是 20
+      d = CourseStorage.switchScheme(d, CourseColorScheme.soft);
+      expect(d['scheme'], 'soft');
+      expect(d['blockRadius'],
+          SchemePreset.of(CourseColorScheme.soft).blockRadius);
+      // 在方案二里把圆角调成 3（= 方案二自己的手动值）
+      d = <String, dynamic>{...d, 'blockRadius': 3.0};
+      // 切回方案一 → 回到方案一那套（20）
+      d = CourseStorage.switchScheme(d, CourseColorScheme.standard);
+      expect(d['scheme'], 'standard');
+      expect(d['blockRadius'], 20.0, reason: '方案一的手动值必须还在');
+      // 再切回方案二 → 回到方案二那套（3）
+      d = CourseStorage.switchScheme(d, CourseColorScheme.soft);
+      expect(d['blockRadius'], 3.0, reason: '方案二的手动值必须还在');
+    });
+
+    test('没被动过的方案：切过去用出厂预设', () {
+      var d = CourseStorage.defaultDisplaySettings();
+      d = CourseStorage.switchScheme(d, CourseColorScheme.vivid);
+      final p = SchemePreset.of(CourseColorScheme.vivid);
+      expect(d['blockRadius'], p.blockRadius);
+      expect(d['rowHeight'], p.rowHeight);
+      expect(d['blockMargin'], closeTo(p.blockMargin, 1e-9));
+    });
+
+    test('switchScheme 不会动到配色 / 外观以外的既有键', () {
+      final d0 = <String, dynamic>{
+        ...CourseStorage.defaultDisplaySettings(),
+        'showOtherWeeks': true,
+      };
+      final d1 = CourseStorage.switchScheme(d0, CourseColorScheme.soft);
+      expect(d1['showOtherWeeks'], isTrue);
     });
   });
 
@@ -177,6 +268,17 @@ void main() {
         light(otherWeekGrayFor(c, 0.85, true)),
         lessThan(light(otherWeekGrayFor(c, 0.45, true))),
       );
+    });
+
+    test('滑杆必须真的调得动：浅色模式全量程跨度 ≥ 0.15', () {
+      // 用户报告过「非本周灰滑杆调节基本无效」—— 上一版全量程只走了 0.055
+      // （≈14 个灰阶），肉眼确实看不出来。这里钉住跨度，防再退回去。
+      for (final v in coursePalette) {
+        final lo = light(otherWeekGrayFor(Color(v), 0.45, false));
+        final hi = light(otherWeekGrayFor(Color(v), 0.85, false));
+        expect(hi - lo, greaterThan(0.15),
+            reason: '跨度太小 = 滑杆形同虚设');
+      }
     });
 
     test('两种模式的灰分别落在浅色 / 深色区间', () {

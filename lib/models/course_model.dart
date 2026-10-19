@@ -378,51 +378,48 @@ enum CourseColorScheme {
 }
 
 /// 按方案把课程「主题色」转换成最终底色（同色相调整饱和度 / 亮度）。
+///
+/// 2026-10-16：方案二 / 三 的变换**按参考截图实测的 S/L 重定** ——
+/// 参考色块的 HSL 均值：图1（方案二）S≈0.85 / L≈0.82，图2（方案三）S≈0.89 / L≈0.75，
+/// 而本调色板均值 S≈0.73 / L≈0.90 ⇒ 两个方案都是「提饱和 + 压明度」，
+/// 方案三提得更多、压得更实。
 Color courseColorFor(int colorValue, CourseColorScheme scheme) {
   final base = Color(colorValue);
   switch (scheme) {
     case CourseColorScheme.standard:
-      return base;
+      // 方案一（2026-10-16 用户：「颜色变深一点」）：在**原始调色板**上轻轻加深一档，
+      // 幅度明显小于方案二 / 三 —— 保证一眼仍认得出「这是课程原色」。
+      return _shiftColor(base, satScale: 1.10, darken: 0.08);
     case CourseColorScheme.soft:
-      return _softColor(base);
+      // 方案二（复刻参考图 1）：饱和 ×1.16、明度 ×0.91
+      return _shiftColor(base, satScale: 1.16, darken: 0.09);
     case CourseColorScheme.vivid:
-      // 鲜明：提饱和 + 轻微压暗 → 课程之间更好区分
-      return _shiftColor(base, satScale: 1.50, darken: 0.06);
+      // 方案三（复刻参考图 2）：饱和 ×1.22、明度 ×0.84
+      return _shiftColor(base, satScale: 1.22, darken: 0.16);
   }
 }
 
-/// 柔彩（方案二）—— 用户原话：「柔彩，超级课程表那种色彩」。
-///
-/// 柔彩 != 「把颜色洗淡」：
-///  · **色相完全不动**（粉还是粉、蓝还是蓝，靠色相认课不能丢）；
-///  · 饱和度只温柔地下压一档（×0.72），并且**保底 0.40** ——
-///    这一条是上一版最大的毛病所在：上一版压到 ×0.40 又提亮 12%，
-///    结果色块变成「发白的灰粉 / 灰蓝」，跟「非本周课程」的那片淡灰几乎撞脸；
-///  · 亮度统一往 0.90 轻轻归一（只走 35% 的差距），让整屏颜色看着更协调，
-///    但**不给本来就浅的颜色再加白**。
-///
-/// 一句话：柔彩 = 饱和度略降 + 亮度归一 → 仍然是明确的彩色，只是不刺眼。
-Color _softColor(Color c) {
-  final hsl = HSLColor.fromColor(c);
-  final s = (hsl.saturation * 0.72).clamp(0.40, 0.85);
-  final l = (hsl.lightness + (0.90 - hsl.lightness) * 0.35).clamp(0.855, 0.925);
-  return HSLColor.fromAHSL(1, hsl.hue, s, l).toColor();
-}
-
-/// 非本周课程的「淡灰」底色（v1.6.9）：
+/// 非本周课程的「淡灰」底色（v1.6.9；2026-10-16 两轮调整）：
 ///  · 饱和度归零 → 灰；
 ///  · **保留原色明暗差异**（原色深的课灰得更深一点，看得出是哪门课，而不是一团灰）；
-///  · [dim] =「非本周课程颜色」滑杆（0.45~0.85，越大越淡）控制整体灰的深浅。
+///  · [dim] =「非本周课程淡化」滑杆（0.45~0.85，越大越淡）控制整体灰的深浅。
+///
+/// 2026-10-16（第一轮）用户：「颜色灰白虚度增加」→ 整体提亮、更接近纸白；
+/// 2026-10-16（第二轮）用户：「滑杆无法真正调节，或者调节基本无效」「默认再降低一点」：
+///  · 上一版浅色模式在**全量程内只走了 0.055 亮度**（≈14 个灰阶），肉眼几乎看不出变化
+///    ⇒ 现在放大到 **0.185（≈47 个灰阶）**：dim 0.45 → `#CC`、0.85 → `#FA`，一眼看得出；
+///  · 默认档（dim 0.75）从 `#EC` 再调淡到 **`#EF`**；
+///  · 深色模式同样从 0.075 放大到 0.14。
 Color otherWeekGrayFor(Color base, double dim, bool isDark) {
   final src = HSLColor.fromColor(base);
   // 原色亮度 → 灰度偏移：原色越深，灰也越深（浅色调色板亮度约 0.83~0.95）
   final tone = ((0.96 - src.lightness) / 0.22).clamp(0.0, 1.0);
   final fade = ((dim - 0.45) / 0.40).clamp(0.0, 1.0); // 0 = 最明显，1 = 最淡
   final l = isDark
-      // 深色模式：目标灰在 #202020~#3A3A3A（比页面底色略亮，看得出有块）
-      ? 0.235 - 0.075 * fade - tone * 0.05
-      // 浅色模式：目标灰在 #C7C7C7~#E8E8E8（默认档 ≈ #D5~#E3）
-      : 0.875 + 0.075 * fade - tone * 0.17;
+      // 深色模式：目标灰 #29~#4D（比页面底色略亮，看得出有块）
+      ? 0.30 - 0.14 * fade - tone * 0.05
+      // 浅色模式：目标灰 #CC~#FA（默认档 ≈ #EF）
+      : 0.80 + 0.185 * fade - tone * 0.09;
   return HSLColor.fromAHSL(1, 0, 0, l.clamp(0.05, 0.98)).toColor();
 }
 

@@ -37,21 +37,21 @@ class LoadingOverlay extends StatelessWidget {
                   valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               Text(
                 message,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: context.textPrimary,
+                  color: isDark ? Colors.white : AppTheme.textPrimaryLight,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 '已等待 $seconds 秒',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13,
                   color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280),
                 ),
               ),

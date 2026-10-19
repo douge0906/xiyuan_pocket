@@ -170,6 +170,23 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     await CourseStorage.saveDisplaySettings(_display);
   }
 
+  /// 换色彩方案（2026-10-16）：**每种方案各自保存自己那套手动调整** ——
+  /// 切过去用「该方案名下存过的那套」，没存过才用出厂预设；
+  /// 切走时先把当前这套归档到原方案名下。逻辑在 [CourseStorage.switchScheme]。
+  Future<void> _applyScheme(CourseColorScheme s) async {
+    final next = CourseStorage.switchScheme(_display, s);
+    CourseStorage.applyDisplayToCache(next);
+    setState(() {
+      _display = next;
+      _future = Future<Map<String, dynamic>>.value(next);
+    });
+    await CourseStorage.saveDisplaySettings(next);
+    // 桌面小组件的课程色条也要跟着变色（重新下发一次）
+    unawaited(WidgetSyncService.syncTodayCourses());
+    if (!mounted) return;
+    _toast('已套用${s.label}');
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -732,6 +749,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                                   ..remove(k);
                                 await StorageService.saveDroppedCourseKeys(
                                     next);
+                                // 恢复的课可能又是一处冲突 → 让冲突提醒重新对它生效
+                                await StorageService.saveAcknowledgedConflicts(
+                                    const <String>[]);
                                 setModal(() => keys = next);
                                 if (mounted) setState(() => _dropped = next);
                               },
@@ -747,6 +767,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
               TextButton(
                 onPressed: () async {
                   await StorageService.saveDroppedCourseKeys(const <String>[]);
+                  // 同上：恢复后让冲突提醒重新生效
+                  await StorageService
+                      .saveAcknowledgedConflicts(const <String>[]);
                   setModal(() => keys = <String>[]);
                   if (mounted) setState(() => _dropped = const <String>[]);
                 },
@@ -775,7 +798,8 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     return '${p[0]}$teacher · $wd 第${p[3]}-${p[4]}节';
   }
 
-  /// 色彩方案行（v1.6.9）：一排三个色卡，点了立即生效（缓存 + 存储 + 实时预览）。
+  /// 色彩方案行（v1.6.9；2026-10-16 起升级为「整套外观方案」）：
+  /// 一排三个色卡，点了**立即套用该方案的配色 + 外观预设**（圆角 / 课节 / 边框等）。
   ///
   /// 色卡里的小圆点用**同一批示例色**在该方案下的实际颜色 ——
   /// 三套方案并排一眼能比出区别（用户要求：不要只给文字档位名字）。
@@ -822,7 +846,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     // 示例色取自调色板里对比明显的四色（蓝 / 粉 / 绿 / 黄）
     const demo = [0xFFD2E5F8, 0xFFF8D2D7, 0xFFD2F0E5, 0xFFF8F3D2];
     return GestureDetector(
-      onTap: () => _set('scheme', s.name),
+      onTap: () => _applyScheme(s),
       child: Container(
         height: 54,
         decoration: BoxDecoration(
