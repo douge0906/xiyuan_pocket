@@ -48,18 +48,33 @@ class CasClient {
   static const String ok = 'ok';
   static const String badCredential = 'bad_credential';
   static const String captchaFailed = 'captcha_failed';
+  /// 账号被临时锁定 / 尝试次数过多（不能重试，重试只会延长锁定）
+  static const String locked = 'locked';
   static const String networkError = 'network_error';
 
   /// CAS 登录并拿到 TGT。返回 (状态, TGT 或 null, 说明)。
   ///
   /// [maxAttempts] 次内未登录成功即放弃；验证码识别失败会自动换一张重试。
+  // 同一账号 8 秒内只允许发起一次 CAS 登录：自动同步/登录预取会并发调用，
+  // 连续提交会被学校按「登录失败次数」计数，最终把账号锁掉。
+  static String _throttleUser = '';
+  static DateTime _throttleAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   static Future<CasLoginResult> login(
     CampusSession session,
     String username,
     String password, {
     String service = jwglService,
-    int maxAttempts = 12,
+    int maxAttempts = 3,
   }) async {
+    final startedAt = DateTime.now();
+    if (username == _throttleUser &&
+        startedAt.difference(_throttleAt) < const Duration(seconds: 8)) {
+      return const CasLoginResult(
+          networkError, null, '登录操作过于频繁，请等几秒再试');
+    }
+    _throttleUser = username;
+    _throttleAt = startedAt;
     final encrypted = rawRsaEncrypt(password);
     var lastNote = '';
 
@@ -133,8 +148,16 @@ class CasClient {
 
       final data = j['data'];
       final code = data is Map ? (data['code'] ?? '').toString() : '';
+      final msg = data is Map
+          ? '${data['msg'] ?? data['message'] ?? ''}'
+          : '';
       if (code == 'PASSERROR') {
         return const CasLoginResult(badCredential, null, '学号或密码不正确');
+      }
+      // 账号锁定 / 尝试次数过多：立即停止，不再换验证码重试
+      if (_looksLocked(code, msg)) {
+        return const CasLoginResult(locked, null,
+            '账号已被临时锁定，请等 10-15 分钟，或前往统一认证页面登录');
       }
       // CODEFALSE / 其他 → 换验证码重试
       lastNote = code.isEmpty ? '登录未返回票据（$code）' : '验证码错误，重试';
@@ -167,13 +190,23 @@ class CasClient {
     return true;
   }
 
+  /// 是否属于「锁定 / 尝试次数过多」的返回。
+  static bool _looksLocked(String code, String msg) {
+    final s = '${code.toLowerCase()} ${msg.toLowerCase()}';
+    return s.contains('lock') ||
+        msg.contains('锁定') ||
+        msg.contains('次数过多') ||
+        msg.contains('尝试次数') ||
+        msg.contains('频繁');
+  }
+
   /// 一步到位：登录 + 建立子系统会话。
   static Future<CasLoginResult> loginAndSso(
     CampusSession session,
     String username,
     String password, {
     String service = jwglService,
-    int maxAttempts = 12,
+    int maxAttempts = 3,
   }) async {
     final res = await login(session, username, password,
         service: service, maxAttempts: maxAttempts);

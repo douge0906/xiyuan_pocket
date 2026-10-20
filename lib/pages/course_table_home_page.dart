@@ -358,8 +358,12 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     //    这组冲突都算「已经处理过」—— 记下来，之后进课表页不再自动重复提醒。
     await _ackConflicts(groups);
     if (ok != true) {
-      // 「都保留全部」= 我全都要。
-      await _keepEverythingAndRestoreIgnored();
+      // 「都保留全部」只对**本次弹窗里这几组**生效：
+      // 以前这里会调 _keepEverythingAndRestoreIgnored()，它会清空整张忽略名单，
+      // 导致「处理完 A 组后再打开 B 组点确定」把 A 组删掉的课全部恢复
+      // （用户报告：再次点击未选择的冲突课程会重置全部冲突状态）。
+      // 全局恢复仍可在「设置 → 已忽略的冲突课程」里手动做。
+      _toast('已保留本次冲突的课程');
       return;
     }
     // 应用选择：删掉每组里未被选中的；被删的教务课进忽略名单（防同步复活）
@@ -378,9 +382,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       }
     }
     if (toDelete.isEmpty) {
-      // 一门都没删（默认就是「都保留」）→ 与「都保留全部」同一语义：
-      // 顺手把此前忽略名单里的课也恢复回来，否则用户以为全留了、实际还有课被永久过滤。
-      await _keepEverythingAndRestoreIgnored();
+      // 本次一组都没改（都停在「都保留」）→ 不动任何历史忽略记录。
+      // 这里以前也会恢复全部忽略课程，等于把之前的处理结果一起推翻。
+      _toast('已保留本次冲突的课程');
       return;
     }
     await ref
@@ -414,19 +418,6 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// `CourseStorage.dropIgnored()` 静默滤掉，名单不清空它就永远回不来
   /// （2026-10-16 用户报告：刷新后提示了冲突，保留全部却仍少一门）。
   /// 所以这里要把名单清空，再同步一次把这些课带回课表。
-  Future<void> _keepEverythingAndRestoreIgnored() async {
-    final ignored = await StorageService.loadDroppedCourseKeys();
-    if (ignored.isEmpty) {
-      _toast('已保留全部课程');
-      return;
-    }
-    await StorageService.saveDroppedCourseKeys(const <String>[]);
-    if (!mounted) return;
-    _toast('已恢复 ${ignored.length} 门课');
-    // 恢复同步不再弹冲突弹窗 —— 用户刚说了全都保留，别再问一遍（也避免死循环）。
-    await _syncNow(promptConflicts: false);
-  }
-
   /// 单个冲突时段的选项组：课程 radio 列表 + 「都保留」。
   Widget _conflictGroup(
       List<Course> group, int? keep, ValueChanged<int?> onPick) {

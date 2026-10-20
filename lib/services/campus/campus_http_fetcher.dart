@@ -11,6 +11,10 @@ import 'package:http/http.dart' as http;
 /// 约定：
 /// - **首页**抓不到 / 解析不出条目 → 抛本异常（整体失败）；
 /// - **翻页**过程中的失败 → 不抛，保留已经拿到的部分（「有多少取多少」）。
+///
+/// ⚠️ 2026-10-20 审查：本 fetcher 底层（campus_web / httpGet 等）仍有
+/// `catch (_) { return null; }` 的路径会把失败抹成"没有内容"，与本约定
+/// 相悖（已知债务，见审查报告）。
 class CampusFetchException implements Exception {
   final String url;
   final String reason;

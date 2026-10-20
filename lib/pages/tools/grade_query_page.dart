@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -9,6 +11,7 @@ import '../../providers/user_config_provider.dart';
 import '../../providers/grade_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/loading_overlay.dart';
+import '../../widgets/semester_picker.dart';
 import '../../widgets/site_links.dart';
 
 /// 成绩查询（v2.4.5 起与「考试安排」彻底分开，各自独立页面）。
@@ -40,6 +43,9 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
   List<dynamic> _semesters = [];
   /// 缓存的保存时间（ISO8601），用于显示「数据新鲜度」。
   String _cacheSavedAt = '';
+  /// 上次选的学期（跨启动记住；用户要求「退出时是哪个，下次进来还是哪个」）
+  static const String _kSemesterKey = 'grade_selected_semester_v1';
+
   /// 当前选中的学期名（形如 `2025-2026 第1学期`，与教务系统命名一致）
   String _selectedName = '';
 
@@ -70,21 +76,26 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
         if (n.isNotEmpty) names.add(n);
       }
     }
-    if (names.isNotEmpty) return names;
+    // 以「按当前时间推算的最近 8 个学期」为骨架，再把缓存里出现过的更早学期补到末尾。
+    // 原因：只用缓存会让「只修过 1-2 个学期」的同学选不到以前的学期（同学反馈的"缺少学期"）。
+    final merged = <String>[...recentSemesterLabels()];
+    for (final name in names) {
+      if (!merged.contains(name)) merged.add(name);
+    }
+    return merged;
+  }
 
-    final now = DateTime.now();
-    var year = now.month >= 8 ? now.year : now.year - 1;
-    var term = now.month >= 8 ? 1 : 2;
-    for (var i = 0; i < 6; i++) {
-      names.add('$year-${year + 1} 第$term学期');
-      if (term == 2) {
-        year -= 1;
-        term = 1;
-      } else {
-        term = 2;
+  /// 最近一个**有成绩记录**的学期；都没有就退回第一个（最新）。
+  String _firstWithGrades(List<String> names) {
+    for (final name in names) {
+      for (final s in _semesters) {
+        if (s is Map && s['name'] == name) {
+          final list = (s['courses'] as List<dynamic>?) ?? const [];
+          if (list.isNotEmpty) return name;
+        }
       }
     }
-    return names;
+    return names.first;
   }
 
   Map<String, dynamic>? get _selectedSemester {
@@ -102,12 +113,22 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     if (!mounted) return;
       final list = cached.semesters;
     if (list.isEmpty) return;
+    String? saved;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      saved = prefs.getString(_kSemesterKey);
+    } catch (_) {}
     setState(() {
       _semesters = list;
       _cacheSavedAt = cached.savedAt; // 记录缓存时间，供顶部提示
-      // 保留了已有选择就沿用；否则默认最新学期
+      // 保留了已有选择就沿用；否则默认「最近一个**有成绩**的学期」。
+      // 开学初当前学期还没出分，直接停在当前学期会是一页空白（用户要求默认上个学期）。
       final names = _semesterNames();
-      if (!names.contains(_selectedName)) _selectedName = names.first;
+      if (!names.contains(_selectedName)) {
+        _selectedName = (saved != null && names.contains(saved))
+            ? saved
+            : _firstWithGrades(names);
+      }
     });
   }
 
@@ -115,47 +136,17 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     final names = _semesterNames();
     var currentIndex = names.indexOf(_selectedName);
     if (currentIndex < 0) currentIndex = 0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Text('选择学期',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: context.textPrimary)),
-            const SizedBox(height: 4),
-            for (var i = 0; i < names.length; i++)
-              ListTile(
-                dense: true,
-                title: Text(names[i],
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight:
-                          i == currentIndex ? FontWeight.w700 : FontWeight.normal,
-                      color: context.textPrimary,
-                    )),
-                trailing: i == currentIndex
-                    ? const Icon(Icons.check_rounded,
-                        size: 20, color: Color(0xFF3B82F6))
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(i),
-              ),
-            const SizedBox(height: 4),
-          ],
-        ),
-      ),
+    final picked = await showSemesterPicker(
+      context,
+      labels: names,
+      currentIndex: currentIndex,
     );
     if (picked == null || !mounted) return;
     setState(() => _selectedName = names[picked]);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kSemesterKey, _selectedName);
+    } catch (_) {}
   }
 
   @override
@@ -207,9 +198,15 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
               );
       }
       if (!mounted) return;
+      final hasGrades = semesters.any((s) {
+        if (s is! Map) return false;
+        final list = (s['courses'] as List<dynamic>?) ?? const [];
+        return list.isNotEmpty;
+      });
       setState(() {
-        _success = true;
-        _message = (r['message'] as String?) ?? '成绩查询成功';
+        _success = hasGrades;
+        // 一条成绩都没有时不报「查询成功」—— 页面用空态说明即可
+        _message = hasGrades ? ((r['message'] as String?) ?? '成绩查询成功') : null;
         if (semesters.isNotEmpty) {
           _semesters = semesters;
           _cacheSavedAt = ''; // 本次是新查的，不再标「缓存」
@@ -546,28 +543,8 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
   }
 
   Widget _emptyState(bool isDark, IconData icon, String text) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 34, color: Colors.grey.shade400),
-          const SizedBox(height: 8),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: isDark ? Colors.grey.shade400 : const Color(0xFF9CA3AF),
-            ),
-          ),
-        ],
-      ),
-    );
+    // 空态统一走共享组件（2026-10-20）
+    return EmptyState(icon: icon, message: text);
   }
 
 }

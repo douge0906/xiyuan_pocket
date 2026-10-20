@@ -34,9 +34,10 @@ class CampusSession {
   final HttpClient _client;
   final Map<String, String> cookies = {};
 
-  /// 单次请求的**总超时**：包括连接、发送、读响应体。
-  /// ⚠️ 必须显式设：`HttpClient` 只提供连接超时，若服务器接了连接却不回数据，
-  /// 不设总超时会让界面**无限期卡住**。
+  /// **单跳**超时：每一跳（连接 / 发送 / 读响应体）各自计时，互不累加。
+  /// ⚠️ 2026-10-20 审查：注释原名不副实 —— 重定向链最坏 8 跳 × 25s ≈ 200s，
+  ///    不是"总超时"（已知债务，见审查报告）。另：`HttpClient` 只提供连接超时，
+  ///    若服务器接了连接却不回数据，不设超时会让界面**无限期卡住**。
   final Duration timeout;
 
   CampusSession({

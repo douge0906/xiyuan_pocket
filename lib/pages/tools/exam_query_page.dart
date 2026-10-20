@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -9,6 +10,7 @@ import '../../services/exam_storage.dart';
 import '../../providers/user_config_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/loading_overlay.dart';
+import '../../widgets/semester_picker.dart';
 import '../../widgets/site_links.dart';
 
 /// 考试安排（v2.4.5 起与「成绩查询」彻底分开，各自独立页面）。
@@ -74,7 +76,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     var year = now.month >= 8 ? now.year : now.year - 1;
     var term = now.month >= 8 ? 3 : 12; // 8 月及以后 = 本学年第一学期
     final list = <({String xnm, String xqm, String label})>[];
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 8; i++) {
       list.add((
         xnm: '$year',
         xqm: '$term',
@@ -103,45 +105,10 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     for (var i = 0; i < options.length; i++) {
       if (options[i].xnm == _xnm && options[i].xqm == _xqm) currentIndex = i;
     }
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Text('选择学期',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: context.textPrimary)),
-            const SizedBox(height: 4),
-            for (var i = 0; i < options.length; i++)
-              ListTile(
-                dense: true,
-                title: Text(options[i].label,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: i == currentIndex
-                          ? FontWeight.w700
-                          : FontWeight.normal,
-                      color: context.textPrimary,
-                    )),
-                trailing: i == currentIndex
-                    ? const Icon(Icons.check_rounded,
-                        size: 20, color: Color(0xFF3B82F6))
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(i),
-              ),
-            const SizedBox(height: 4),
-          ],
-        ),
-      ),
+    final picked = await showSemesterPicker(
+      context,
+      labels: options.map((o) => o.label).toList(),
+      currentIndex: currentIndex,
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -474,28 +441,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   }
 
   Widget _emptyState(bool isDark, IconData icon, String text) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 34, color: Colors.grey.shade400),
-          const SizedBox(height: 8),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: isDark ? Colors.grey.shade400 : const Color(0xFF9CA3AF),
-            ),
-          ),
-        ],
-      ),
-    );
+    return EmptyState(icon: icon, message: text);
   }
 
 }

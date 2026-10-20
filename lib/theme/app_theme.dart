@@ -253,6 +253,14 @@ class AppTheme {
       scaffoldBackgroundColor: isDark
           ? const Color(0xFF121212)
           : (backgroundNotifier.value ?? backgroundColor),
+      // 2026-10-20：选择类弹窗统一纯白底（M3 默认会叠一层 surfaceTint，看起来发灰）
+      dialogTheme: DialogTheme(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
       appBarTheme: AppBarTheme(
         centerTitle: true,
         elevation: 0,

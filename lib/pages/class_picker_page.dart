@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/state_views.dart';
 
 import '../models/course_model.dart';
 import '../services/api_service.dart';
@@ -388,17 +389,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
         ]));
     }
     if (_error != null) {
-      return Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.cloud_off_rounded, size: 42, color: subColor),
-        const SizedBox(height: 12),
-        Text(_error!, style: TextStyle(fontSize: 13.5, color: subColor)),
-        const SizedBox(height: 14),
-        OutlinedButton.icon(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh_rounded, size: 17),
-            label: const Text('重试')),
-      ]));
+      return ErrorState(message: _error!, onRetry: _load);
     }
     if (_shown.isEmpty) {
       return Center(

@@ -167,6 +167,21 @@ class NavPrefs {
     await _persist();
   }
 
+
+  /// 一次性设置可见页面（极简模式首次选择用）。
+  ///
+  /// 逐个 [setHidden] 会连续发 4 次通知、重排 4 次导航；这里合并成一次。
+  static Future<void> setVisiblePages(Set<NavPage> visible) async {
+    final hidden = kCustomizableNavPages
+        .where((p) => !visible.contains(p))
+        .toSet();
+    notifier.value = NavLayout(
+      order: layout.order,
+      hidden: Set<NavPage>.unmodifiable(hidden),
+    );
+    await _persist();
+  }
+
   /// 恢复出厂布局（全部显示 + 默认顺序）。
   static Future<void> reset() async {
     notifier.value = NavLayout.initial;

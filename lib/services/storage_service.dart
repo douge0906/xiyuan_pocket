@@ -87,7 +87,8 @@ class StorageService {
           password = legacy;
         }
       }
-      // 清除可能残留的明文密码，杜绝双重存储
+      // 清除可能残留的明文密码，杜绝双重存储（仅 remember=true 分支内执行；
+      // 关掉"记住密码"时历史明文残留不会被清掉 —— 已知缺口，见审查报告）
       await prefs.remove(_kPassword);
       await prefs.remove(_kOldPassword);
     }

@@ -1,12 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/user_config_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/textbook_storage.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/semester_picker.dart';
 
 /// 我的教材。
 ///
@@ -59,7 +61,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
     var year = now.month >= 8 ? now.year : now.year - 1;
     var term = now.month >= 8 ? 3 : 12; // 8 月及以后 = 本学年第一学期
     final list = <({String xnm, String xqm, String label})>[];
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 8; i++) {
       list.add((
         xnm: '$year',
         xqm: '$term',
@@ -187,47 +189,10 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
     for (var i = 0; i < options.length; i++) {
       if (options[i].xnm == _xnm && options[i].xqm == _xqm) currentIndex = i;
     }
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final picked = await showModalBottomSheet<int>(
-      context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Text('选择学期',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: context.textPrimary)),
-            const SizedBox(height: 4),
-            for (var i = 0; i < options.length; i++)
-              ListTile(
-                dense: true,
-                title: Text(options[i].label,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: i == currentIndex
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: i == currentIndex
-                          ? AppTheme.primaryColor
-                          : context.textPrimary,
-                    )),
-                trailing: i == currentIndex
-                    ? Icon(Icons.check_rounded,
-                        size: 18, color: AppTheme.primaryColor)
-                    : null,
-                onTap: () => Navigator.pop(ctx, i),
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+    final picked = await showSemesterPicker(
+      context,
+      labels: options.map((o) => o.label).toList(),
+      currentIndex: currentIndex,
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -606,36 +571,12 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   }
 
   Widget _emptyState(bool isDark) {
-    final muted = isDark ? Colors.grey.shade400 : const Color(0xFF9CA3AF);
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.menu_book_rounded, size: 44, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
-          Text(
-            '暂无教材',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: context.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _semester == null
-                ? '点右上角刷新获取本学期教材'
-                : '$_semester 暂无教材预订信息',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, height: 1.6, color: muted),
-          ),
-        ],
-      ),
+    return EmptyState(
+      icon: Icons.menu_book_rounded,
+      message: '暂无教材',
+      hint: _semester == null
+          ? '点右上角刷新获取本学期教材'
+          : '$_semester 暂无教材预订信息',
     );
   }
 

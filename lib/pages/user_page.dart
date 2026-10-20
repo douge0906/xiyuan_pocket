@@ -2,14 +2,18 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/storage_service.dart';
+import '../services/nav_prefs.dart';
+import '../services/campus/cas_diagnostics.dart';
 import '../services/api_service.dart';
 import '../services/course_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'user/user_cards.dart';
 import 'settings_page.dart';
 import '../services/data_wipe.dart';
+import '../services/login_prefetch_service.dart';
 import '../services/widget_sync_service.dart';
 import 'widget_settings_page.dart';
 import '../providers/course_provider.dart';
@@ -65,14 +69,59 @@ class _UserPageState extends State<UserPage> {
   /// 是否已登录 = 本机是否存了统一认证账号
   bool get _loggedIn => _config.username.trim().isNotEmpty;
 
+  // ---------------- 极简模式 / 登录失败 ----------------
+
+  /// 极简模式 = 首页 / 消息 / 服务三页都隐藏，只留课表 + 我的。
+  bool get _minimalMode {
+    final hidden = NavPrefs.layout.hidden;
+    return hidden.contains(NavPage.home) &&
+        hidden.contains(NavPage.message) &&
+        hidden.contains(NavPage.service);
+  }
+
+  Future<void> _setMinimalMode(bool value) async {
+    if (value) {
+      await NavPrefs.setVisiblePages({NavPage.course});
+    } else {
+      await NavPrefs.setVisiblePages({
+        NavPage.home,
+        NavPage.message,
+        NavPage.course,
+        NavPage.service,
+      });
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _onNavPrefsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 连续登录失败次数（跨启动保留）。
+  int _loginFails = 0;
+  static const String _kLoginFails = 'login_fail_count_v1';
+
+  Future<void> _saveLoginFails(int value) async {
+    _loginFails = value;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kLoginFails, value);
+    } catch (_) {
+      // 记不住就算了，不影响登录
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    // 设置页改了导航（隐藏/排序）→ 本页开关状态跟着变
+    NavPrefs.notifier.addListener(_onNavPrefsChanged);
     _load();
   }
 
   @override
   void dispose() {
+    NavPrefs.notifier.removeListener(_onNavPrefsChanged);
     _usernameCtl.dispose();
     _passwordCtl.dispose();
     super.dispose();
@@ -84,8 +133,14 @@ class _UserPageState extends State<UserPage> {
     final widgetInstalled = await WidgetSyncService.isWidgetInstalled();
     // 版本号从 APK 里读（值由 pubspec.yaml 的 version 编译进来），不手写
     final info = await PackageInfo.fromPlatform();
+    int fails = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      fails = prefs.getInt(_kLoginFails) ?? 0;
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
+      _loginFails = fails;
       _appVersion = info.version;
       _config = config;
       _usernameCtl.text = config.username;
@@ -97,6 +152,92 @@ class _UserPageState extends State<UserPage> {
     if (config.username.trim().isNotEmpty) {
       _ensureStudentName();
     }
+  }
+
+  /// 连续 3 次失败：给出可执行的出路（浏览器登录 / 连接诊断 / 等待解锁）。
+  Future<void> _showLoginHelp() async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('连续 3 次登录失败', style: TextStyle(fontSize: 16)),
+        content: const Text(
+          '可能是密码错误、验证码识别失败，或账号已被临时锁定。\n'
+          '建议先用浏览器打开统一认证页面确认能否登录；'
+          '如果那边也提示错误，请等 10-15 分钟再试。',
+          style: TextStyle(fontSize: 13, height: 1.6),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('later'),
+            child: const Text('稍后再试'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('diag'),
+            child: const Text('连接诊断'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('browser'),
+            child: const Text('打开统一认证页面'),
+          ),
+        ],
+      ),
+    );
+    if (action == 'browser') {
+      await launchUrl(
+        Uri.parse('https://wxcas.cwxu.edu.cn/lyuapServer/login'),
+        mode: LaunchMode.externalApplication,
+      );
+    } else if (action == 'diag') {
+      await _showDiagnostics();
+    }
+  }
+
+  /// 诊断「App 连不上、浏览器却正常」到底卡在哪一步。
+  Future<void> _showDiagnostics() async {
+    final probes = await CasDiagnostics.run();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('连接诊断', style: TextStyle(fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final p in probes)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      p.ok ? Icons.check_circle_outline : Icons.error_outline,
+                      size: 16,
+                      color: p.ok ? const Color(0xFF0F6E56) : Colors.redAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('${p.label}：${p.detail}',
+                          style: const TextStyle(fontSize: 12.5, height: 1.5)),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 8),
+            const Text(
+              '登录页通、验证码接口不通 → 多半是学校对接口做了限制；\n两者都不通 → 网络或校园网限制。',
+              style: TextStyle(fontSize: 11.5, height: 1.6, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ------------------------------------------------------------ 登录
@@ -139,13 +280,21 @@ class _UserPageState extends State<UserPage> {
       // ④ 登录成功 = 顺手把课表同步一次（开源版已取消课表页的「教务导入」按钮，
       //     这一步接管了它）。静默：登录动画不该因为教务慢而卡住；
       //     同步失败也不会动已有课表，用户随时能用课表页的刷新键手动重来。
-      unawaited(CourseSyncService.sync(container));
+      // 登录成功 → 失败计数清零
+      if (_loginFails != 0) await _saveLoginFails(0);
+      // 课表同步与预取共用同一个教务会话（含 csrftoken），必须串行：
+      // 先课表，完成后再拉成绩 / 考试 / 教材，避免并发互相顶掉会话。
+      unawaited(CourseSyncService.sync(container)
+          .whenComplete(() => LoginPrefetchService.run(container)));
     } catch (e) {
       if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '').trim();
       setState(() {
         _loggingIn = false;
-        _loginError = e.toString().replaceFirst('Exception: ', '').trim();
+        _loginError = message;
       });
+      await _saveLoginFails(_loginFails + 1);
+      if (_loginFails >= 3 && mounted) await _showLoginHelp();
     }
   }
 
@@ -520,23 +669,40 @@ class _UserPageState extends State<UserPage> {
                   const SizedBox(height: 8),
                   _sectionTitle('主题色'),
                   _card(
-                    child: InkWell(
-                      onTap: _openSettings,
-                      child: _listTile(
-                        icon: Icons.dark_mode_rounded,
-                        title: '主题',
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(_themeLabel,
-                                style: TextStyle(
-                                    fontSize: 13, color: Colors.grey.shade500)),
-                            const SizedBox(width: 4),
-                            const Icon(Icons.chevron_right,
-                                color: Color(0xFF9CA3AF)),
-                          ],
+                    child: Column(
+                      children: [
+                        InkWell(
+                          onTap: _openSettings,
+                          child: _listTile(
+                            icon: Icons.dark_mode_rounded,
+                            title: '主题',
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_themeLabel,
+                                    style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade500)),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.chevron_right,
+                                    color: Color(0xFF9CA3AF)),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                        _divider(),
+                        InkWell(
+                          onTap: () => _setMinimalMode(!_minimalMode),
+                          child: _listTile(
+                            icon: Icons.visibility_off_outlined,
+                            title: '极简模式',
+                            trailing: Switch(
+                              value: _minimalMode,
+                              onChanged: _setMinimalMode,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 8),

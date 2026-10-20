@@ -17,7 +17,9 @@ final RouteObserver<ModalRoute> routeObserver = RouteObserver<ModalRoute>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // v1.4.0 全局错误上报：必须在 runApp 之前安装，才能捕获启动期异常。
+  // 本地通知初始化（时区数据库 / 通知渠道）。
+  // ⚠️ 2026-10-20 审查：原注释声称"v1.4.0 全局错误上报"，但全库没有任何
+  // 错误处理器（FlutterError.onError / runZonedGuarded 均无）——已改为实话。
   await NotificationService.init();
   // 开源版：首次启动把**内置的爬取快照**写进本地缓存 → 消息页首次打开秒出内容。
   // 只在首次运行写一次，之后照常走「缓存 + 刷新」流程。
@@ -101,7 +103,6 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
     // v2.2.13：从后台回到前台时刷新桌面小组件（跨天/课程变更场景）
     if (state == AppLifecycleState.resumed) {
       WidgetSyncService.syncTodayCourses();
-      // v1.4.0：回到前台时补报离线期间积压的错误
     }
   }
 

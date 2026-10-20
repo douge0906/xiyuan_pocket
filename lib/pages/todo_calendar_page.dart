@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/todo.dart';
+import '../models/course_model.dart';
 import '../repositories/todo_repository.dart';
+import '../services/course_storage.dart';
 import '../theme/app_theme.dart';
 
 /// 待办日历（2026-10-18 新增）。
@@ -38,6 +40,8 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
   late DateTime _month;
   late DateTime _selected;
   List<Todo> _all = const <Todo>[];
+  List<Course> _courses = const <Course>[];
+  DateTime? _semesterStart;
   bool _loading = true;
 
   @override
@@ -51,9 +55,13 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
 
   Future<void> _load() async {
     final all = await TodoRepository.instance.getAll();
+    final courses = await CourseStorage.loadCourses();
+    final start = await CourseStorage.loadSemesterStart();
     if (!mounted) return;
     setState(() {
       _all = all;
+      _courses = courses;
+      _semesterStart = start;
       _loading = false;
     });
   }
@@ -85,6 +93,39 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
     return map;
   }
 
+  /// 每一天的**课程节数**（与待办联动展示，2026-10-20）。
+  ///
+  /// 周次用课表自己的开学日算，和课表页保持同一套（CourseStorage.teachingWeek）。
+  Map<String, int> get _courseCounts {
+    final start = _semesterStart;
+    if (start == null || _courses.isEmpty) return const <String, int>{};
+    final first = DateTime(_month.year, _month.month, 1);
+    final last = DateTime(_month.year, _month.month + 1, 0);
+    final map = <String, int>{};
+    for (var d = first;
+        !d.isAfter(last);
+        d = DateTime(d.year, d.month, d.day + 1)) {
+      final week = CourseStorage.teachingWeek(d, start);
+      var n = 0;
+      for (final c in _courses) {
+        if (c.occursOn(d.weekday, week)) n++;
+      }
+      if (n > 0) map[_key(d)] = n;
+    }
+    return map;
+  }
+
+  List<String> _courseNamesOf(DateTime day) {
+    final start = _semesterStart;
+    if (start == null) return const <String>[];
+    final week = CourseStorage.teachingWeek(day, start);
+    final names = <String>[];
+    for (final c in _courses) {
+      if (c.occursOn(day.weekday, week)) names.add(c.name);
+    }
+    return names;
+  }
+
   List<Todo> _todosOf(DateTime day) {
     final list = _all.where((t) => t.occursOn(day)).toList()
       ..sort((a, b) {
@@ -110,6 +151,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
   @override
   Widget build(BuildContext context) {
     final counts = _counts;
+    final courseCounts = _courseCounts;
     final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
     final leading = DateTime(_month.year, _month.month, 1).weekday - 1;
     final today = DateTime.now();
@@ -119,7 +161,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
       cells.add(const SizedBox.shrink());
     }
     for (var day = 1; day <= daysInMonth; day++) {
-      cells.add(_dayCell(DateTime(_month.year, _month.month, day), today, counts));
+      cells.add(_dayCell(DateTime(_month.year, _month.month, day), today, counts, courseCounts));
     }
     while (cells.length % 7 != 0) {
       cells.add(const SizedBox.shrink());
@@ -138,6 +180,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
     }
 
     final dayTodos = _todosOf(_selected);
+    final courseNames = _courseNamesOf(_selected);
 
     return Scaffold(
       backgroundColor: _isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC),
@@ -215,7 +258,17 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                             ),
                         ],
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
+                      // 图例：说清两种数字各代表什么
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _legendDot(const Color(0xFFA32D2D), '待办'),
+                          const SizedBox(width: 14),
+                          _legendDot(const Color(0xFF3B82F6), '课程'),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
                       ...rows,
                     ],
                   ),
@@ -245,11 +298,23 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                           ),
                           const Spacer(),
                           Text(
-                            '${dayTodos.length} 条',
+                            '${dayTodos.length} 条待办 · ${courseNames.length} 节课',
                             style: TextStyle(fontSize: 12, color: _faint),
                           ),
                         ],
                       ),
+                      if (courseNames.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '课程：${courseNames.join(' · ')}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 12,
+                              height: 1.5,
+                              color: const Color(0xFF3B82F6)),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       if (dayTodos.isEmpty)
                         Padding(
@@ -267,14 +332,34 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
     );
   }
 
-  Widget _dayCell(DateTime day, DateTime today, Map<String, int> counts) {
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label,
+            style: TextStyle(fontSize: 10.5, color: _faint)),
+      ],
+    );
+  }
+
+  Widget _dayCell(DateTime day, DateTime today, Map<String, int> counts,
+      Map<String, int> courseCounts) {
     final n = counts[_key(day)] ?? 0;
+    final c = courseCounts[_key(day)] ?? 0;
     final level = n == 0 ? 0 : (n >= 4 ? 4 : n);
     final bg = _heat[level];
     final selected = _key(day) == _key(_selected);
     final isToday = _key(day) == _key(today);
     // 深色格子（4+）改用白字，保证对比度。
     final fg = level >= 3 ? Colors.white : _text;
+    final todoFg = level >= 3 ? Colors.white : const Color(0xFFA32D2D);
+    final courseFg = level >= 3 ? Colors.white70 : const Color(0xFF3B82F6);
 
     return GestureDetector(
       onTap: () => setState(() => _selected = day),
@@ -282,7 +367,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
       child: Padding(
         padding: const EdgeInsets.all(2),
         child: Container(
-          height: 40,
+          height: 46,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: bg,
@@ -300,20 +385,29 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
               Text(
                 '${day.day}',
                 style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isToday || selected ? FontWeight.w600 : FontWeight.w400,
+                  fontSize: 12.5,
+                  height: 1.1,
+                  fontWeight:
+                      isToday || selected ? FontWeight.w600 : FontWeight.w400,
                   color: fg,
                 ),
               ),
-              if (n > 0)
-                Text(
-                  '$n',
-                  style: TextStyle(
-                    fontSize: 9,
-                    height: 1,
-                    color: level >= 3 ? Colors.white : const Color(0xFFA32D2D),
-                  ),
-                ),
+              const SizedBox(height: 2),
+              // 同一个格子里两个数：左边红=待办，右边蓝=课程（图例在上方）
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (n > 0)
+                    Text('$n',
+                        style: TextStyle(
+                            fontSize: 9, height: 1, color: todoFg)),
+                  if (n > 0 && c > 0) const SizedBox(width: 4),
+                  if (c > 0)
+                    Text('$c',
+                        style: TextStyle(
+                            fontSize: 9, height: 1, color: courseFg)),
+                ],
+              ),
             ],
           ),
         ),

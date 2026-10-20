@@ -7,7 +7,10 @@ import '../message_archive.dart';
 import '../message_source.dart';
 import '../storage_service.dart';
 
-/// 🔴 **所有消息源共用的唯一一套加载机制。**
+/// 🔴 **消息源的列表加载机制基类**（档案读写 / 合并 / 截断 / 串行锁 / 四种 FetchMode 调度）。
+///
+/// ⚠️ 2026-10-20 审查：仅列表加载收编在基类；详情抓取（fetchDetail）由各源
+/// 各自实现，目前有两份 95% 相同的副本（jwc_source / campus_source）—— 已知债务。
 ///
 /// ## 为什么要有这个基类
 /// 重构前每个消息源各自实现一遍加载：教务处一套、校园资讯栏目一套。

@@ -291,7 +291,10 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
 
 // ---------------- 居中弹窗 ----------------
 
-/// 弹窗外壳：标题 + 右上角 ✕ + 内容。**所有弹窗都走它，保证长得一样。**
+/// 弹窗外壳：标题 + 右上角 ✕ + 内容。**本页的弹窗走它，保证长得一样。**
+///
+/// ⚠️ 2026-10-20 审查：频道选择器（channel_picker_dialog）另有同款外壳，
+/// 并未复用本组件 —— 已知重复，见审查报告。
 class _DialogShell extends StatelessWidget {
   final String title;
   final String? desc;

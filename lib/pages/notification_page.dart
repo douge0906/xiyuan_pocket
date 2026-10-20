@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/state_views.dart';
 
 import '../models/message.dart';
 import '../services/message_channel_service.dart';
@@ -536,102 +537,28 @@ class _NotificationPageState extends State<NotificationPage>
 
   Widget _channelEmpty(MessageChannel ch, bool isDark,
           {bool searching = false}) =>
-      Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                searching ? Icons.search_off_rounded : Icons.inbox_outlined,
-                size: searching ? 64 : 52,
-                color: isDark ? Colors.grey.shade700 : Colors.grey.shade300,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                searching ? '未找到相关标题' : '暂无${ch.name}内容',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                searching ? '换个关键词试试' : '下拉可刷新',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
-                ),
-              ),
-            ],
-          ),
-        ),
+      EmptyState(
+        icon: searching ? Icons.search_off_rounded : Icons.inbox_outlined,
+        message: searching ? '未找到相关标题' : '暂无${ch.name}内容',
+        hint: searching ? '换个关键词试试' : '下拉可刷新',
       );
 
-  Widget _channelError(MessageChannel ch, String msg, bool isDark) => Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.wifi_off_outlined,
-                  size: 48,
-                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-              const SizedBox(height: 12),
-              Text(
-                msg,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 13.5, color: Colors.grey.shade500),
-              ),
-              const SizedBox(height: 14),
-              ElevatedButton.icon(
-                onPressed: () =>
-                    _repo.load(ch.id, mode: FetchMode.incremental),
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('重新加载'),
-              ),
-            ],
-          ),
-        ),
+  Widget _channelError(MessageChannel ch, String msg, bool isDark) =>
+      ErrorState(
+        message: msg,
+        retryLabel: '重新加载',
+        onRetry: () => _repo.load(ch.id, mode: FetchMode.incremental),
       );
 
   /// 一个栏目都没订阅时的空态 —— 必须显式给出，否则页面只剩一排「＋」。
-  Widget _noChannels(bool isDark) => Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.inbox_outlined,
-                  size: 56,
-                  color: isDark ? Colors.grey.shade700 : Colors.grey.shade300),
-              const SizedBox(height: 14),
-              Text(
-                '还没有订阅任何栏目',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '点右上角「＋」挑选想看的栏目',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  color: isDark ? Colors.grey.shade600 : Colors.grey.shade400,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: _showChannelPicker,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('订阅栏目'),
-              ),
-            ],
-          ),
+  Widget _noChannels(bool isDark) => EmptyState(
+        icon: Icons.inbox_outlined,
+        message: '还没有订阅任何栏目',
+        hint: '点右上角「＋」挑选想看的栏目',
+        action: ElevatedButton.icon(
+          onPressed: _showChannelPicker,
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: const Text('订阅栏目'),
         ),
       );
 
