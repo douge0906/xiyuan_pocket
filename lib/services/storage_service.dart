@@ -251,15 +251,16 @@ class StorageService {
 
   // ---------------- 全局外观：圆角缩放（2026-10-13） ----------------
   //
-  // 设置 → 外观 → 圆角：紧凑 0.7 / 标准 1.0 / 圆润 1.3。
+  // 设置 → 外观 → 圆角：滑杆 0.2（趋近直角）~ 1.6（很圆润）。
   // 启动时读出并 apply 到 AppTheme；改的时候立刻 apply + 存盘。
   static const String _kUiRadiusScale = 'ui_radius_scale';
 
+  /// 没调过 → 用默认（最小，趋近直角）；调过 → 以存盘值为准并夹到合法区间。
   static Future<double> loadUiRadiusScale() async {
     final prefs = await SharedPreferences.getInstance();
     final v = prefs.getDouble(_kUiRadiusScale);
-    if (v == null || v <= 0) return 1.0;
-    return v;
+    if (v == null || v <= 0) return 0.2;
+    return v.clamp(0.2, 1.6);
   }
 
   static Future<void> saveUiRadiusScale(double scale) async {

@@ -81,10 +81,16 @@ class UserInfoCard extends StatelessWidget {
     super.key,
     required this.name,
     required this.studentId,
+    required this.dormText,
+    required this.onDormTap,
   });
 
   final String name;
   final String studentId;
+
+  /// 宿舍显示文本（楼栋 + 房号）；空 = 未填写。
+  final String dormText;
+  final VoidCallback onDormTap;
 
   /// 统一的单行高度 —— 用户页所有行都用这个值，保证框框高度一致。
   static const double rowHeight = 52;
@@ -102,6 +108,8 @@ class UserInfoCard extends StatelessWidget {
           _infoRow(context, Icons.account_circle_outlined, '姓名', name),
           Divider(height: 1, color: context.borderColor),
           _infoRow(context, Icons.badge_outlined, '学号', studentId),
+          Divider(height: 1, color: context.borderColor),
+          _dormRow(context),
         ],
       ),
     );
@@ -128,7 +136,7 @@ class UserInfoCard extends StatelessWidget {
                 display,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
+                textAlign: TextAlign.left,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
@@ -137,6 +145,47 @@ class UserInfoCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 宿舍行：值 + 淡灰 `>`，整行可点。
+  Widget _dormRow(BuildContext context) {
+    final text = dormText.trim().isEmpty ? '未填写' : dormText.trim();
+    return InkWell(
+      onTap: onDormTap,
+      child: SizedBox(
+        height: 64,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: rowPadding),
+          child: Row(
+            children: [
+              Icon(Icons.bed_outlined, size: 20, color: AppTheme.primaryColor),
+              const SizedBox(width: 12),
+              Text('宿舍',
+                  style:
+                      TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+              const Spacer(),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: text == '未填写'
+                        ? Colors.grey.shade400
+                        : context.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
+            ],
+          ),
         ),
       ),
     );

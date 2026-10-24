@@ -11,6 +11,7 @@ import 'services/seed_data.dart';
 import 'services/message_migration.dart';
 import 'services/widget_sync_service.dart';
 import 'theme/app_theme.dart';
+import 'services/campus_net_monitor.dart';
 
 /// 全局路由观察者，用于页面恢复时刷新数据
 final RouteObserver<ModalRoute> routeObserver = RouteObserver<ModalRoute>();
@@ -44,6 +45,8 @@ void main() async {
   ]);
   _setSystemUI(AppTheme.modeNotifier.value);
   AppTheme.modeNotifier.addListener(() => _setSystemUI(AppTheme.modeNotifier.value));
+  // 校园网状态改为全局监控：重连后 60s 内自动更新
+  CampusNetMonitor.instance.start();
   runApp(const ProviderScope(child: XiYuanToolboxApp()));
 }
 
@@ -116,6 +119,8 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
     // v1.5.0：恢复页面背景色（浅色模式生效；null = 默认）
     final bg = await StorageService.loadUiBackgroundColor();
     if (bg != null) AppTheme.setBackground(bg);
+    // 全局圆角：启动时必须 apply 一次，否则设置页滑杆的值存了、重启却回到默认。
+    AppTheme.setRadiusScale(await StorageService.loadUiRadiusScale());
     if (mounted) setState(() => _mode = config.themeMode);
   }
 
@@ -123,16 +128,20 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
   Widget build(BuildContext context) {
     // 主题色可在设置页改动，用 ValueListenableBuilder 驱动 MaterialApp 重建，
     // 使全局（按钮 / 选中态 / 强调色）立即跟随。
-    return ValueListenableBuilder<Color>(
-      valueListenable: AppTheme.primaryNotifier,
-      builder: (context, _, __) => MaterialApp(
-        title: '掌上锡院',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: _mode,
-        navigatorObservers: [routeObserver],
-        home: const SplashPage(),
+    // 圆角同理：设置页一改就整树重建，否则回到别的页面还是旧圆角。
+    return ValueListenableBuilder<double>(
+      valueListenable: AppTheme.radiusNotifier,
+      builder: (context, _, __) => ValueListenableBuilder<Color>(
+        valueListenable: AppTheme.primaryNotifier,
+        builder: (context, _, __) => MaterialApp(
+          title: '掌上锡院',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: _mode,
+          navigatorObservers: [routeObserver],
+          home: const SplashPage(),
+        ),
       ),
     );
   }

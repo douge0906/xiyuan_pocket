@@ -48,8 +48,8 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 「个性化主题」板块默认展开（用户要求）。
   bool _themeOpen = true;
 
-  /// 全局圆角缩放系数（0.5~1.6），见 AppTheme.setRadiusScale。
-  double _radiusScale = 1.0;
+  /// 全局圆角缩放系数（0.2~1.6，默认最小），见 AppTheme.setRadiusScale。
+  double _radiusScale = 0.2;
 
   /// 页面背景色（null = 默认；仅浅色模式生效）。
   Color? _bgColor;
@@ -423,7 +423,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// ④ 圆角：连续滑杆（两端方向词，无百分比）。
   Widget _radiusTile() {
-    final v = _radiusScale.clamp(0.5, 1.6).toDouble();
+    final v =
+        _radiusScale.clamp(AppTheme.minRadiusScale, AppTheme.maxRadiusScale)
+            .toDouble();
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       child: Column(
@@ -457,9 +459,9 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               child: Slider(
                 value: v,
-                min: 0.5,
-                max: 1.6,
-                divisions: 22,
+                min: AppTheme.minRadiusScale,
+                max: AppTheme.maxRadiusScale,
+                divisions: 28,
                 onChanged: (nv) => setState(() => _radiusScale = nv),
                 onChangeEnd: _applyRadius,
               ),
@@ -468,7 +470,7 @@ class _SettingsPageState extends State<SettingsPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('紧凑',
+              Text('直角',
                   style:
                       TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               Text('圆润',

@@ -620,18 +620,9 @@ class CourseCardWidget extends StatelessWidget {
                   overflow: TextOverflow.clip,
                   softWrap: true,
                 ),
-                if (course.teacher.isNotEmpty &&
-                    CourseStorage.showTeacherOnCardCache)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 1.5),
-                    child: Text(
-                      course.teacher,
-                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                      maxLines: 2,
-                      overflow: TextOverflow.clip,
-                      softWrap: true,
-                    ),
-                  ),
+                // 教室放在教师之前，且**地点不允许省略**（字号不变、房号不删）：
+                // 给到 3 行、用 clip 换行显示，多出来的垂直空间从教师那里让。
+                // 教师是唯一可以被省略的一项（放不下就尾部打省略号）。
                 if (course.classroom.isNotEmpty &&
                     CourseStorage.showClassroomOnCardCache)
                   Padding(
@@ -639,9 +630,21 @@ class CourseCardWidget extends StatelessWidget {
                     child: Text(
                       '@${course.classroom}',
                       style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                      maxLines: 2,
+                      maxLines: 3,
                       overflow: TextOverflow.clip,
                       softWrap: true,
+                    ),
+                  ),
+                if (course.teacher.isNotEmpty &&
+                    CourseStorage.showTeacherOnCardCache)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1.5),
+                    child: Text(
+                      course.teacher,
+                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
                     ),
                   ),
               ],

@@ -156,7 +156,7 @@ class CourseFetcher {
       out.add({
         'name': name,
         'teacher': pick(['jsxm', 'xm', 'teacher', 'teaxms', 'JSXM']),
-        'classroom': pick(['cdmc', 'classroom', 'room', 'CDMC']),
+        'classroom': pickLongestPlace(m),
         'weekday': pick(['xqj', 'weekday', 'xq', 'weekDay']),
         'slots': pick(['jcor', 'jcs', 'slot', 'jc']),
         'weeks': pick(['zcd', 'weeks', 'weekRange']),
@@ -382,7 +382,7 @@ class CourseFetcher {
       courses.add({
         'name': name,
         'teacher': (m['xm'] ?? '').toString().trim(),
-        'classroom': (m['cdmc'] ?? '').toString().trim(),
+        'classroom': pickLongestPlace(m),
         'weekday': weekday,
         'start_slot': start,
         'end_slot': end,
@@ -397,4 +397,19 @@ class CourseFetcher {
       'courses': courses,
     };
   }
+}
+
+
+/// 地点字段择优：`科技中心A301` 这类带房号的更长，优先采用。
+String pickLongestPlace(Map<String, dynamic> m) {
+  const keys = [
+    'skdd', 'kkdd', 'jxdd', 'jxddmc', 'cdmc', 'classroom', 'room',
+    'SKDD', 'CDMC', 'JXDD',
+  ];
+  String best = '';
+  for (final k in keys) {
+    final v = (m[k] ?? '').toString().trim();
+    if (v.length > best.length) best = v;
+  }
+  return best;
 }

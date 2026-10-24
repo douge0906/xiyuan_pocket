@@ -127,16 +127,26 @@ class AppTheme {
   //
   // 为什么能用 getter 而不是 const：改之前已确认**没有任何一处**在 const 上下文
   // 里用这三个值（唯一一处 const BorderRadius.vertical 已一并去掉 const）。
-  static double _radiusScale = 1.0;
+  /// 默认圆角缩放（2026-10-24 改为「最小」—— 视觉上趋近直角）。
+  ///
+  /// 未手动调过的用户一律用它；调过的用户以存盘值为准。
+  static const double defaultRadiusScale = 0.2;
 
-  /// 全局圆角缩放（0.7 紧凑 / 1.0 标准 / 1.3 圆润）。
+  /// 滑杆可调范围：0.2（趋近直角）~ 1.6（很圆润）。
+  static const double minRadiusScale = 0.2;
+  static const double maxRadiusScale = 1.6;
+
+  static double _radiusScale = defaultRadiusScale;
+
+  /// 全局圆角缩放。
   static double get radiusScale => _radiusScale;
 
   /// 圆角缩放变化通知：main.dart 监听它做整树重建（与 [modeNotifier] 同一套路）。
-  static final ValueNotifier<double> radiusNotifier = ValueNotifier<double>(1.0);
+  static final ValueNotifier<double> radiusNotifier =
+      ValueNotifier<double>(defaultRadiusScale);
 
   static void setRadiusScale(double s) {
-    final v = s.clamp(0.5, 1.6);
+    final v = s.clamp(minRadiusScale, maxRadiusScale);
     if ((v - _radiusScale).abs() < 0.001) return;
     _radiusScale = v;
     radiusNotifier.value = v;

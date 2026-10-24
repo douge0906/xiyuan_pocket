@@ -6,10 +6,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/storage_service.dart';
 import '../services/nav_prefs.dart';
+import '../services/dorm_service.dart';
 import '../services/campus/cas_diagnostics.dart';
 import '../services/api_service.dart';
 import '../services/course_sync_service.dart';
 import '../theme/app_theme.dart';
+import 'dorm_dialog.dart';
 import 'user/user_cards.dart';
 import 'settings_page.dart';
 import '../services/data_wipe.dart';
@@ -51,6 +53,9 @@ class _UserPageState extends State<UserPage> {
 
   /// 学生姓名（来自教务成绩查询的学生信息；拿不到时为空）
   String _studentName = '';
+
+  /// 宿舍（未填写 = null）。用户页与电费卡片共用这份存储。
+  DormInfo? _dorm;
 
   /// 桌面小组件是否已添加到主屏（null = 尚未查询出来）。仅用于入口右侧的一行状态字。
   bool? _widgetInstalled;
@@ -127,10 +132,20 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
+  /// 编辑宿舍：居中弹窗（楼栋可搜索 + 房号），保存后刷新本页。
+  Future<void> _editDorm() async {
+    final d = await showDormDialog(context, current: _dorm);
+    if (d == null || !mounted) return;
+    await DormStore.save(d);
+    if (!mounted) return;
+    setState(() => _dorm = d);
+  }
+
   Future<void> _load() async {
     final config = await StorageService.loadUserConfig();
     final name = await StorageService.loadStudentName();
     final widgetInstalled = await WidgetSyncService.isWidgetInstalled();
+    final dorm = await DormStore.load();
     // 版本号从 APK 里读（值由 pubspec.yaml 的 version 编译进来），不手写
     final info = await PackageInfo.fromPlatform();
     int fails = 0;
@@ -147,6 +162,7 @@ class _UserPageState extends State<UserPage> {
       _passwordCtl.text = config.password;
       _studentName = name;
       _widgetInstalled = widgetInstalled;
+      _dorm = dorm;
       _loading = false;
     });
     if (config.username.trim().isNotEmpty) {
@@ -665,6 +681,8 @@ class _UserPageState extends State<UserPage> {
                     key: _kBind,
                     name: _studentName,
                     studentId: _config.username,
+                    dormText: _dorm?.display ?? '',
+                    onDormTap: _editDorm,
                   ),
                   const SizedBox(height: 8),
                   _sectionTitle('主题色'),

@@ -186,6 +186,18 @@ class CampusSession {
       _send('POST', url,
           form: form, headers: headers, followRedirects: followRedirects);
 
+  /// JSON POST（个别接口必须 JSON body，如取消订单）。
+  Future<CampusResponse> postJson(
+    String url,
+    Object data, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) =>
+      _send('POST', url,
+          body: jsonEncode(data),
+          headers: {...?headers, 'Content-Type': 'application/json'},
+          followRedirects: followRedirects);
+
   /// 取 JSON（解析失败返回 null）
   static Map<String, dynamic>? tryJson(String body) {
     try {

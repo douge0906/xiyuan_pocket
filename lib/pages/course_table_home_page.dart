@@ -821,7 +821,14 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final t in _tables) _buildTableRow(t, isDark, sub),
+                  for (var i = 0; i < _tables.length; i++) ...[
+                    _buildTableRow(_tables[i], isDark, sub),
+                    if (i != _tables.length - 1)
+                      Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          color: context.borderColor),
+                  ],
                   Divider(height: 10, thickness: 0.5, color: context.borderColor),
                   InkWell(
                     onTap: _showNewTableImportDialog,
@@ -853,7 +860,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     return InkWell(
       onTap: () => _switchTable(t.id),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         child: Row(
           children: [
             SizedBox(
@@ -879,6 +886,14 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             ),
             Text('${t.courses.length} 门',
                 style: TextStyle(fontSize: 11.5, color: sub)),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: Icon(Icons.edit_outlined, size: 16, color: sub),
+              tooltip: '重命名',
+              onPressed: () => _renameTableRow(t),
+            ),
             // 只有一份时不显示删除（存储层也不允许删最后一份）
             if (_tables.length > 1)
               IconButton(
@@ -912,6 +927,48 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     if (!mounted) return;
     _toast('已切换到「$_tableName」');
   }
+  /// 重命名当前课表（顶部表名旁的小铅笔）。
+  Future<void> _renameTableRow(CourseTable t) async {
+    final ctl = TextEditingController(text: t.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名课表', style: TextStyle(fontSize: 16)),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          maxLength: 16,
+          decoration: const InputDecoration(
+            hintText: '例如 我的课表',
+            counterText: '',
+            isDense: true,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = ctl.text.trim();
+              if (v.isEmpty) return;
+              Navigator.of(ctx).pop(v);
+            },
+            child: const Text('确定',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (name == null || !mounted) return;
+    final ok = await CourseStorage.renameTable(t.id, name);
+    if (!ok || !mounted) return;
+    await _load();
+    if (!mounted) return;
+    _toast('已重命名为「$name」');
+  }
+
   /// 删除一份课表（展开面板每行的垃圾桶图标）。
   ///
   /// 存储层有两条硬规则：**最后一份不许删**；删掉当前激活那份时自动切到剩下的第一份。
