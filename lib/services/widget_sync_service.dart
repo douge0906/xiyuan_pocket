@@ -4,6 +4,8 @@ import 'package:home_widget/home_widget.dart';
 import '../models/course_model.dart';
 import '../models/course_table.dart';
 import 'course_storage.dart';
+import 'exam_storage.dart';
+import 'storage_service.dart';
 import 'widget_prefs.dart';
 
 /// 桌面小组件（今日课表）Flutter 侧同步服务。
@@ -16,9 +18,14 @@ import 'widget_prefs.dart';
 ///   Dart: HomeWidget.saveWidgetData('widget_today_courses', json)
 ///   Dart: HomeWidget.updateWidget(qualifiedAndroidName: ...) → 广播 APPWIDGET_UPDATE
 ///   原生: WidgetDataStore.read() 读同一份存储 → TodayWidgetRenderer 渲染
+/// 小组件组件类型（用户页入口状态用）。
+enum WidgetComponent { schedule, exam, card }
+
 class WidgetSyncService {
   /// 共享存储 key（与原生 `WidgetDataStore.KEY` 必须一致）。
   static const String _storageKey = 'widget_today_courses';
+  static const String _examKey = 'widget_exam_data';
+  static const String _cardKey = 'widget_card_data';
 
   /// iOS（WidgetKit）小组件 kind，供将来 iOS 侧使用；Android 忽略。
   static const String _iOSWidgetName = 'TodayWidget';
@@ -32,7 +39,12 @@ class WidgetSyncService {
     'icu.wxxydouge.wxxy_pocket.widget.LargeWidgetProvider',
   ];
 
-  /// 默认上课时间块（与课程表主页一致：11 节，节次 → 开始/结束时刻）。
+  static const String _examProvider =
+      'icu.wxxydouge.wxxy_pocket.widget.ExamWidgetProvider';
+  static const String _cardProvider =
+      'icu.wxxydouge.wxxy_pocket.widget.CardWidgetProvider';
+
+  /// 默认上课时间块（与课程表主页一致：12 节，节次 → 开始/结束时刻）。
   /// 自定义时间块存在时优先用自定义。
   static const Map<int, String> _defaultSlotTimes = {
     1: '08:00-08:45',
@@ -46,9 +58,10 @@ class WidgetSyncService {
     9: '18:45-19:30',
     10: '19:40-20:25',
     11: '20:35-21:20',
+    12: '21:40-22:25',
   };
 
-  /// 默认上课时间块（分钟制）：节次 → 开始/结束分钟数（与主页默认块一致）。
+  /// 默认上课时间块（分钟制）：节次 → 开始/结束分钟数（与主页默认块一致，12 节）。
   /// 供原生侧「下一节课」按当前时间精确切换使用。
   static const Map<int, (int, int)> _defaultSlotMinutes = {
     1: (8 * 60, 8 * 60 + 45),
@@ -62,6 +75,7 @@ class WidgetSyncService {
     9: (18 * 60 + 45, 19 * 60 + 30),
     10: (19 * 60 + 40, 20 * 60 + 25),
     11: (20 * 60 + 35, 21 * 60 + 20),
+    12: (21 * 60 + 40, 22 * 60 + 25),
   };
 
   /// 计算「今日课程」并同步给桌面小组件。可在 App 启动、课程变更、
@@ -121,7 +135,7 @@ class WidgetSyncService {
                   // 最终值下发，原生侧不用再实现一遍调色逻辑（改方案后重新同步即可）。
                   'color': courseColorFor(
                           c.colorValue, CourseStorage.schemeCache)
-                      .value,
+                      .toARGB32(),
                   'timeText': timeTextFor(c, slotTimes),
                   // v2.2.14：分钟制起止时刻，供原生「下一节课」按当前时间精确切换
                   'startMinute': _slotMinute(c.startSlot, slotTimes, isStart: true),
@@ -146,23 +160,77 @@ class WidgetSyncService {
     }
   }
 
-  /// 查询桌面上是否已添加了「今日课表」小组件（三个尺寸任一）。
-  ///
-  /// 走 home_widget 的 `getInstalledWidgets()`，替代原先手写的
-  /// `icu.wxxydouge.wxxy_pocket/widget` MethodChannel。注意 Android 侧返回的是
-  /// `shortClassName`（形如 `.widget.SmallWidgetProvider`），故用后缀匹配。
-  static Future<bool> isWidgetInstalled() async {
+  /// 同步信息型组件（考试倒计时 / 校园卡余额）。
+  /// 都不在小组件里联网，只展示本地缓存；App 启动或数据更新时推一次。
+  static Future<void> syncInfoWidgets() async {
+    await Future.wait([syncExamWidget(), syncCardWidget()]);
+  }
+
+  static Future<void> syncExamWidget() async {
+    try {
+      final exam = await ExamStorage.nextExam();
+      final meta = exam == null
+          ? ''
+          : [
+              _ymd(exam.date),
+              if (exam.startTime.isNotEmpty) exam.startTime,
+              if (exam.classroom.isNotEmpty) exam.classroom,
+            ].join(' · ');
+      final json = jsonEncode({
+        'hasExam': exam != null,
+        'name': exam?.name ?? '',
+        'daysLeft': exam?.daysLeft ?? 0,
+        'date': exam == null ? '' : _ymd(exam.date),
+        'startTime': exam?.startTime ?? '',
+        'classroom': exam?.classroom ?? '',
+        'meta': meta,
+        'prefs': await WidgetPrefs.toJson(),
+      });
+      await HomeWidget.saveWidgetData<String>(_examKey, json);
+      await HomeWidget.updateWidget(qualifiedAndroidName: _examProvider);
+    } catch (_) {
+      // 静默：信息组件失败不影响主流程
+    }
+  }
+
+  static Future<void> syncCardWidget() async {
+    try {
+      final cache = await StorageService.loadCardBalanceCache();
+      final updated = cache == null ? '' : _shortDateTime(cache.savedAt);
+      final json = jsonEncode({
+        'hasBalance': cache != null,
+        'balance': cache?.balance ?? 0,
+        'updatedText': updated,
+        'prefs': await WidgetPrefs.toJson(),
+      });
+      await HomeWidget.saveWidgetData<String>(_cardKey, json);
+      await HomeWidget.updateWidget(qualifiedAndroidName: _cardProvider);
+    } catch (_) {
+      // 静默
+    }
+  }
+
+  /// 查询桌面上已添加的组件类型（课表 / 考试 / 校园卡）。
+  static Future<Set<WidgetComponent>> installedComponents() async {
     try {
       final widgets = await HomeWidget.getInstalledWidgets();
-      return widgets.any((w) {
+      final result = <WidgetComponent>{};
+      for (final w in widgets) {
         final cls = w.androidClassName;
-        if (cls == null || cls.isEmpty) return false;
-        return cls.endsWith('SmallWidgetProvider') ||
+        if (cls == null || cls.isEmpty) continue;
+        if (cls.endsWith('SmallWidgetProvider') ||
             cls.endsWith('MediumWidgetProvider') ||
-            cls.endsWith('LargeWidgetProvider');
-      });
+            cls.endsWith('LargeWidgetProvider')) {
+          result.add(WidgetComponent.schedule);
+        } else if (cls.endsWith('ExamWidgetProvider')) {
+          result.add(WidgetComponent.exam);
+        } else if (cls.endsWith('CardWidgetProvider')) {
+          result.add(WidgetComponent.card);
+        }
+      }
+      return result;
     } catch (_) {
-      return false;
+      return {};
     }
   }
 
@@ -237,6 +305,11 @@ class WidgetSyncService {
     final def = _defaultSlotMinutes[slot];
     if (def != null) return isStart ? def.$1 : def.$2;
     return isStart ? 8 * 60 : 8 * 60 + 45;
+  }
+
+  static String _shortDateTime(DateTime d) {
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(d.month)}-${two(d.day)} ${two(d.hour)}:${two(d.minute)}';
   }
 
   static String _ymd(DateTime d) {

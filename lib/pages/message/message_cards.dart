@@ -44,7 +44,7 @@ class MessageCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final rowBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final rowBg = context.cardColor;
 
     return Padding(
       padding: MsgStyle.card
@@ -56,13 +56,22 @@ class MessageCard extends StatelessWidget {
         clipBehavior: MsgStyle.card ? Clip.antiAlias : Clip.none,
         child: InkWell(
           onTap: onTap,
+          // 🔴 按压反馈：Material 的墨迹画在**子节点之下**，而原来这里
+          //    用 `Container(decoration: BoxDecoration(color: rowBg))` 又铺了
+          //    一层**不透明底色** → 墨迹被完全盖死，用户按下去毫无反应
+          //    （这正是「列表没有滑动/按压质感」的根因）。
+          //    正确做法：装饰交给 [Material] 承载（它本身就是不透明底），
+          //    子节点不再重复铺底色。
+          splashColor: AppTheme.primaryColor.withValues(alpha: .10),
+          highlightColor: AppTheme.primaryColor.withValues(alpha: .05),
           child: Container(
             padding: MsgStyle.card
                 ? const EdgeInsets.all(16)
                 : const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
             decoration: MsgStyle.card
                 ? BoxDecoration(
-                    color: rowBg,
+                    // ⚠️ 这里**不能再铺不透明底色**（会盖死墨迹）。
+                    //    圆角 / 描边 / 阴影保留，底色交给上层 Material。
                     borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                     border: Border.all(color: context.borderColor),
                     boxShadow: const [
@@ -87,8 +96,8 @@ class MessageCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          // 15 / w600 / 行高 1.4（与在线版、其它列表一致）
-                          fontSize: 15,
+                          // 15 / w600 / 行高 1.4、其它列表一致）
+                          fontSize: AppTheme.fontTitle,
                           fontWeight: FontWeight.w600,
                           height: 1.4,
                           color: context.textPrimary,
@@ -104,7 +113,7 @@ class MessageCard extends StatelessWidget {
                           Text(
                             message.date.isNotEmpty ? message.date : '日期未知',
                             style: TextStyle(
-                              fontSize: 12.5,
+                              fontSize: AppTheme.fontSmall,
                               color: Colors.grey.shade500,
                             ),
                           ),
@@ -146,7 +155,7 @@ class MessageCard extends StatelessWidget {
         child: Text(
           text,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: AppTheme.fontCaption,
             color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
           ),
         ),

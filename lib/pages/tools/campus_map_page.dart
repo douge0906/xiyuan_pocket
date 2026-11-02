@@ -100,7 +100,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
           : AppBar(
               title: const Text('校园地图',
                   style: TextStyle(fontWeight: FontWeight.bold)),
-              backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+              backgroundColor: context.cardColor,
               foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
               elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
               actions: [
@@ -158,7 +158,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
                 child: Text(
                   '双指缩放 · 拖动 · 右上角可旋转或退出全屏',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12.5, color: muted),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: muted),
                 ),
               ),
             ),
@@ -169,7 +169,7 @@ class _CampusMapPageState extends State<CampusMapPage> {
               top: MediaQuery.of(context).padding.top + 8,
               right: 8,
               child: Material(
-                color: Colors.black.withOpacity(0.45),
+                color: Colors.black.withValues(alpha: 0.45),
                 shape: const CircleBorder(),
                 child: IconButton(
                   onPressed: _toggleFullscreen,

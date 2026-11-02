@@ -100,7 +100,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
                               width: 6,
                               height: 6,
                               decoration: BoxDecoration(
-                                color: widget.textColor.withOpacity(0.55),
+                                color: widget.textColor.withValues(alpha: 0.55),
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -216,13 +216,16 @@ class _MarkdownBodyState extends State<MarkdownBody> {
       if (m.group(1) != null || m.group(2) != null) {
         // 图片内联：降级为链接（图片行已在块级处理）
         final url = m.group(2)!;
+        // 与下面链接分支一致：先建变量登记，否则每次 build 都漏掉一个 recognizer。
+        final imgRec = TapGestureRecognizer()..onTap = () => _openLink(url);
+        _linkRecognizers.add(imgRec);
         spans.add(TextSpan(
           text: '[查看图片]',
           style: TextStyle(
             color: widget.linkColor,
             fontWeight: FontWeight.w600,
           ),
-          recognizer: TapGestureRecognizer()..onTap = () => _openLink(url),
+          recognizer: imgRec,
         ));
       } else if (m.group(3) != null) {
         // 链接
@@ -285,11 +288,11 @@ class _MarkdownBodyState extends State<MarkdownBody> {
           return Container(
             decoration: BoxDecoration(
               color: isHeader
-                  ? widget.textColor.withOpacity(0.06)
-                  : (idx.isEven ? widget.textColor.withOpacity(0.03) : null),
+                  ? widget.textColor.withValues(alpha: 0.06)
+                  : (idx.isEven ? widget.textColor.withValues(alpha: 0.03) : null),
               border: Border(
                 bottom: BorderSide(
-                  color: widget.textColor.withOpacity(0.12),
+                  color: widget.textColor.withValues(alpha: 0.12),
                 ),
               ),
             ),
@@ -303,7 +306,7 @@ class _MarkdownBodyState extends State<MarkdownBody> {
                   child: Text.rich(
                     _parseInline(cell),
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: AppTheme.fontBody,
                       height: 1.5,
                       fontWeight: isHeader ? FontWeight.bold : FontWeight.normal,
                       color: widget.textColor,

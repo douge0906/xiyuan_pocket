@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/app_card.dart';
 
 // 「我的」页的各张卡片。
 //
@@ -15,16 +16,9 @@ Widget userCard(
   required Widget child,
   EdgeInsetsGeometry padding = const EdgeInsets.all(16),
 }) =>
-    Container(
+    AppCard(
       padding: padding,
-      decoration: BoxDecoration(
-        color: Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF1E1E1E)
-            : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        border: Border.all(color: context.borderColor),
-        boxShadow: AppTheme.cardShadow,
-      ),
+      radius: AppTheme.radiusLg,
       child: child,
     );
 
@@ -128,7 +122,7 @@ class UserInfoCard extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               label,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+              style: TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey.shade500),
             ),
             const Spacer(),
             Flexible(
@@ -138,7 +132,7 @@ class UserInfoCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.left,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTheme.fontBody,
                   fontWeight: FontWeight.w500,
                   color: context.textPrimary,
                 ),
@@ -165,7 +159,7 @@ class UserInfoCard extends StatelessWidget {
               const SizedBox(width: 12),
               Text('宿舍',
                   style:
-                      TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+                      TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey.shade500)),
               const Spacer(),
               Flexible(
                 child: Text(
@@ -174,7 +168,7 @@ class UserInfoCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.left,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w500,
                     color: text == '未填写'
                         ? Colors.grey.shade400

@@ -18,12 +18,6 @@ class HomePrefs {
   static const String _kWeekStrip = 'home_show_week_strip';
   static const String _kOverview = 'home_show_overview';
   static const String _kTodos = 'home_show_todos';
-  static const String _kNewHome = 'home_new_layout';
-
-  // 新版首页三个待办板块的展开状态（2026-10-18）。
-  static const String _kSecOverdue = 'home_sec_overdue';
-  static const String _kSecToday = 'home_sec_today';
-  static const String _kSecFuture = 'home_sec_future';
 
   /// 四个板块 id（设置页与本文件共用，避免手打字符串写错）。
   static const String idHeader = 'header';
@@ -37,15 +31,6 @@ class HomePrefs {
   static bool showOverview = true;
   static bool showTodos = true;
 
-  /// 是否使用**新版首页**（2026-10-17，可切换）。
-  /// 新版 = 「接下来 / 逾期 / 今天 / 已完成折叠 + 顶部添加待办条」，旧版原样保留。
-  static bool newHome = false;
-
-  /// 新版首页三个待办板块是否**展开**（默认展开；用户折叠后记忆）。
-  static bool secOverdue = true;
-  static bool secToday = true;
-  static bool secFuture = true;
-
   /// 变更通知：首页用 ValueListenableBuilder 监听它重建。
   static final ValueNotifier<int> notifier = ValueNotifier<int>(0);
 
@@ -57,39 +42,6 @@ class HomePrefs {
     showWeekStrip = p.getBool(_kWeekStrip) ?? true;
     showOverview = p.getBool(_kOverview) ?? true;
     showTodos = p.getBool(_kTodos) ?? true;
-    newHome = p.getBool(_kNewHome) ?? false;
-    secOverdue = p.getBool(_kSecOverdue) ?? true;
-    secToday = p.getBool(_kSecToday) ?? true;
-    secFuture = p.getBool(_kSecFuture) ?? true;
-    notifier.value++;
-  }
-
-  /// 折叠 / 展开新版首页的三个待办板块（写盘 + 通知重建）。
-  /// 2026-10-18 用户要求：「各项待办做成可折叠式，记忆折叠状态，默认展开」。
-  static const String secIdOverdue = 'secOverdue';
-  static const String secIdToday = 'secToday';
-  static const String secIdFuture = 'secFuture';
-
-  static Future<void> setSectionOpen(String id, bool open) async {
-    final p = await SharedPreferences.getInstance();
-    if (id == secIdOverdue) {
-      secOverdue = open;
-      await p.setBool(_kSecOverdue, open);
-    } else if (id == secIdToday) {
-      secToday = open;
-      await p.setBool(_kSecToday, open);
-    } else if (id == secIdFuture) {
-      secFuture = open;
-      await p.setBool(_kSecFuture, open);
-    }
-    notifier.value++;
-  }
-
-  /// 切换新版 / 旧版首页（写盘 + 通知重建）。
-  static Future<void> setNewHome(bool value) async {
-    final p = await SharedPreferences.getInstance();
-    newHome = value;
-    await p.setBool(_kNewHome, value);
     notifier.value++;
   }
 

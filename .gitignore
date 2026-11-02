@@ -91,3 +91,7 @@ coverage/
 windows/flutter/ephemeral/
 linux/flutter/ephemeral/
 macos/Flutter/ephemeral/
+
+
+# CMake 构建缓存（3.29.3 升级后首次出现，勿提交）
+android/app/.cxx/

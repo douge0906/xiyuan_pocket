@@ -28,7 +28,7 @@ class HomeLayoutSettingsPage extends StatelessWidget {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('首页个性化',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: ValueListenableBuilder<int>(
         valueListenable: HomePrefs.notifier,
@@ -72,7 +72,7 @@ class HomeLayoutSettingsPage extends StatelessWidget {
               child: Text(
                 b.$3,
                 style: TextStyle(
-                  fontSize: 14.5,
+                  fontSize: AppTheme.fontBody,
                   color: on ? context.textPrimary : context.textTertiary,
                 ),
               ),

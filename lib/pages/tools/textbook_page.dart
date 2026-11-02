@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../widgets/empty_state_art.dart';
 import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,6 +10,7 @@ import '../../services/api_service.dart';
 import '../../services/textbook_storage.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/semester_picker.dart';
+import '../../widgets/app_card.dart';
 
 /// 我的教材。
 ///
@@ -130,6 +132,9 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   }
 
   Future<void> _query() async {
+    // 🔴 重入保护：连点刷新会并发查询，后完成的旧请求覆盖新学期的数据
+    //    （教材缓存是单槽，不按学期分键）→ 看到别的学期的教材。
+    if (_loading) return;
     setState(() {
       _loading = true;
       _errorText = null;
@@ -223,7 +228,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
       appBar: AppBar(
         title: const Text('我的教材',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        backgroundColor: context.cardColor,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         actions: [
@@ -252,7 +257,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   /// 学期选择（点击弹出选择面板）—— 与考试页同一形态。
   Widget _buildSemesterRow(bool isDark) {
     return Material(
-      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      color: context.cardColor,
       borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: _loading ? null : _pickSemester,
@@ -274,7 +279,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                 child: Text(
                   _selectedLabel,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w600,
                     color: context.textPrimary,
                   ),
@@ -302,7 +307,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
               const SizedBox(height: 14),
               Text('正在获取教材信息，已等待 $_seconds 秒',
                   style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: AppTheme.fontSmall,
                       color: isDark
                           ? Colors.grey.shade400
                           : const Color(0xFF6B7280))),
@@ -318,10 +323,10 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+            color: context.cardColor,
             borderRadius: BorderRadius.circular(AppTheme.radiusMd),
             border:
-                Border.all(color: const Color(0xFFEF4444).withOpacity(0.45)),
+                Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.45)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,7 +341,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                     child: Text(
                       _errorText!,
                       style: TextStyle(
-                          fontSize: 14,
+                          fontSize: AppTheme.fontBody,
                           height: 1.5,
                           color: context.textPrimary),
                     ),
@@ -370,7 +375,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
             children: [
               Text(_semester!,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w600,
                     color: isDark
                         ? Colors.grey.shade300
@@ -382,7 +387,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B).withOpacity(0.15),
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
@@ -390,7 +395,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                         ? '缓存'
                         : '缓存 ${_cacheUpdatedAt!.month}/${_cacheUpdatedAt!.day}',
                     style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFFB45309)),
                   ),
@@ -481,15 +486,10 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
       if (teacher.isNotEmpty) teacher,
     ].join(' · ');
 
-    return Container(
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-      decoration: BoxDecoration(
-        border: Border.all(color: context.borderColor),
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        boxShadow: AppTheme.cardShadow,
-      ),
+      radius: AppTheme.radiusMd,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -501,7 +501,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 15.5,
+                    fontSize: AppTheme.fontTitle,
                     fontWeight: FontWeight.w700,
                     color: context.textPrimary,
                   ),
@@ -513,12 +513,12 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: muted.withOpacity(0.12),
+                    color: muted.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(status,
                       style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: AppTheme.fontSmall,
                           fontWeight: FontWeight.w600,
                           color: muted)),
                 ),
@@ -533,7 +533,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(meta,
-                      style: TextStyle(fontSize: 13.5, color: muted)),
+                      style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
                 ),
               ],
             ),
@@ -547,7 +547,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(book,
-                      style: TextStyle(fontSize: 13.5, color: muted)),
+                      style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
                 ),
               ],
             ),
@@ -560,7 +560,7 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(classroom,
-                      style: TextStyle(fontSize: 13.5, color: muted)),
+                      style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
                 ),
               ],
             ),
@@ -573,6 +573,8 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
   Widget _emptyState(bool isDark) {
     return EmptyState(
       icon: Icons.menu_book_rounded,
+      // 教材 → 一本翻开的书。
+      artVariant: EmptyArtVariant.book,
       message: '暂无教材',
       hint: _semester == null
           ? '点右上角刷新获取本学期教材'

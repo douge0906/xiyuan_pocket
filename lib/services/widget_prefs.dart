@@ -27,6 +27,8 @@ class WidgetPrefs {
   static const String kShowClassroomLarge = 'widget_show_classroom_large';
   static const String kShowTimeLarge = 'widget_show_time_large';
   static const String kCountdown = 'widget_countdown';
+  // 2026-10-30：小号（下一节课）第二行只保留两种机制 —— 上课时间 / 倒计时。
+  static const String kSmallMode = 'widget_small_mode'; // time | countdown
 
   // ---------- 默认值 ----------
   static const String defTableId = '';
@@ -78,6 +80,12 @@ class WidgetPrefs {
       (await _p).getBool(kShowTimeLarge) ?? await showTime();
   static Future<bool> countdown() async => (await _p).getBool(kCountdown) ?? true;
 
+  static Future<String> smallMode() async {
+    final saved = (await _p).getString(kSmallMode);
+    if (saved != null && (saved == 'time' || saved == 'countdown')) return saved;
+    return (await countdown()) ? 'countdown' : 'time';
+  }
+
   // ---------- 写 ----------
   static Future<void> setTableId(String v) async =>
       (await _p).setString(kTableId, v);
@@ -111,6 +119,14 @@ class WidgetPrefs {
   static Future<void> setCountdown(bool v) async =>
       (await _p).setBool(kCountdown, v);
 
+  static Future<void> setSmallMode(String v) async {
+    final p = await _p;
+    await p.setString(kSmallMode, v == 'countdown' ? 'countdown' : 'time');
+    // 兼容旧字段：让旧版原生侧也能跟着变。
+    await p.setBool(kCountdown, v == 'countdown');
+    await p.setBool(kShowTime, v != 'countdown');
+  }
+
   /// 打包给原生侧（键名与 WidgetModels.kt 的 WidgetPrefs 一一对应）。
   static Future<Map<String, dynamic>> toJson() async {
     final p = await _p;
@@ -124,6 +140,8 @@ class WidgetPrefs {
       'showTime': p.getBool(kShowTime) ?? true,
       'showWeek': p.getBool(kShowWeek) ?? true,
       'countdown': p.getBool(kCountdown) ?? true,
+      'smallMode': p.getString(kSmallMode) ??
+          ((p.getBool(kCountdown) ?? true) ? 'countdown' : 'time'),
       // v1.6.7：中/大号各自开关（缺失时原生侧会回落到全局旧值）
       'showTeacherMedium': p.getBool(kShowTeacherMedium) ??
           p.getBool(kShowTeacher) ?? true,

@@ -30,7 +30,14 @@ class _ColorWheelDialog extends StatefulWidget {
 }
 
 class _ColorWheelDialogState extends State<_ColorWheelDialog> {
-  late HSVColor _hsv = HSVColor.fromColor(widget.initial);
+  // 明度**固定 1.0**：色轮只负责色相与饱和度。
+  // 之前保留明度滑杆，用户拉低后颜色发黑、再叠不透明度就出现「怪异深色」
+  // （2026-10-26 反馈）。背景色只该是清亮的浅色，不需要深色档。
+  late HSVColor _hsv =
+      HSVColor.fromColor(widget.initial).withValue(1.0);
+
+  /// 不透明度（0.15~1）。App 背景色用得到：淡一点更像"纸"，太重会压住内容。
+  late double _alpha = widget.initial.a;
 
   static const double _wheelSize = 216;
 
@@ -51,7 +58,7 @@ class _ColorWheelDialogState extends State<_ColorWheelDialog> {
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       title: Text(widget.title,
-          style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold)),
+          style: const TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -75,34 +82,41 @@ class _ColorWheelDialogState extends State<_ColorWheelDialog> {
             ),
           ),
           const SizedBox(height: 18),
-          // 明度
+          // 不透明度：背景色调淡用（2026-10-26）
           Row(
             children: [
-              const SizedBox(
-                width: 28,
-                child: Text('明度',
-                    style: TextStyle(fontSize: 12.5, color: Colors.grey)),
+              SizedBox(
+                width: 44,
+                child: Text('不透明度',
+                    style:
+                        TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
               ),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    trackHeight: 3,
-                    activeTrackColor: _hsv.toColor(),
+                    trackHeight: 4,
                     inactiveTrackColor: context.borderColor,
-                    thumbColor: _hsv.toColor(),
-                    overlayColor: _hsv.toColor().withOpacity(0.12),
+                    thumbColor: _hsv.withAlpha(1.0).toColor(),
+                    activeTrackColor: _hsv.withAlpha(1.0).toColor(),
                     thumbShape: const RoundSliderThumbShape(
                         enabledThumbRadius: 7, elevation: 0),
                     overlayShape:
                         const RoundSliderOverlayShape(overlayRadius: 13),
                   ),
                   child: Slider(
-                    value: _hsv.value.clamp(0.15, 1.0),
+                    value: _alpha.clamp(0.15, 1.0),
                     min: 0.15,
                     max: 1.0,
-                    onChanged: (v) => setState(() => _hsv = _hsv.withValue(v)),
+                    onChanged: (v) => setState(() => _alpha = v),
                   ),
                 ),
+              ),
+              SizedBox(
+                width: 38,
+                child: Text('${(_alpha * 100).round()}%',
+                    textAlign: TextAlign.right,
+                    style:
+                        TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
               ),
             ],
           ),
@@ -114,7 +128,9 @@ class _ColorWheelDialogState extends State<_ColorWheelDialog> {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: _hsv.toColor(),
+                  // 叠白底显示「实际生效」的颜色（应用时会混白成不透明色）
+                  color: Color.alphaBlend(
+                      _hsv.withAlpha(_alpha).toColor(), Colors.white),
                   shape: BoxShape.circle,
                   border: Border.all(color: context.borderColor),
                 ),
@@ -122,9 +138,9 @@ class _ColorWheelDialogState extends State<_ColorWheelDialog> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  '#${_hsv.toColor().value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+                  '#${_hsv.toColor().toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
                   style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: AppTheme.fontBody,
                       color: context.textSecondary,
                       letterSpacing: 0.5),
                 ),
@@ -139,7 +155,9 @@ class _ColorWheelDialogState extends State<_ColorWheelDialog> {
           child: const Text('取消', style: TextStyle(color: Colors.grey)),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _hsv.toColor()),
+          // 带上不透明度（App 背景色可调淡）
+          onPressed: () =>
+              Navigator.pop(context, _hsv.withAlpha(_alpha).toColor()),
           style: FilledButton.styleFrom(backgroundColor: AppTheme.primaryColor),
           child: const Text('确定'),
         ),
@@ -181,7 +199,7 @@ class _ColorWheelPainter extends CustomPainter {
     // ② 饱和度：中心白 → 边缘透明
     final satPaint = Paint()
       ..shader = RadialGradient(
-        colors: [Colors.white, Colors.white.withOpacity(0)],
+        colors: [Colors.white, Colors.white.withValues(alpha: 0)],
       ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, satPaint);
 
@@ -197,7 +215,7 @@ class _ColorWheelPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
-        ..color = Colors.black.withOpacity(0.25),
+        ..color = Colors.black.withValues(alpha: 0.25),
     );
   }
 

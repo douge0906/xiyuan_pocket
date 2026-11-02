@@ -2,9 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/grade_provider.dart';
 import 'api_service.dart';
+import 'dorm_service.dart';
 import 'exam_storage.dart';
-import 'storage_service.dart';
 import 'textbook_storage.dart';
+import 'widget_sync_service.dart';
 
 /// 登录成功后的静默预取（2026-10-20）。
 ///
@@ -65,6 +66,7 @@ class LoginPrefetchService {
       if (parsed.isNotEmpty) {
         await ExamStorage.saveExams(parsed,
             semester: data['semester'] as String?);
+        await WidgetSyncService.syncExamWidget();
       }
     } catch (_) {
       // 静默
@@ -91,7 +93,8 @@ class LoginPrefetchService {
       final data = (res['data'] as Map?)?.cast<String, dynamic>() ?? const {};
       final value = data['balance'];
       if (value is num) {
-        await StorageService.saveCardBalanceCache(value.toDouble());
+        await DormService.saveCardCache(value.toDouble());
+        await WidgetSyncService.syncCardWidget();
       }
     } catch (_) {
       // 静默

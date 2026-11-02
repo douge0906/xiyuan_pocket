@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/models/course_model.dart';
+import 'package:xiyuan_pocket/models/course_model.dart';
 
 /// 课表核心判定测试（v2.3.7）。
 /// 背景：v2.3.1 把「某天有没有这节课」的判定从三处拷贝收敛为 Course.occursOn，

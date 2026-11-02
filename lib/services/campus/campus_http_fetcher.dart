@@ -26,7 +26,7 @@ class CampusFetchException implements Exception {
       'CampusFetchException($url${reason.isEmpty ? '' : ' · $reason'})';
 }
 
-/// 给爬虫用的 HTTP 抓取器（开源版）。
+/// 给爬虫用的 HTTP 抓取器。
 ///
 /// 为什么单独一层：
 ///   `campus_web.dart` 里的爬虫函数需要 `(url, headers) async => body` 形式的注入，

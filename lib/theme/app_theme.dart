@@ -41,14 +41,13 @@ class AppTheme {
   /// 背景色预设（浅色系；深色模式不生效，设置页里该行会隐藏）。
   /// v1.6.3：色值按同一明度层级重调（更柔和、彼此更协调）。
   static const List<(String, Color)> backgroundPresets = [
-    ('默认', Color(0xFFF8F9FC)),
-    ('纯白', Color(0xFFFFFFFF)),
+    ('默认', Color(0xFFFFFFFF)),
     ('米黄', Color(0xFFFAF6EE)),
     ('浅灰', Color(0xFFF1F2F5)),
     ('淡蓝', Color(0xFFEDF3FA)),
     ('淡绿', Color(0xFFEDF6F0)),
   ];
-  static const Color backgroundColor = Color(0xFFF8F9FC);
+  static const Color backgroundColor = Color(0xFFFFFFFF);
 
   // ---------------------------------------------------------------------------
   // 语义色板（v1.0.0 收敛）
@@ -127,10 +126,14 @@ class AppTheme {
   //
   // 为什么能用 getter 而不是 const：改之前已确认**没有任何一处**在 const 上下文
   // 里用这三个值（唯一一处 const BorderRadius.vertical 已一并去掉 const）。
-  /// 默认圆角缩放（2026-10-24 改为「最小」—— 视觉上趋近直角）。
+  /// 默认圆角缩放。
+  ///
+  /// 2026-10-24 曾改为 0.55（「最小」—— 视觉上趋近直角）；
+  /// **2026-11-02 按用户审批 D1 恢复为 1.0**，即三档回到设计稿原值
+  /// （sm 12 / md 14 / lg 20）。想回到偏直角的观感，改这一个数即可。
   ///
   /// 未手动调过的用户一律用它；调过的用户以存盘值为准。
-  static const double defaultRadiusScale = 0.2;
+  static const double defaultRadiusScale = 1.0;
 
   /// 滑杆可调范围：0.2（趋近直角）~ 1.6（很圆润）。
   static const double minRadiusScale = 0.2;
@@ -193,6 +196,40 @@ class AppTheme {
   static const double fontHeading = 18;
   static const double fontDisplay = 24;
 
+  /// 特大标题（2026-11-03 新增，UI P0）。
+  ///
+  /// 首页「掌上锡院」31px 原本是三处硬编码里最突出的一处。它不是任一层级，
+  /// 是**展示性大字**（一个页面只出现一次），故单独给一档，不与 fontDisplay(24) 混。
+  /// 补这一档之后，「改字号」才真正不需要再动页面文件。
+  static const double fontHero = 31;
+
+  /// 行高（2026-11-03 新增，UI P0）。
+  ///
+  /// 中文正文行高比西文需要更松：1.5 是正文，1.2 是标题，1.0 是单行大字。
+  /// 散写 1.15 / 1.3 / 1.4 会让「同一段话在不同位置看起来疏密不一样」。
+  static const double lineBody = 1.5;
+  static const double lineTitle = 1.2;
+  static const double lineTight = 1.0;
+
+  // ---------------------------------------------------------------------------
+  // 动效令牌（2026-11-03 新增，UI P0，来自 docs/UI_POLISH_PLAN.md 4.3）
+  //
+  // 原来散写 Duration(milliseconds: 180) / 220 / 250 / 300 共 28 处，
+  // 同一个「淡入」在三个页面是三档速度 —— 用户感受不到差别，但会觉得「有点不齐」。
+  // ---------------------------------------------------------------------------
+
+  /// 快速反馈：按钮按下、勾选、开关。
+  static const Duration durFast = Duration(milliseconds: 120);
+
+  /// 常规过渡：内容淡入淡出、卡片展开。
+  static const Duration durBase = Duration(milliseconds: 200);
+
+  /// 较慢过渡：页面内大块内容切换。
+  static const Duration durSlow = Duration(milliseconds: 320);
+
+  /// 标准缓动：进入用 easeOutCubic（快出慢收），符合「东西飞过来减速停下」的直觉。
+  static const Curve curveStandard = Curves.easeOutCubic;
+
   // 可观察主题模式，用于运行时切换
   static final ValueNotifier<ThemeMode> modeNotifier = ValueNotifier<ThemeMode>(ThemeMode.light);
 
@@ -206,8 +243,16 @@ class AppTheme {
   }
 
   static void _setSystemOverlay(ThemeMode mode) {
-    // 主题只有「浅色 / 深色」两种（「跟随系统」已取消）
-    final brightness = mode == ThemeMode.dark ? Brightness.dark : Brightness.light;
+    // 「跟随系统」时按系统当前亮度算状态栏图标颜色。
+    final brightness = switch (mode) {
+      ThemeMode.dark => Brightness.dark,
+      ThemeMode.light => Brightness.light,
+      ThemeMode.system => WidgetsBinding.instance.platformDispatcher
+              .platformBrightness ==
+          Brightness.dark
+          ? Brightness.dark
+          : Brightness.light,
+    };
     final isDark = brightness == Brightness.dark;
     SystemChrome.setSystemUIOverlayStyle(
       SystemUiOverlayStyle(
@@ -233,8 +278,8 @@ class AppTheme {
 
   static ThemeData get lightTheme {
     // 缓存 key 同时含主题色与背景色（背景色只影响浅色主题）
-    final bg = backgroundNotifier.value?.value ?? -1;
-    final key = primaryColor.value ^ (bg * 97);
+    final bg = backgroundNotifier.value?.toARGB32() ?? -1;
+    final key = primaryColor.toARGB32() ^ (bg * 97);
     if (_lightCache == null || _lightKey != key) {
       _lightKey = key;
       _lightCache = _buildTheme(Brightness.light);
@@ -243,7 +288,7 @@ class AppTheme {
   }
 
   static ThemeData get darkTheme {
-    final key = primaryColor.value;
+    final key = primaryColor.toARGB32();
     if (_darkCache == null || _darkKey != key) {
       _darkKey = key;
       _darkCache = _buildTheme(Brightness.dark);
@@ -325,7 +370,7 @@ class AppTheme {
 
   static List<BoxShadow> get cardShadow => [
         BoxShadow(
-          color: Colors.black.withOpacity(0.04),
+          color: Colors.black.withValues(alpha: 0.04),
           blurRadius: 20,
           offset: const Offset(0, 4),
         ),
@@ -343,6 +388,10 @@ extension AppThemeContext on BuildContext {
 
   /// 表面色（卡片 / 弹窗底）：暗色 0xFF1E1E1E，亮色白。
   Color get surfaceColor => isDark ? AppTheme.surfaceDark : Colors.white;
+
+  /// 卡片底色：语义上等同 [surfaceColor]，单独命名是为了替换
+  /// 全库 50 处 `isDark ? const Color(0xFF1E1E1E) : Colors.white` 时读起来更贴切。
+  Color get cardColor => surfaceColor;
 
   /// 页面底色：暗色固定 0xFF121212；亮色跟随用户的「背景色」设置
   /// （v1.6.3 修复：此前亮色硬编码 [AppTheme.backgroundColor]，导致换背景色

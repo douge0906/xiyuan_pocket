@@ -79,9 +79,9 @@ void main() {
 
     test('三套方案互不相同（不能出现「换了没反应」）', () {
       for (final v in coursePalette) {
-        final a = courseColorFor(v, CourseColorScheme.standard).value;
-        final b = courseColorFor(v, CourseColorScheme.soft).value;
-        final c = courseColorFor(v, CourseColorScheme.vivid).value;
+        final a = courseColorFor(v, CourseColorScheme.standard).toARGB32();
+        final b = courseColorFor(v, CourseColorScheme.soft).toARGB32();
+        final c = courseColorFor(v, CourseColorScheme.vivid).toARGB32();
         expect(a == b, isFalse);
         expect(b == c, isFalse);
         expect(a == c, isFalse);
@@ -287,6 +287,35 @@ void main() {
             greaterThan(0.6));
         expect(light(otherWeekGrayFor(Color(v), 0.75, true)), lessThan(0.5));
       }
+    });
+  });
+
+  group('课程卡个性化设置（2026-10-29）', () {
+    test('默认包含字段顺序、字号、行数与今天高亮', () {
+      final d = CourseStorage.defaultDisplaySettings();
+      expect(d['cardFieldOrder'], ['name', 'classroom', 'teacher']);
+      expect(d['cardFontScale'], 1.0);
+      expect(d['cardMaxLines'], 2);
+      expect(d['cardOverflow'], 'ellipsis');
+      expect(d['highlightToday'], true);
+    });
+
+    test('卡片字段与顺序能写入内存缓存', () {
+      final d = <String, dynamic>{
+        ...CourseStorage.defaultDisplaySettings(),
+        'cardFieldOrder': ['classroom', 'name', 'teacher'],
+        'cardFontScale': 1.3,
+        'cardMaxLines': 3,
+        'cardOverflow': 'fade',
+        'highlightToday': false,
+      };
+      CourseStorage.applyDisplayToCache(d);
+      expect(CourseStorage.cardFieldOrderCache,
+          ['classroom', 'name', 'teacher']);
+      expect(CourseStorage.cardFontScaleCache, 1.3);
+      expect(CourseStorage.cardMaxLinesCache, 3);
+      expect(CourseStorage.cardOverflowCache, 'fade');
+      expect(CourseStorage.highlightTodayCache, isFalse);
     });
   });
 }

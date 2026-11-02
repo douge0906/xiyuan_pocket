@@ -9,20 +9,22 @@ import '../services/nav_prefs.dart';
 import '../services/dorm_service.dart';
 import '../services/campus/cas_diagnostics.dart';
 import '../services/api_service.dart';
+import '../services/control_service.dart';
 import '../services/course_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'dorm_dialog.dart';
 import 'user/user_cards.dart';
 import 'settings_page.dart';
+import 'widget_hub_page.dart';
 import '../services/data_wipe.dart';
 import '../services/login_prefetch_service.dart';
 import '../services/widget_sync_service.dart';
-import 'widget_settings_page.dart';
 import '../providers/course_provider.dart';
 import '../providers/grade_provider.dart';
 import '../providers/user_config_provider.dart';
 import '../services/campus/campus_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../widgets/app_card.dart';
 
 /// 「我的」页。
 ///
@@ -39,7 +41,7 @@ class UserPage extends StatefulWidget {
   State<UserPage> createState() => _UserPageState();
 }
 
-class _UserPageState extends State<UserPage> {
+class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   UserConfig _config = const UserConfig();
   final _usernameCtl = TextEditingController();
   final _passwordCtl = TextEditingController();
@@ -59,12 +61,14 @@ class _UserPageState extends State<UserPage> {
 
   /// 桌面小组件是否已添加到主屏（null = 尚未查询出来）。仅用于入口右侧的一行状态字。
   bool? _widgetInstalled;
+  bool? _examWidgetInstalled;
+  bool? _cardWidgetInstalled;
 
   /// 应用版本号 —— **运行时从编译产物读取**（见 `_load()`），不手写副本。
   /// 真相源只有 `pubspec.yaml` 的 `version:`，Android 侧由 flutter.versionName 自动取。
   String _appVersion = '';
 
-  /// 开源仓库地址（登录页展示、点击在浏览器打开）。
+  /// 项目主页（登录页展示、点击在浏览器打开）。
   static const String _repoUrl = 'https://github.com/douge0906/xiyuan_pocket';
 
   // ---------------- 教程锚点 ----------------
@@ -119,13 +123,32 @@ class _UserPageState extends State<UserPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // 设置页改了导航（隐藏/排序）→ 本页开关状态跟着变
     NavPrefs.notifier.addListener(_onNavPrefsChanged);
     _load();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshWidgetStatus();
+    }
+  }
+
+  Future<void> _refreshWidgetStatus() async {
+    final kinds = await WidgetSyncService.installedComponents();
+    if (!mounted) return;
+    setState(() {
+      _widgetInstalled = kinds.contains(WidgetComponent.schedule);
+      _examWidgetInstalled = kinds.contains(WidgetComponent.exam);
+      _cardWidgetInstalled = kinds.contains(WidgetComponent.card);
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     NavPrefs.notifier.removeListener(_onNavPrefsChanged);
     _usernameCtl.dispose();
     _passwordCtl.dispose();
@@ -139,12 +162,26 @@ class _UserPageState extends State<UserPage> {
     await DormStore.save(d);
     if (!mounted) return;
     setState(() => _dorm = d);
+    // 轻提示：宿舍一改，首页电费会跟着换房间，给个明确回执
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('已切换到 ${d.display}'),
+          duration: const Duration(milliseconds: 1600),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        ),
+      );
   }
 
   Future<void> _load() async {
     final config = await StorageService.loadUserConfig();
     final name = await StorageService.loadStudentName();
-    final widgetInstalled = await WidgetSyncService.isWidgetInstalled();
+    final widgetKinds = await WidgetSyncService.installedComponents();
+    final widgetInstalled = widgetKinds.contains(WidgetComponent.schedule);
+    final examWidgetInstalled = widgetKinds.contains(WidgetComponent.exam);
+    final cardWidgetInstalled = widgetKinds.contains(WidgetComponent.card);
     final dorm = await DormStore.load();
     // 版本号从 APK 里读（值由 pubspec.yaml 的 version 编译进来），不手写
     final info = await PackageInfo.fromPlatform();
@@ -162,6 +199,8 @@ class _UserPageState extends State<UserPage> {
       _passwordCtl.text = config.password;
       _studentName = name;
       _widgetInstalled = widgetInstalled;
+      _examWidgetInstalled = examWidgetInstalled;
+      _cardWidgetInstalled = cardWidgetInstalled;
       _dorm = dorm;
       _loading = false;
     });
@@ -175,12 +214,12 @@ class _UserPageState extends State<UserPage> {
     final action = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('连续 3 次登录失败', style: TextStyle(fontSize: 16)),
+        title: const Text('连续 3 次登录失败', style: TextStyle(fontSize: AppTheme.fontTitle)),
         content: const Text(
           '可能是密码错误、验证码识别失败，或账号已被临时锁定。\n'
           '建议先用浏览器打开统一认证页面确认能否登录；'
           '如果那边也提示错误，请等 10-15 分钟再试。',
-          style: TextStyle(fontSize: 13, height: 1.6),
+          style: TextStyle(fontSize: AppTheme.fontSmall, height: 1.6),
         ),
         actions: [
           TextButton(
@@ -215,7 +254,7 @@ class _UserPageState extends State<UserPage> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('连接诊断', style: TextStyle(fontSize: 16)),
+        title: const Text('连接诊断', style: TextStyle(fontSize: AppTheme.fontTitle)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,7 +273,7 @@ class _UserPageState extends State<UserPage> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text('${p.label}：${p.detail}',
-                          style: const TextStyle(fontSize: 12.5, height: 1.5)),
+                          style: const TextStyle(fontSize: AppTheme.fontSmall, height: 1.5)),
                     ),
                   ],
                 ),
@@ -242,7 +281,7 @@ class _UserPageState extends State<UserPage> {
             const SizedBox(height: 8),
             const Text(
               '登录页通、验证码接口不通 → 多半是学校对接口做了限制；\n两者都不通 → 网络或校园网限制。',
-              style: TextStyle(fontSize: 11.5, height: 1.6, color: Colors.grey),
+              style: TextStyle(fontSize: AppTheme.fontSmall, height: 1.6, color: Colors.grey),
             ),
           ],
         ),
@@ -293,11 +332,13 @@ class _UserPageState extends State<UserPage> {
 
       // ③ 后台静默补数据（能获取就获取，拿不到就算），不阻塞登录动画
       _ensureStudentName();
-      // ④ 登录成功 = 顺手把课表同步一次（开源版已取消课表页的「教务导入」按钮，
+      // ④ 登录成功 = 顺手把课表同步一次（已取消课表页的「教务导入」按钮，
       //     这一步接管了它）。静默：登录动画不该因为教务慢而卡住；
       //     同步失败也不会动已有课表，用户随时能用课表页的刷新键手动重来。
       // 登录成功 → 失败计数清零
       if (_loginFails != 0) await _saveLoginFails(0);
+      // 控制台：设备登记 + 断言登录（失败静默，不影响本机功能）
+      unawaited(ControlService.warmUp(force: true));
       // 课表同步与预取共用同一个教务会话（含 csrftoken），必须串行：
       // 先课表，完成后再拉成绩 / 考试 / 教材，避免并发互相顶掉会话。
       unawaited(CourseSyncService.sync(container)
@@ -352,6 +393,8 @@ class _UserPageState extends State<UserPage> {
 
   /// 退出登录：清空全部本地数据（含账号），回到登录页。
   Future<void> _logout() async {
+    // 先撤销控制台会话，再清本地数据 —— 清空后就没有设备令牌可用了。
+    await ControlService.logout();
     // 2026-10-13：退出时把内存里的教务会话也清掉 ——
     // 否则同进程内继续查询仍会复用上一个账号的会话（配合 DataWipe 清落盘部分）。
     LocalCampusService.clear();
@@ -395,7 +438,7 @@ class _UserPageState extends State<UserPage> {
 
   Future<void> _setPrimaryColor(Color c) async {
     AppTheme.setPrimary(c);
-    final config = _config.copyWith(primaryColor: c.value);
+    final config = _config.copyWith(primaryColor: c.toARGB32());
     await StorageService.saveUserConfig(config);
     if (mounted) setState(() => _config = config);
   }
@@ -440,7 +483,7 @@ class _UserPageState extends State<UserPage> {
                     Text(
                       '掌上锡院',
                       style: TextStyle(
-                        fontSize: 13.5,
+                        fontSize: AppTheme.fontBody,
                         color: isDark
                             ? Colors.grey.shade400
                             : const Color(0xFF4B5563),
@@ -450,14 +493,14 @@ class _UserPageState extends State<UserPage> {
                     Text(
                       'Ver: $_appVersion',
                       style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         color: isDark
                             ? Colors.grey.shade600
                             : const Color(0xFF9CA3AF),
                       ),
                     ),
                     const SizedBox(height: 5),
-                    // 开源仓库地址（点击在浏览器打开）
+                    // 项目主页（点击在浏览器打开）
                     GestureDetector(
                       onTap: () => launchUrl(
                         Uri.parse(_repoUrl),
@@ -466,7 +509,7 @@ class _UserPageState extends State<UserPage> {
                       child: Text(
                         _repoUrl.replaceFirst('https://', ''),
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: AppTheme.fontSmall,
                           color: isDark
                               ? Colors.grey.shade500
                               : const Color(0xFF6B7280),
@@ -488,7 +531,7 @@ class _UserPageState extends State<UserPage> {
                 child: Text(
                   '统一身份认证',
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: AppTheme.fontDisplay,
                     fontWeight: FontWeight.bold,
                     color: context.textPrimary,
                   ),
@@ -544,7 +587,7 @@ class _UserPageState extends State<UserPage> {
                 Text(
                   _loginError!,
                   style: const TextStyle(
-                      fontSize: 12.5, color: Color(0xFFEF4444), height: 1.5),
+                      fontSize: AppTheme.fontSmall, color: Color(0xFFEF4444), height: 1.5),
                 ),
               ],
 
@@ -558,7 +601,7 @@ class _UserPageState extends State<UserPage> {
                     backgroundColor: AppTheme.primaryColor,
                     foregroundColor: Colors.white,
                     disabledBackgroundColor:
-                        AppTheme.primaryColor.withOpacity(0.5),
+                        AppTheme.primaryColor.withValues(alpha: 0.5),
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppTheme.radiusSm),
@@ -574,7 +617,7 @@ class _UserPageState extends State<UserPage> {
                       : const Text(
                           '登录',
                           style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w600),
+                              fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600),
                         ),
                 ),
               ),
@@ -585,7 +628,7 @@ class _UserPageState extends State<UserPage> {
               // 密码仅保存在本机，不发送给任何服务器。”）—— 用户当时的原话是
               // 「统一认证登录页面下方小字修改 修改为 新生需要进行统一认证登录账户激活
               // 点击跳转（…）直接这样就行」，即只留这一行可点击指引，不再有两行小字。
-              // v1.6.5：新生账户激活指引（与在线版同一文案 + 同一跳转地址）
+              // v1.6.5：新生账户激活指引 + 同一跳转地址）
               GestureDetector(
                 onTap: () => launchUrl(
                   Uri.parse(
@@ -600,7 +643,7 @@ class _UserPageState extends State<UserPage> {
                     '新生需要进行统一认证登录账户激活 点击跳转',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: AppTheme.fontSmall,
                       height: 1.6,
                       color: AppTheme.primaryColor,
                       decoration: TextDecoration.underline,
@@ -620,7 +663,7 @@ class _UserPageState extends State<UserPage> {
   Widget _fieldLabel(String text) => Text(
         text,
         style: TextStyle(
-          fontSize: 13.5,
+          fontSize: AppTheme.fontBody,
           fontWeight: FontWeight.w500,
           color: context.textPrimary,
         ),
@@ -634,11 +677,11 @@ class _UserPageState extends State<UserPage> {
   }) =>
       InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
+        hintStyle: TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey.shade400),
         prefixIcon: Icon(icon, size: 20, color: Colors.grey.shade400),
         suffixIcon: suffix,
         filled: true,
-        fillColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        fillColor: context.cardColor,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
         enabledBorder: OutlineInputBorder(
@@ -699,7 +742,7 @@ class _UserPageState extends State<UserPage> {
                               children: [
                                 Text(_themeLabel,
                                     style: TextStyle(
-                                        fontSize: 13,
+                                        fontSize: AppTheme.fontSmall,
                                         color: Colors.grey.shade500)),
                                 const SizedBox(width: 4),
                                 const Icon(Icons.chevron_right,
@@ -726,33 +769,22 @@ class _UserPageState extends State<UserPage> {
                   const SizedBox(height: 8),
                   _sectionTitle('桌面小组件'),
                   _card(
-                    child: InkWell(
-                      // 2026-10-12：改成**独立页面**（不再用上滑弹窗）
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const WidgetSettingsPage(),
+                    child: Builder(builder: (context) {
+                      final added = (_widgetInstalled == true ? 1 : 0) +
+                          (_examWidgetInstalled == true ? 1 : 0) +
+                          (_cardWidgetInstalled == true ? 1 : 0);
+                      return _widgetEntry(
+                        icon: Icons.widgets_rounded,
+                        title: '桌面小组件',
+                        subtitle: '小组件总入口 · 已添加 $added/3',
+                        installed: added > 0,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const WidgetHubPage(),
+                          ),
                         ),
-                      ),
-                      child: _listTile(
-                        icon: Icons.widgets_outlined,
-                        title: '今日课表',
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _widgetInstalled == null
-                                  ? ''
-                                  : (_widgetInstalled! ? '已添加' : '未添加'),
-                              style: TextStyle(
-                                  fontSize: 13, color: Colors.grey.shade500),
-                            ),
-                            const SizedBox(width: 4),
-                            const Icon(Icons.chevron_right,
-                                color: Color(0xFF9CA3AF)),
-                          ],
-                        ),
-                      ),
-                    ),
+                      );
+                    }),
                   ),
                   const SizedBox(height: 8),
                   _sectionTitle('关于'),
@@ -809,7 +841,7 @@ class _UserPageState extends State<UserPage> {
         child: Text(
           text,
           style: TextStyle(
-              fontSize: 12.5,
+              fontSize: AppTheme.fontSmall,
               fontWeight: FontWeight.w600,
               // 加深色彩：原来 grey.shade500 太浅，看不出分组层级
               color: Theme.of(context).brightness == Brightness.dark
@@ -822,16 +854,77 @@ class _UserPageState extends State<UserPage> {
   ///
   /// **不加内边距** —— 行内的分割线要左右贯通到卡片边缘；左右留白由每行自己控制。
   /// 否则「一行文字的卡片」会凭空多出 32px 高，整页显得很空。
-  Widget _card({required Widget child}) => Container(
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness == Brightness.dark
-              ? const Color(0xFF1E1E1E)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          border: Border.all(color: context.borderColor),
-          boxShadow: AppTheme.cardShadow,
+  Widget _widgetEntry({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool? installed,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 13, 10, 13),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withValues(alpha: .10),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+              ),
+              child: Icon(icon, size: 22, color: AppTheme.primaryColor),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          fontWeight: FontWeight.w600,
+                          color: context.textPrimary)),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+                ],
+              ),
+            ),
+            if (installed != null)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (installed ? const Color(0xFF10B981) : Colors.grey)
+                      .withValues(alpha: .10),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  installed ? '已添加' : '未添加',
+                  style: TextStyle(
+                    fontSize: AppTheme.fontCaption,
+                    fontWeight: FontWeight.w600,
+                    color: installed
+                        ? const Color(0xFF059669)
+                        : context.textTertiary,
+                  ),
+                ),
+              ),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right, color: context.textTertiary),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child}) => AppCard(
+        clipBehavior: Clip.antiAlias,
+        radius: AppTheme.radiusLg,
         child: child,
       );
 
@@ -856,7 +949,7 @@ class _UserPageState extends State<UserPage> {
               Expanded(
                 child: Text(title,
                     style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTheme.fontBody,
                         color: Theme.of(context).textTheme.bodyLarge?.color)),
               ),
               trailing,

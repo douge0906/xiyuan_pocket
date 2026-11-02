@@ -80,7 +80,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
     final blanks = (firstWeekday - 1) % 7;
 
     return Dialog(
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      backgroundColor: context.cardColor,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       child: Padding(
@@ -90,11 +90,11 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (widget.helpText != null)
-              Text(widget.helpText!, style: TextStyle(fontSize: 12.5, color: subColor)),
+              Text(widget.helpText!, style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor)),
             const SizedBox(height: 4),
             Text(
               '${_selected.year} 年 ${_selected.month} 月 ${_selected.day} 日',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold,
+              style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.bold,
                   color: context.textPrimary),
             ),
             const SizedBox(height: 12),
@@ -113,7 +113,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
                   child: Center(
                     child: Text(
                       '${_viewMonth.year} 年 ${_viewMonth.month} 月',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600,
+                      style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600,
                           color: context.textPrimary),
                     ),
                   ),
@@ -134,7 +134,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
               children: ['一', '二', '三', '四', '五', '六', '日']
                   .map((w) => Expanded(
                         child: Center(
-                          child: Text(w, style: TextStyle(fontSize: 12.5, color: subColor)),
+                          child: Text(w, style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor)),
                         ),
                       ))
                   .toList(),
@@ -173,7 +173,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
                         child: Text(
                           '$day',
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: AppTheme.fontSmall,
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                             color: isSelected
                                 ? Colors.white
@@ -196,12 +196,12 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
                     _selected = today;
                     _viewMonth = DateTime(today.year, today.month, 1);
                   }),
-                  child: const Text('今天', style: TextStyle(fontSize: 12.5)),
+                  child: const Text('今天', style: TextStyle(fontSize: AppTheme.fontSmall)),
                 ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(null),
-                  child: const Text('取消', style: TextStyle(fontSize: 12.5)),
+                  child: const Text('取消', style: TextStyle(fontSize: AppTheme.fontSmall)),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
@@ -212,7 +212,7 @@ class _CourseDatePickerDialogState extends State<_CourseDatePickerDialog> {
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
                   ),
-                  child: const Text('确定', style: TextStyle(fontSize: 12.5)),
+                  child: const Text('确定', style: TextStyle(fontSize: AppTheme.fontSmall)),
                 ),
               ],
             ),

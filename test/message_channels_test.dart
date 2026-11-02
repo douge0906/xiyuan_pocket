@@ -11,6 +11,7 @@ import 'package:xiyuan_pocket/services/message_detail_cache.dart';
 import 'package:xiyuan_pocket/services/message_migration.dart';
 import 'package:xiyuan_pocket/services/message_source.dart';
 import 'package:xiyuan_pocket/services/seed_data.dart';
+import 'package:xiyuan_pocket/services/sources/control_announcement_source.dart';
 
 /// 消息系统的「订阅目录 / 老数据迁移」两层。
 ///
@@ -30,18 +31,20 @@ void main() {
     test('所有对外开放的栏目都必须在抓取器里登记过（防幽灵栏目）', () {
       for (final c in MessageChannelService.allChannels) {
         if (c.id == kJwcChannelId) continue;
+        if (c.id == kControlAnnouncementChannelId) continue; // 控制台公告不是校园爬虫
         expect(CampusInfoCrawler.columnById(c.id), isNotNull,
             reason: '栏目「${c.id}」在目录里，却没有抓取器 —— 订阅了也抓不到内容');
       }
     });
 
-    test('默认订阅只含教务处（其余栏目靠用户自己勾）', () {
-      expect(MessageChannelService.defaultSubscribedIds, {kJwcChannelId});
+    test('默认订阅 = 教务处 + 控制台公告', () {
+      expect(MessageChannelService.defaultSubscribedIds,
+          {kJwcChannelId, kControlAnnouncementChannelId});
     });
 
     test('从未保存过 → 用默认集合', () async {
       final ids = await MessageChannelService.loadSubscribed();
-      expect(ids, {kJwcChannelId});
+      expect(ids, {kJwcChannelId, kControlAnnouncementChannelId});
     });
 
     test('🔴 保存过空集合 → 就是空的，不能自己长回来', () async {
@@ -50,6 +53,7 @@ void main() {
     });
 
     test('🔴 教务处真的可以被关掉（所有栏目一律平等）', () async {
+      SharedPreferences.setMockInitialValues({'control_notice_added_v1': true});
       await MessageChannelService.saveSubscribed({'news'});
       final ids = await MessageChannelService.loadSubscribed();
       expect(ids, {'news'});
@@ -58,8 +62,20 @@ void main() {
     });
 
     test('已下线的栏目 id 会被过滤掉', () async {
+      SharedPreferences.setMockInitialValues({'control_notice_added_v1': true});
       await MessageChannelService.saveSubscribed({'news', 'ghost_column'});
       expect(await MessageChannelService.loadSubscribed(), {'news'});
+    });
+
+    test('老用户升级：自动多出公告列，只加一次', () async {
+      SharedPreferences.setMockInitialValues({
+        'notice_channel_subscribed_v1': ['jwc'],
+      });
+      final first = await MessageChannelService.loadSubscribed();
+      expect(first, {'jwc', kControlAnnouncementChannelId});
+      // 用户主动取消公告列 → 迁移标记已置位，不能自己再加回来。
+      await MessageChannelService.saveSubscribed({'jwc'});
+      expect(await MessageChannelService.loadSubscribed(), {'jwc'});
     });
   });
 

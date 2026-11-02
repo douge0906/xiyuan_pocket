@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 语音输入待办（长按首页「＋」→ 语言球）：调用系统语音识别需录音权限 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- v2.2.21：恢复本地提醒（上课/待办通知栏提醒，WakeUp 式本地精确闹钟） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -94,6 +96,29 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_large_info" />
         </receiver>
+        <!-- 考试倒计时 / 校园卡余额：本地缓存驱动，不在小组件内联网 -->
+        <receiver
+            android:name=".widget.ExamWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_name_exam">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_exam_info" />
+        </receiver>
+        <receiver
+            android:name=".widget.CardWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_name_card">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_card_info" />
+        </receiver>
         <!-- v2.2.14：小组件「下一节课」精准切换闹钟接收器（内部广播，每节课开始/结束时刻触发刷新） -->
         <receiver
             android:name=".widget.WidgetAlarmScheduler$RefreshReceiver"
@@ -128,6 +153,10 @@
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <queries>
+        <!-- 语音识别：Android 11+ 需要显式声明才能被系统语音服务响应 -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

@@ -112,7 +112,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
         elevation: 0,
         scrolledUnderElevation: 0,
         title: Text(widget.sourceName,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: const TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
         actions: [
           IconButton(
             tooltip: '复制全文',
@@ -149,7 +149,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                       const SizedBox(width: 4),
                       Text(
                         date.isNotEmpty ? date : '日期未知',
-                        style: TextStyle(fontSize: 12.5, color: subText),
+                        style: TextStyle(fontSize: AppTheme.fontSmall, color: subText),
                       ),
                       if (author.isNotEmpty) ...[
                         const SizedBox(width: 12),
@@ -157,7 +157,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                           child: Text(
                             author,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12.5, color: subText),
+                            style: TextStyle(fontSize: AppTheme.fontSmall, color: subText),
                           ),
                         ),
                       ],
@@ -185,7 +185,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                               ? '正文获取失败，请稍后重试或查看原文。'
                               : '正文未获取到。\n可点下方「查看原文」在浏览器中打开。',
                           style: TextStyle(
-                            fontSize: 14,
+                            fontSize: AppTheme.fontBody,
                             height: 1.7,
                             color: Colors.grey.shade500,
                           ),
@@ -206,7 +206,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                     const SizedBox(height: 24),
                     Text('附件',
                         style: TextStyle(
-                            fontSize: 14,
+                            fontSize: AppTheme.fontBody,
                             fontWeight: FontWeight.w600,
                             color: mainText)),
                     const SizedBox(height: 10),
@@ -246,7 +246,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: context.cardColor,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -266,7 +266,7 @@ class _MessageDetailPageState extends State<MessageDetailPage> {
                   child: Text(
                     name,
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: AppTheme.fontBody,
                       color: isDark
                           ? Colors.grey.shade200
                           : const Color(0xFF374151),

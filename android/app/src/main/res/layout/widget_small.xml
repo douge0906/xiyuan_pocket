@@ -10,13 +10,13 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_card_bg_light"
-    android:padding="8dp">
+    android:padding="6dp">
 
     <ImageView
         android:id="@+id/widget_icon"
-        android:layout_width="18dp"
-        android:layout_height="18dp"
-        android:layout_marginEnd="8dp"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginEnd="6dp"
         android:src="@drawable/widget_icon_dark"
         android:contentDescription="掌上锡院" />
 
@@ -30,7 +30,7 @@
             android:id="@+id/widget_next"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold"
             android:maxLines="1"
             android:ellipsize="end"
@@ -42,7 +42,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="1dp"
-            android:textSize="10sp"
+            android:textSize="9.5sp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textColor="#667085"
@@ -53,7 +53,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="1dp"
-            android:textSize="10sp"
+            android:textSize="9.5sp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textColor="#667085" />

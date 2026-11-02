@@ -1,17 +1,25 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../models/course_model.dart';
 import '../../services/course_storage.dart';
+import '../../services/course_transfer_service.dart';
 import '../../services/storage_service.dart';
 import '../../services/widget_sync_service.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/course_bg_color_picker.dart';
+import 'course_bg_crop_page.dart';
 import '../../widgets/course_style_preview.dart';
 import '../user/user_cards.dart';
+
+part 'course_table_settings_rows.dart';
 
 /// 课表设置页（v1.3.0，2026-10-13 全滑杆版）。
 ///
@@ -35,6 +43,7 @@ class CourseTableSettingsPage extends StatefulWidget {
     required this.onEditTime,
     required this.onSyncTodos,
     required this.onClearAll,
+    this.onTablesChanged,
   });
 
   /// 添加课程（课表页弹添加表单）。
@@ -48,6 +57,9 @@ class CourseTableSettingsPage extends StatefulWidget {
 
   /// 清空全部课程（课表页内部会二次确认）。
   final VoidCallback onClearAll;
+
+  /// 导入课表方案后通知课表页重新加载。
+  final VoidCallback? onTablesChanged;
 
   @override
   State<CourseTableSettingsPage> createState() =>
@@ -74,9 +86,21 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   /// 其余默认收起，点标题可以随时展开/折叠）。
   final Set<String> _expanded = {'grid', 'layout', 'blocks'};
 
+  /// 课程预览默认收起，点标题或下滑展开。
+  bool _previewExpanded = true;
+  Map<String, Map<String, dynamic>> _presets = {};
+
+  /// 设置栏目：外观 / 课程 / 方案。
+  int _tab = 0;
+
   bool get _showGridLines => _display['showGridLines'] != false;
   bool get _showOtherWeeks => _display['showOtherWeeks'] == true;
   String get _bgPath => (_display['backgroundImage'] ?? '').toString();
+
+  /// 背景色面板是否展开（默认展开，否则用户找不到色彩盘）。
+  bool _colorOpen = true;
+
+  int? get _bgColor => (_display['backgroundColor'] as num?)?.toInt();
   bool get _hasBg => _bgPath.isNotEmpty && File(_bgPath).existsSync();
 
   /// 「进入 App 自动更新课表」。2026-10-13 起**默认关闭**（用户要求）。
@@ -115,6 +139,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     super.initState();
     _future = CourseStorage.loadDisplaySettings();
     _loadPreviewData();
+    CourseStorage.loadAppearancePresets().then((v) {
+      if (mounted) setState(() => _presets = v);
+    });
     // v1.6.0：已忽略的冲突课程（用于设置页的恢复入口）
     StorageService.loadDroppedCourseKeys().then((v) {
       if (mounted) setState(() => _dropped = v);
@@ -141,10 +168,12 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   }
 
   /// 开关键等「一次性」变更：立即生效 + 存盘。
-  Future<void> _set(String key, Object value) async {
+  Future<void> _set(String key, Object? value) async {
     final next = <String, dynamic>{..._display, key: value};
     // 先同步缓存再 setState：顶部实时预览与返回课表后的网格都读缓存
     CourseStorage.applyDisplayToCache(next);
+    // 🔴 调用方在 await 之后（系统文件选择器）可能已销毁页面。
+    if (!mounted) return;
     setState(() {
       _display = next;
       // 立即把 Future 指向内存值：避免 FutureBuilder 重建时回读存储造成抖动
@@ -174,7 +203,19 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   /// 切过去用「该方案名下存过的那套」，没存过才用出厂预设；
   /// 切走时先把当前这套归档到原方案名下。逻辑在 [CourseStorage.switchScheme]。
   Future<void> _applyScheme(CourseColorScheme s) async {
-    final next = CourseStorage.switchScheme(_display, s);
+    var next = CourseStorage.switchScheme(_display, s);
+    // 「方案二」= 紧凑淡蓝套装：窄时间栏 + 窄日期栏 + 淡蓝底 + 无网格线
+    // （2026-10-26 用户指定；其余方案仍只换配色，不碰布局）
+    if (s == CourseColorScheme.soft) {
+      next = {
+        ...next,
+        'timeColWidth': 40.0,
+        'dateRowHeight': 42.0,
+        'backgroundColor': 0xFFE8F1FB,
+        'backgroundImage': '',
+        'showGridLines': false,
+      };
+    }
     CourseStorage.applyDisplayToCache(next);
     setState(() {
       _display = next;
@@ -187,40 +228,232 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     _toast('已套用${s.label}');
   }
 
+  /// 批量应用外观补丁（自定义方案 / 导入）。
+  Future<void> _applyAppearancePatch(Map<String, dynamic> patch) async {
+    final next = <String, dynamic>{..._display, ...patch};
+    // 外观方案不携带本机背景图路径，避免换机后指向不存在的文件。
+    // 但方案里指定了背景色时，必须清掉背景图，否则图片盖住颜色。
+    if (patch.containsKey('backgroundColor') &&
+        patch['backgroundColor'] != null) {
+      next['backgroundImage'] = '';
+    } else {
+      next.remove('backgroundImage');
+    }
+    CourseStorage.applyDisplayToCache(next);
+    setState(() {
+      _display = next;
+      _future = Future<Map<String, dynamic>>.value(next);
+    });
+    await CourseStorage.saveDisplaySettings(next);
+    unawaited(WidgetSyncService.syncTodayCourses());
+  }
+
+  Future<void> _saveAppearancePreset() async {
+    final controller =
+        TextEditingController(text: '我的方案 ${_presets.length + 1}');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('保存外观方案'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 24,
+          decoration: const InputDecoration(
+            labelText: '方案名称',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    final next = <String, Map<String, dynamic>>{
+      ..._presets,
+      name: CourseStorage.appearanceOfDisplay(_display),
+    };
+    await CourseStorage.saveAppearancePresets(next);
+    if (!mounted) return;
+    setState(() => _presets = next);
+    _toast('已保存外观方案「$name」');
+  }
+
+  Future<void> _deleteAppearancePreset(String name) async {
+    final next = <String, Map<String, dynamic>>{..._presets}..remove(name);
+    await CourseStorage.saveAppearancePresets(next);
+    if (!mounted) return;
+    setState(() => _presets = next);
+    _toast('已删除「$name」');
+  }
+
+  Future<void> _exportAppearance() async {
+    try {
+      final data = <String, dynamic>{
+        'version': 1,
+        'appearance': CourseStorage.appearanceOfDisplay(_display),
+        'presets': _presets,
+      };
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: '导出外观方案',
+        fileName: 'xiyuan_appearance.json',
+        bytes: Uint8List.fromList(utf8.encode(
+            const JsonEncoder.withIndent('  ').convert(data))),
+      );
+      if (path != null) _toast('外观方案已导出');
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导出外观方案失败: $e');
+      _toast('导出失败，请稍后重试');
+    }
+  }
+
+  Future<void> _importAppearance() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      final bytes = file.bytes ??
+          (file.path != null ? await File(file.path!).readAsBytes() : null);
+      if (bytes == null) return;
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) throw const FormatException('不是有效的外观方案');
+      final appearance = decoded['appearance'];
+      if (appearance is Map) {
+        await _applyAppearancePatch(Map<String, dynamic>.from(appearance));
+      }
+      final presets = decoded['presets'];
+      if (presets is Map) {
+        final merged = <String, Map<String, dynamic>>{..._presets};
+        presets.forEach((key, value) {
+          if (value is Map) {
+            merged[key.toString()] = Map<String, dynamic>.from(value);
+          }
+        });
+        await CourseStorage.saveAppearancePresets(merged);
+        if (mounted) setState(() => _presets = merged);
+      }
+      if (mounted) _toast('外观方案已导入');
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导入外观方案失败: $e');
+      _toast('导入失败，请确认文件来自掌上锡院');
+    }
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
-        content: Text(msg, style: const TextStyle(fontSize: 13)),
+        content: Text(msg, style: const TextStyle(fontSize: AppTheme.fontSmall)),
         duration: const Duration(seconds: 2),
       ));
   }
 
-  /// 选一张图作为课表背景（与在线版同一套逻辑）。
+  Future<void> _exportCourseTables() async {
+    try {
+      final count = await CourseTransferService.exportTables();
+      _toast('已准备 $count 份课表，选择保存位置');
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导出课表方案失败: $e');
+      _toast('导出失败，请稍后重试');
+    }
+  }
+
+  Future<void> _importCourseTables() async {
+    try {
+      final count = await CourseTransferService.importTables();
+      if (count <= 0) return;
+      _toast('已导入 $count 份课表');
+      widget.onTablesChanged?.call();
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导入课表方案失败: $e');
+      _toast('导入失败，请确认文件来自掌上锡院');
+    }
+  }
+
+  /// 选一张图作为课表背景。
   ///
   /// image_picker 返回的是**临时缓存路径**，系统随时可能清掉，直接存会导致
   /// 背景图「过几天就丢」→ 这里把图片拷贝到应用文档目录持久化。
   Future<void> _pickBackground() async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (picked == null) return;
+
+    // 先框选：拖动/缩放定位，确定后按框裁出来（2026-10-26 用户要求）
+    if (!mounted) return;
+    final croppedPath = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => CourseBgCropPage(sourcePath: picked.path),
+      ),
+    );
+    if (croppedPath == null) return; // 用户取消
+    if (!mounted) return;
+
     try {
       final docs = await getApplicationDocumentsDirectory();
-      final ext = picked.path.contains('.')
-          ? picked.path.split('.').last.toLowerCase()
-          : 'jpg';
-      final safe = ['jpg', 'jpeg', 'png', 'webp'].contains(ext) ? ext : 'jpg';
-      final target = File('${docs.path}/course_background.$safe');
-      // 换图时清掉旧后缀残留（旧图 png 新图 jpg 之类）
+      final target = File('${docs.path}/course_background.png');
+      final temp = File('${docs.path}/course_background.new.png');
+      if (await temp.exists()) await temp.delete();
+      // 🔴 顺序：先写临时文件 → 校验 → **把旧图改名备份** → 临时文件顶上去
+      //    → 成功后才删备份。之前是「先删所有旧图再 rename」，rename 一失败
+      //    旧背景就没了，而 catch 里还提示「旧背景已保留」（与事实相反）。
+      await File(croppedPath).copy(temp.path);
+      if (!await temp.exists() || await temp.length() <= 0) {
+        throw FileSystemException('背景图复制为空');
+      }
+      final backup = File('${docs.path}/course_background.old.png');
+      if (await backup.exists()) await backup.delete();
+      var moved = false;
       for (final e in ['jpg', 'jpeg', 'png', 'webp']) {
         final old = File('${docs.path}/course_background.$e');
+        if (old.path == target.path) continue; // 稍后单独处理
         if (await old.exists()) await old.delete();
       }
-      if (!mounted) return;
-      await picked.saveTo(target.path);
+      if (await target.exists()) {
+        await target.rename(backup.path);
+        moved = true;
+      }
+      try {
+        await temp.rename(target.path);
+      } catch (_) {
+        // 顶不上去就把旧图还回来，用户至少没丢原背景。
+        if (moved && await backup.exists()) {
+          try {
+            await backup.rename(target.path);
+          } catch (_) {}
+        }
+        rethrow;
+      }
+      if (await backup.exists()) {
+        try {
+          await backup.delete();
+        } catch (_) {}
+      }
+      try {
+        await File(croppedPath).delete();
+      } catch (_) {}
       await _set('backgroundImage', target.path);
+      // 与背景色互斥
+      if (_bgColor != null) await _set('backgroundColor', null);
       _toast('背景图已设置，上方预览可见');
     } catch (_) {
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        final temp = File('${docs.path}/course_background.new.png');
+        if (await temp.exists()) await temp.delete();
+      } catch (_) {}
       _toast('设置失败，请重试');
     }
   }
@@ -244,7 +477,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('课表设置',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _future,
@@ -257,32 +490,25 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           _display = snap.data!;
           return Column(
             children: [
-              // ---- 顶部实时预览（固定不滚：调下面的滑杆时始终可见）----
-              // ⚠️ CourseStylePreview 不能加 const：const 实例在父级重建时会被
-              // identical 短路跳过、不重绘（2026-10-13 用户反馈"修改后不变"的根因）。
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: userCard(
-                  context,
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                  child: CourseStylePreview(
-                    courses: _previewCourses,
-                    week: _previewWeek,
-                    monday: _previewMonday,
-                    todayWeekday: _previewToday,
-                  ),
-                ),
-              ),
+              _buildPreviewCollapse(),
               // ---- 设置板块（可滚动 + 可折叠）----
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                child: Column(
                   children: [
-                    _collapsible(
-                      key: 'grid',
-                      icon: Icons.grid_on_rounded,
-                      title: '课程表网格调节',
-                      children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _buildSettingsNav(),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                        children: [
+                          if (_tab == 0)
+                      _collapsible(
+                        key: 'grid',
+                        icon: Icons.grid_on_rounded,
+                        title: '课程表网格调节',
+                        children: [
                         _switchTile(
                           icon: Icons.grid_on_rounded,
                           title: '显示网格线',
@@ -325,9 +551,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           // 这根滑杆控制整体灰的深浅 —— 越大越淡。
                           title: '非本周课程淡化',
                           value: _otherWeeksDim,
-                          min: 0.45,
+                          min: 0.5,
                           max: 0.85,
-                          divisions: 8,
+                          divisions: 7,
                           format: (v) => '${(v * 100).round()}%',
                           // 开关关着时置灰（与「显示网格线」↔粗细/深浅同一模式）
                           enabled: _showOtherWeeks,
@@ -352,11 +578,11 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
                     // v1.6.4：「课表布局」（仿掌上徐工的「课表网格」组）——
                     // 课节高度 / 时间列宽度 / 日期栏高度。
-                    _collapsible(
-                      key: 'layout',
+                    if (_tab == 0)
+                      _collapsible(
+                        key: 'layout',
                       icon: Icons.dashboard_customize_rounded,
                       title: '课表布局',
                       children: [
@@ -365,8 +591,8 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           title: '课节高度',
                           value: _rowHeight,
                           min: 0,
-                          max: 90,
-                          divisions: 18,
+                          max: 120,
+                          divisions: 24,
                           // 0 = 自动：按屏幕可用高度均分（默认，与改造前一致）
                           format: (v) =>
                               v <= 0 ? '自动' : '${v.round()}',
@@ -401,9 +627,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _collapsible(
-                      key: 'blocks',
+                    if (_tab == 2)
+                      _collapsible(
+                        key: 'blocks',
                       icon: Icons.crop_square_rounded,
                       title: '课程块',
                       children: [
@@ -448,9 +674,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           icon: Icons.gradient_rounded,
                           title: '不透明度',
                           value: _blockOpacity,
-                          min: 0.1,
+                          min: 0.35,
                           max: 1,
-                          divisions: 90,
+                          divisions: 13,
                           format: (v) => '${(v * 100).round()}%',
                           onChanged: (v) => _liveSlider('blockOpacity', v),
                           onChangeEnd: _commitSliders,
@@ -485,26 +711,76 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           onChanged: (v) => _liveSlider('blockDashDensity', v),
                           onChangeEnd: _commitSliders,
                         ),
-                        _switchTile(
-                          icon: Icons.person_outline_rounded,
-                          title: '显示任课老师',
-                          value: _showTeacherOnCard,
-                          onChanged: (v) => _set('showTeacherOnCard', v),
-                        ),
-                        _switchTile(
-                          icon: Icons.meeting_room_outlined,
-                          title: '显示教室',
-                          value: _showClassroomOnCard,
-                          onChanged: (v) => _set('showClassroomOnCard', v),
-                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _collapsible(
-                      key: 'display',
+                    if (_tab == 2)
+                      _collapsible(
+                        key: 'card',
+                        icon: Icons.view_agenda_outlined,
+                        title: '课程卡内容',
+                        children: [
+                          _switchTile(
+                            icon: Icons.title_rounded,
+                            title: '显示课程名',
+                            value: _display['showNameOnCard'] != false,
+                            onChanged: (v) => _set('showNameOnCard', v),
+                          ),
+                          _switchTile(
+                            icon: Icons.person_outline_rounded,
+                            title: '显示任课老师',
+                            value: _showTeacherOnCard,
+                            onChanged: (v) => _set('showTeacherOnCard', v),
+                          ),
+                          _switchTile(
+                            icon: Icons.meeting_room_outlined,
+                            title: '显示教室',
+                            value: _showClassroomOnCard,
+                            onChanged: (v) => _set('showClassroomOnCard', v),
+                          ),
+                          _sliderTile(
+                            icon: Icons.format_size_rounded,
+                            title: '课程卡字号',
+                            value: CourseStorage.cardFontScaleCache,
+                            min: 0.85,
+                            max: 1.3,
+                            divisions: 9,
+                            format: (v) => '${(v * 100).round()}%',
+                            onChanged: (v) => _liveSlider('cardFontScale', v),
+                            onChangeEnd: _commitSliders,
+                          ),
+                          _choiceRow<int>(
+                            icon: Icons.notes_rounded,
+                            title: '课程名最大行数',
+                            value: CourseStorage.cardMaxLinesCache,
+                            options: const [
+                              (1, '1 行'),
+                              (2, '2 行'),
+                              (3, '3 行'),
+                            ],
+                            onChanged: (v) => _set('cardMaxLines', v),
+                          ),
+                          _choiceRow<String>(
+                            icon: Icons.short_text_rounded,
+                            title: '超出宽度时',
+                            value: CourseStorage.cardOverflowCache,
+                            options: const [
+                              ('ellipsis', '省略号'),
+                              ('clip', '直接裁剪'),
+                              ('fade', '渐隐'),
+                            ],
+                            onChanged: (v) => _set('cardOverflow', v),
+                          ),
+                          _cardOrderTile(),
+                        ],
+                      ),
+                    if (_tab == 2) _appearancePresetCard(),
+                    if (_tab == 1)
+                      _collapsible(
+                        key: 'display',
                       icon: Icons.wallpaper_rounded,
                       title: '界面显示',
                       children: [
+                        _colorTile(),
                         _imageTile(),
                         _switchTile(
                           icon: Icons.today_rounded,
@@ -512,23 +788,31 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           value: _hideDateRow,
                           onChanged: (v) => _set('hideDateRow', v),
                         ),
+                        _switchTile(
+                          icon: Icons.highlight_rounded,
+                          title: '高亮今天列',
+                          value: _display['highlightToday'] != false,
+                          onChanged: (v) => _set('highlightToday', v),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    // 「同步」不再折叠（用户要求：直接放外面常显）。
-                    userCard(
-                      context,
-                      padding: EdgeInsets.zero,
-                      child: _switchTile(
-                        icon: Icons.sync_rounded,
-                        title: '进入 App 自动更新课表',
-                        value: _autoUpdateOnLaunch,
-                        onChanged: (v) => _set('autoUpdateOnLaunch', v),
+                    if (_tab == 3)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: userCard(
+                          context,
+                          padding: EdgeInsets.zero,
+                          child: _switchTile(
+                            icon: Icons.sync_rounded,
+                            title: '进入 App 自动更新课表',
+                            value: _autoUpdateOnLaunch,
+                            onChanged: (v) => _set('autoUpdateOnLaunch', v),
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    _collapsible(
-                      key: 'courses',
+                    if (_tab == 3)
+                      _collapsible(
+                        key: 'courses',
                       icon: Icons.playlist_add_check_rounded,
                       title: '课程管理',
                       children: [
@@ -556,15 +840,35 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    // v1.6.2：恢复默认设置（外观/显示类设置回到出厂默认）
-                    userCard(
-                      context,
-                      padding: EdgeInsets.zero,
-                      child: _actionTile(
-                        icon: Icons.settings_backup_restore_rounded,
-                        title: '恢复默认设置',
-                        onTap: _resetDisplaySettings,
+                    if (_tab == 3)
+                      _collapsible(
+                        key: 'transfer',
+                      icon: Icons.swap_vert_rounded,
+                      title: '课表方案',
+                      children: [
+                        _actionTile(
+                          icon: Icons.upload_file_rounded,
+                          title: '导出课表方案',
+                          onTap: _exportCourseTables,
+                        ),
+                        _actionTile(
+                          icon: Icons.download_rounded,
+                          title: '导入课表方案',
+                          onTap: _importCourseTables,
+                        ),
+                      ],
+                    ),
+                    if (_tab == 3)
+                      userCard(
+                        context,
+                        padding: EdgeInsets.zero,
+                        child: _actionTile(
+                          icon: Icons.settings_backup_restore_rounded,
+                          title: '恢复默认设置',
+                          onTap: _resetDisplaySettings,
+                        ),
+                      ),
+                        ],
                       ),
                     ),
                   ],
@@ -587,11 +891,11 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
         title: const Text('恢复默认设置',
-            style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
         content: const Text(
             '将把课表的外观与显示设置恢复为默认值'
             '（网格线、颜色、圆角、背景图等）。\n课程内容不受影响。',
-            style: TextStyle(fontSize: 13.5, height: 1.5)),
+            style: TextStyle(fontSize: AppTheme.fontBody, height: 1.5)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -621,6 +925,129 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           : v.toStringAsFixed(1);
 
   /// 可折叠板块（2026-10-13）：标题行点一下展开/收起，收起时只占一行。
+  Widget _buildPreviewCollapse() {
+    final chevron = _previewExpanded
+        ? Icons.keyboard_arrow_up_rounded
+        : Icons.keyboard_arrow_down_rounded;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Column(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _previewExpanded = !_previewExpanded),
+            onVerticalDragEnd: (details) {
+              final v = details.primaryVelocity ?? 0;
+              if (v > 120 && !_previewExpanded) {
+                setState(() => _previewExpanded = true);
+              } else if (v < -120 && _previewExpanded) {
+                setState(() => _previewExpanded = false);
+              }
+            },
+            child: Container(
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: context.surfaceColor,
+                borderRadius: AppTheme.radiusMdAll,
+                border: Border.all(color: context.borderColor),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.visibility_outlined,
+                      size: 17, color: AppTheme.primaryColor),
+                  const SizedBox(width: 8),
+                  Text('课程预览',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall, color: context.textPrimary)),
+                  const Spacer(),
+                  Icon(chevron, size: 18, color: context.textTertiary),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: _previewExpanded
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: userCard(
+                      context,
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                      child: CourseStylePreview(
+                        courses: _previewCourses,
+                        week: _previewWeek,
+                        monday: _previewMonday,
+                        todayWeekday: _previewToday,
+                      ),
+                    ),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsNav() {
+    const tabs = ['布局与网格', '背景与日期', '课程卡', '数据与同步'];
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: context.borderColor)),
+      ),
+      child: Row(
+        children: [
+          for (var i = 0; i < tabs.length; i++)
+            Expanded(
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _tab = i;
+                    if (i == 0) _expanded.addAll({'grid', 'layout'});
+                    if (i == 1) _expanded.add('display');
+                    if (i == 2) {
+                      _expanded.addAll({'blocks', 'card', 'presets'});
+                    }
+                    if (i == 3) {
+                      _expanded.addAll({'courses', 'transfer'});
+                    }
+                  });
+                },
+                child: Container(
+                  height: 42,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: _tab == i
+                            ? AppTheme.primaryColor
+                            : Colors.transparent,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                  child: Text(
+                    tabs[i],
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: AppTheme.fontSmall,
+                      fontWeight:
+                          _tab == i ? FontWeight.w700 : FontWeight.w400,
+                      color: _tab == i
+                          ? AppTheme.primaryColor
+                          : context.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _collapsible({
     required String key,
     required IconData icon,
@@ -633,7 +1060,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       if (i > 0) rows.add(Divider(height: 1, color: context.borderColor));
       rows.add(children[i]);
     }
-    return userCard(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: userCard(
       context,
       padding: EdgeInsets.zero,
       child: Column(
@@ -646,8 +1075,12 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                 _expanded.add(key);
               }
             }),
-            child: SizedBox(
+            // 头部底色比组内选项稍暗：把「分组标题」与「选项」区分开
+            child: Container(
               height: 52,
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.white.withValues(alpha: 0.035)
+                  : Colors.black.withValues(alpha: 0.025),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
@@ -657,7 +1090,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                     Expanded(
                       child: Text(title,
                           style: TextStyle(
-                            fontSize: 14.5,
+                            fontSize: AppTheme.fontBody,
                             fontWeight: FontWeight.w600,
                             color: context.textPrimary,
                           )),
@@ -679,42 +1112,10 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           ],
         ],
       ),
-    );
-  }
-
-  /// 开关行：**单行**（左图标 + 标题 + 右侧开关）。
-  /// [enabled] 为 false 时置灰不可点（例如「显示网格线」关着时的粗细滑杆）。
-  /// 入口行（v1.6.0，恢复已忽略的冲突课程）：图标 + 标题 + 右侧值。
-  Widget _entryTile({
-    required IconData icon,
-    required String title,
-    required String value,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      onTap: onTap,
-      dense: true,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      leading: Icon(icon, size: 20, color: context.textTertiary),
-      title: Text(title,
-          style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: context.textPrimary)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(value,
-              style:
-                  TextStyle(fontSize: 13, color: context.textTertiary)),
-          const SizedBox(width: 4),
-          Icon(Icons.chevron_right_rounded,
-              size: 18, color: context.textTertiary),
-        ],
       ),
     );
   }
+
 
   /// 恢复已忽略的冲突课程（v1.6.0）：单个恢复或全部恢复 ——
   /// 移出忽略名单后，下次同步这些课会重新出现。
@@ -727,12 +1128,12 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
           title: const Text('已忽略的冲突课程',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
           content: SizedBox(
             width: 320,
             child: keys.isEmpty
                 ? const Text('没有已忽略的课程',
-                    style: TextStyle(fontSize: 13.5))
+                    style: TextStyle(fontSize: AppTheme.fontBody))
                 : SingleChildScrollView(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -742,7 +1143,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                             dense: true,
                             contentPadding: EdgeInsets.zero,
                             title: Text(_droppedLabel(k),
-                                style: const TextStyle(fontSize: 13)),
+                                style: const TextStyle(fontSize: AppTheme.fontSmall)),
                             trailing: TextButton(
                               onPressed: () async {
                                 final next = List<String>.from(keys)
@@ -785,61 +1186,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     );
   }
 
-  /// 把忽略名单的签名还原成可读文案：课名（教师）· 周X 第a-b节。
-  String _droppedLabel(String key) {
-    final p = key.split('|');
-    if (p.length < 6) return key;
-    final wd = switch (int.tryParse(p[2]) ?? 1) {
-      0 => '每天',
-      -1 => '工作日',
-      final w => '周$w',
-    };
-    final teacher = p[1].isEmpty ? '' : '（${p[1]}）';
-    return '${p[0]}$teacher · $wd 第${p[3]}-${p[4]}节';
-  }
 
-  /// 色彩方案行（v1.6.9；2026-10-16 起升级为「整套外观方案」）：
-  /// 一排三个色卡，点了**立即套用该方案的配色 + 外观预设**（圆角 / 课节 / 边框等）。
-  ///
-  /// 色卡里的小圆点用**同一批示例色**在该方案下的实际颜色 ——
-  /// 三套方案并排一眼能比出区别（用户要求：不要只给文字档位名字）。
-  Widget _schemeTile() {
-    final cur = CourseColorScheme.parse(_display['scheme']);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(Icons.palette_outlined,
-                  size: 20, color: AppTheme.primaryColor),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text('色彩方案',
-                    style:
-                        TextStyle(fontSize: 14.5, color: context.textPrimary)),
-              ),
-              Text(cur.label,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.primaryColor,
-                  )),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              for (final s in CourseColorScheme.values) ...[
-                Expanded(child: _schemeChip(s, cur)),
-                if (s != CourseColorScheme.values.last) const SizedBox(width: 8),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _schemeChip(CourseColorScheme s, CourseColorScheme cur) {
     final selected = s == cur;
@@ -878,7 +1225,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
             Text(
               s.label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: AppTheme.fontCaption,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 color: selected
                     ? AppTheme.primaryColor
@@ -891,132 +1238,246 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     );
   }
 
-  Widget _switchTile({
-    required IconData icon,
-    required String title,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-    bool enabled = true,
-  }) =>
-      SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
-          child: Row(
-            children: [
-              Icon(icon,
-                  size: 20,
-                  color: enabled
-                      ? AppTheme.primaryColor
-                      : context.textTertiary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(title,
-                    style: TextStyle(
-                        fontSize: 14.5,
-                        color: enabled
-                            ? context.textPrimary
-                            : context.textTertiary)),
-              ),
-              Transform.scale(
-                scale: 0.8,
-                child: Switch(
-                  value: value,
-                  onChanged: enabled ? onChanged : null,
-                  activeColor: Colors.white,
-                  activeTrackColor: AppTheme.primaryColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+  List<String> get _cardOrder {
+    final raw = _display['cardFieldOrder'];
+    if (raw is List) {
+      final list = raw
+          .map((e) => e.toString())
+          .where((e) => ['name', 'teacher', 'classroom'].contains(e))
+          .toList();
+      if (list.length == 3) return list;
+    }
+    return const ['name', 'classroom', 'teacher'];
+  }
 
-  /// 滑杆行（v1.3.0）：标题 + 当前值一行，滑杆一行。
-  ///
-  /// [onChanged] 拖动中回调（实时预览），[onChangeEnd] 松手回调（存盘）。
-  /// [enabled] 为 false 时置灰不可拖（例如「显示网格线」关着时的粗细 / 深浅）。
-  Widget _sliderTile({
+  Widget _choiceRow<T>({
     required IconData icon,
     required String title,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required String Function(double) format,
-    required ValueChanged<double> onChanged,
-    required Future<void> Function() onChangeEnd,
-    bool enabled = true,
+    required T value,
+    required List<(T, String)> options,
+    required ValueChanged<T> onChanged,
   }) {
-    final v = value.clamp(min, max).toDouble();
-    // v1.4.0 紧凑化（用户要求）：行内边距收紧 + 滑杆区压到 32 高（原 48），
-    // 单条约 80px → 58px，一屏能多看到两三条。
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon,
-                  size: 20,
-                  color: enabled
-                      ? AppTheme.primaryColor
-                      : context.textTertiary),
+              Icon(icon, size: 20, color: AppTheme.primaryColor),
               const SizedBox(width: 12),
-              Expanded(
-                child: Text(title,
-                    style: TextStyle(
-                        fontSize: 14.5,
-                        color: enabled
-                            ? context.textPrimary
-                            : context.textTertiary)),
-              ),
-              Text(
-                format(v),
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: enabled
-                      ? AppTheme.primaryColor
-                      : context.textTertiary,
-                ),
-              ),
+              Text(title,
+                  style: TextStyle(
+                      fontSize: AppTheme.fontBody, color: context.textPrimary)),
             ],
           ),
-          SizedBox(
-            height: 32,
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 2.5,
-                activeTrackColor: AppTheme.primaryColor,
-                inactiveTrackColor: context.borderColor,
-                disabledActiveTrackColor:
-                    AppTheme.primaryColor.withOpacity(0.3),
-                disabledInactiveTrackColor:
-                    context.borderColor.withOpacity(0.7),
-                thumbColor: AppTheme.primaryColor,
-                disabledThumbColor: AppTheme.primaryColor.withOpacity(0.3),
-                overlayColor: AppTheme.primaryColor.withOpacity(0.12),
-                thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 7, disabledThumbRadius: 7, elevation: 0),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 13),
-              ),
-              child: Slider(
-                value: v,
-                min: min,
-                max: max,
-                divisions: divisions,
-                onChanged: enabled ? onChanged : null,
-                onChangeEnd: enabled ? (_) => onChangeEnd() : null,
-              ),
-            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final option in options)
+                ChoiceChip(
+                  label: Text(option.$2,
+                      style: const TextStyle(fontSize: AppTheme.fontSmall)),
+                  selected: option.$1 == value,
+                  showCheckmark: false,
+                  onSelected: (_) => onChanged(option.$1),
+                ),
+            ],
           ),
         ],
       ),
     );
   }
 
+
+  Widget _appearancePresetCard() {
+    return _collapsible(
+      key: 'presets',
+      icon: Icons.palette_outlined,
+      title: '我的外观方案',
+      children: [
+        _actionTile(
+          icon: Icons.bookmark_add_outlined,
+          title: '保存当前外观',
+          onTap: _saveAppearancePreset,
+        ),
+        _actionTile(
+          icon: Icons.upload_file_rounded,
+          title: '导出外观方案',
+          onTap: _exportAppearance,
+        ),
+        _actionTile(
+          icon: Icons.download_rounded,
+          title: '导入外观方案',
+          onTap: _importAppearance,
+        ),
+        if (_presets.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+            child: Text('还没有保存的方案',
+                style: TextStyle(
+                    fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+          )
+        else
+          for (final name in _presets.keys)
+            ListTile(
+              dense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16),
+              leading: Icon(Icons.bookmark_outline_rounded,
+                  size: 20, color: context.textTertiary),
+              title: Text(name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: AppTheme.fontBody)),
+              trailing: IconButton(
+                tooltip: '删除',
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                onPressed: () => _deleteAppearancePreset(name),
+              ),
+              onTap: () => _applyAppearancePatch(_presets[name]!),
+            ),
+      ],
+    );
+  }
+
+
+
   /// 背景图行：单行（缩略图 + 清除 / 选择按钮）。
+  /// 课表背景色（与背景图**二选一**）。
+  Widget _colorTile() {
+    final argb = _bgColor;
+    final imgOn = _bgPath.isNotEmpty;
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => setState(() => _colorOpen = !_colorOpen),
+          child: SizedBox(
+            height: 48,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+              child: Row(
+                children: [
+                  Icon(Icons.palette_rounded,
+                      size: 20, color: AppTheme.primaryColor),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('课表背景色',
+                            style: TextStyle(
+                                fontSize: AppTheme.fontBody, color: context.textPrimary)),
+                        if (imgOn)
+                          Text('已设背景图，选色会清掉图片',
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontCaption, color: context.textTertiary)),
+                      ],
+                    ),
+                  ),
+                  if (argb != null)
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: Color(argb),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: context.borderColor),
+                      ),
+                    ),
+                  const SizedBox(width: 6),
+                  Icon(_colorOpen ? Icons.expand_less : Icons.expand_more,
+                      size: 20, color: context.textTertiary),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (_bgPath.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('背景图深浅',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontSmall, color: context.textSecondary)),
+                    const Spacer(),
+                    Text(
+                        '${((1 - CourseStorage.backgroundDimCache) * 100).round()}%',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+                  ],
+                ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 7),
+                    overlayShape: SliderComponentShape.noOverlay,
+                  ),
+                  child: Slider(
+                    value: (1 - CourseStorage.backgroundDimCache)
+                        .clamp(0.05, 1.0),
+                    min: 0.05,
+                    max: 1.0,
+                    divisions: 19,
+                    activeColor: AppTheme.primaryColor,
+                    inactiveColor: context.borderColor,
+                    // 100% = 图最明显（蒙层最薄）；拖动只改内存，松手写盘。
+                    onChanged: (v) =>
+                        _liveSlider('backgroundDim', (1 - v).clamp(0.0, 0.95)),
+                    onChangeEnd: (_) => _commitSliders(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (_colorOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CourseBgColorPicker(
+                  initial: argb,
+                  // 与缓存同口径：缺字段也算开（默认渐变）
+                  gradient: _display['bgGradient'] != false,
+                  onGradientChanged: (v) => _set('bgGradient', v),
+                  gradientStrength:
+                      (_display['bgGradientStrength'] as num?)?.toDouble() ??
+                          0.78,
+                  onGradientStrengthChanged: (v) =>
+                      _set('bgGradientStrength', v),
+                  onChanged: (v) async {
+                    await _set('backgroundColor', v);
+                    // 与背景图互斥
+                    if (_bgPath.isNotEmpty) {
+                      await _set('backgroundImage', '');
+                    }
+                  },
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed:
+                        argb == null ? null : () => _set('backgroundColor', null),
+                    child: const Text('恢复默认', style: TextStyle(fontSize: AppTheme.fontSmall)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _imageTile() => SizedBox(
         height: 48,
         child: Padding(
@@ -1029,7 +1490,7 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
               Expanded(
                 child: Text('课表背景图',
                     style:
-                        TextStyle(fontSize: 14.5, color: context.textPrimary)),
+                        TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary)),
               ),
               if (_hasBg)
                 ClipRRect(
@@ -1060,36 +1521,4 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
         ),
       );
 
-  /// 操作行：单行（左图标 + 标题 + 右箭头）。
-  Widget _actionTile({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-    bool danger = false,
-  }) =>
-      SizedBox(
-        height: 48,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Icon(icon,
-                    size: 20,
-                    color: danger ? AppTheme.danger : AppTheme.primaryColor),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(title,
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        color: danger ? AppTheme.danger : context.textPrimary,
-                      )),
-                ),
-                Icon(Icons.chevron_right, color: context.textTertiary),
-              ],
-            ),
-          ),
-        ),
-      );
 }

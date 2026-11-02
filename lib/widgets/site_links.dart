@@ -38,7 +38,7 @@ class SiteLinksRow extends StatelessWidget {
               icon: Icon(icon, size: 17),
               label: Text(label,
                   style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
+                      fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
               style: OutlinedButton.styleFrom(
                 foregroundColor: fg,
                 side: BorderSide(color: side),

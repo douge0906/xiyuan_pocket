@@ -23,50 +23,138 @@ class JwglClient {
       '$_base/jwglxt/cjcx/cjcx_cxXsgrcj.html?doType=query';
 
   /// 抓取全部学期成绩。失败抛 [CampusException]。
+  ///
+  /// 2026-10-29：不再固定只查 3 个学期，也不只看第一页。
+  /// 先查「全部学期」，再补查最近 10 个学期；每个查询按 500/页翻页，
+  /// 防止成绩行数超过 500 时后面的学期被截断。
   static Future<Map<String, dynamic>> fetchGrades(
     CampusSession session, {
     int rows = 500,
   }) async {
     final csrf = await _openPage(session, _gradePage);
 
-    // 「全部学期」+ 当前/前两个学期各查一次（行数拉满），合并去重
-    final terms = <List<String>>[
-      ['', ''],
-      ..._recentTerms(2),
-    ];
-
     final all = <Map<String, dynamic>>[];
-    for (final t in terms) {
-      final items = await _query(
-        session,
-        _gradeApi,
-        {
-          'xnm': t[0],
-          'xqm': t[1],
-          '_search': 'false',
-          'nd': '${DateTime.now().millisecondsSinceEpoch}',
-          'page': '1',
-          'rows': '$rows',
-          'sidx': '',
-          'sord': 'asc',
-          if (csrf.isNotEmpty) 'csrftoken': csrf,
-        },
-      );
-      all.addAll(items);
+    Object? lastError;
+    var failed = 0;
+
+    Future<void> addTerm(List<String> t) async {
+      try {
+        final items = await _queryGrade(
+          session,
+          {
+            'xnm': t[0],
+            'xqm': t[1],
+            '_search': 'false',
+            'nd': '${DateTime.now().millisecondsSinceEpoch}',
+            'page': '1',
+            'rows': '$rows',
+            'queryModel.showCount': '$rows',
+            'queryModel.currentPage': '1',
+            'queryModel.sortName': '',
+            'queryModel.sortOrder': 'asc',
+            'sidx': '',
+            'sord': 'asc',
+            if (csrf.isNotEmpty) 'csrftoken': csrf,
+          },
+          pageSize: rows,
+        );
+        all.addAll(items);
+      } catch (e) {
+        if (e is CampusException && e.needRelogin) rethrow;
+        lastError = e;
+        failed++;
+      }
       await Future<void>.delayed(const Duration(milliseconds: 120));
     }
 
-    // 去重（课程号_课程名_学年_学期）
+    // 先查「全部学期」，再补查最近 10 个学期。即使某个学期已出现，
+    // 也仍然查询补漏：全部学期接口可能只返回该学期的一部分行。
+    await addTerm(['', '']);
+    for (final t in _recentTerms(10)) {
+      await addTerm(t);
+    }
+
+    if (all.isEmpty && lastError != null) {
+      throw lastError!;
+    }
+
+    // 去重：课程号/课程名 + 学期 + 教师 + 成绩。
+    // 加教师和成绩，避免同名课的不同教学班/补考成绩被误删。
     final seen = <String>{};
     final unique = <Map<String, dynamic>>[];
     for (final g in all) {
-      final key = '${g['kch']}_${g['kcmc']}_${g['xnm']}_${g['xqm']}';
+      final key = '${g['kch'] ?? g['kcmc']}_${g['kcmc']}_'
+          '${_gradeTermKey(g)}_${g['jsxm'] ?? ''}_'
+          '${g['cj'] ?? g['bfzcj'] ?? ''}';
       if (seen.add(key)) unique.add(g);
     }
     if (unique.isEmpty) {
       throw CampusException('未查询到成绩数据，请确认账号已选课或稍后重试');
     }
-    return _buildGradeResult(unique);
+    final result = _buildGradeResult(unique);
+    // 任一学期请求失败时明确告知界面，避免把不完整结果当成完整结果。
+    if (failed > 0) result['partial'] = true;
+    return result;
+  }
+
+  /// 成绩查询有两个常见入口，按顺序尝试；任一入口有数据即返回。
+  static Future<List<Map<String, dynamic>>> _queryGrade(
+    CampusSession session,
+    Map<String, String> form, {
+    required int pageSize,
+  }) async {
+    Object? lastError;
+    var responded = false;
+    for (final url in [
+      _gradeApi,
+      '$_gradePage?doType=query&gnmkdm=N305005',
+    ]) {
+      try {
+        final items =
+            await _queryAll(session, url, form, pageSize: pageSize);
+        responded = true;
+        if (items.isNotEmpty) return items;
+      } catch (e) {
+        if (e is CampusException && e.needRelogin) rethrow;
+        lastError = e;
+      }
+    }
+    if (responded) return const [];
+    if (lastError != null) throw lastError;
+    return const [];
+  }
+
+  /// 逐页拉取某个学期；服务端不认 page 时通过「没有新增行」停止。
+  static Future<List<Map<String, dynamic>>> _queryAll(
+    CampusSession session,
+    String apiUrl,
+    Map<String, String> form, {
+    required int pageSize,
+  }) async {
+    final out = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (var page = 1; page <= 10; page++) {
+      final pageForm = <String, String>{
+        ...form,
+        'page': '$page',
+        'rows': '$pageSize',
+        'queryModel.currentPage': '$page',
+        'queryModel.showCount': '$pageSize',
+      };
+      final items = await _query(session, apiUrl, pageForm);
+      var added = 0;
+      for (final item in items) {
+        final key = '${item['kch'] ?? item['kcmc']}_'
+            '${item['kcmc']}_${_gradeTermKey(item)}_'
+            '${item['jsxm']}_${item['cj'] ?? item['bfzcj'] ?? ''}';
+        if (seen.add(key)) {
+          out.add(item);
+          added++;
+        }
+      }
+      if (items.isEmpty || added == 0) break;
+    }
+    return out;
   }
 
   /// 最近 n 个学年/学期码（含当前与前 2 个），用于兜底覆盖「全部学期」查询
@@ -87,11 +175,48 @@ class JwglClient {
     return out;
   }
 
+  /// 学年/学期去重键：优先中文名，空串时才用代码兜底。
+  static String _gradeTermKey(Map<String, dynamic> g) {
+    String pick(String nameKey, String codeKey) {
+      final name = (g[nameKey] ?? '').toString().trim();
+      if (name.isNotEmpty) return name;
+      return (g[codeKey] ?? '').toString().trim();
+    }
+
+    return '${pick('xnmmc', 'xnm')}|${pick('xqmmc', 'xqm')}';
+  }
+
+  /// 学期显示名。优先用教务给的中文名；缺失时用学年/学期码兜底，
+  /// 避免所有课程被塞进「 第学期」一个空分组。
+  static String _gradeSemesterLabel(Map<String, dynamic> g) {
+    var year = (g['xnmmc'] ?? '').toString().trim();
+    var term = (g['xqmmc'] ?? '').toString().trim();
+    if (year.isEmpty) {
+      final raw = (g['xnm'] ?? '').toString().trim();
+      final y = int.tryParse(raw);
+      year = y == null ? raw : '$y-${y + 1}';
+    }
+    if (term.isEmpty) {
+      final qm = (g['xqm'] ?? '').toString().trim();
+      term = switch (qm) {
+        '3' => '1',
+        '12' => '2',
+        _ => qm,
+      };
+    }
+    if (year.isEmpty) year = '未知学年';
+    if (term.isEmpty) term = '?';
+    if (term.startsWith('第')) {
+      return '$year $term';
+    }
+    return '$year 第$term学期';
+  }
+
   /// 把原始成绩行整理为「按学期分组」的结构（字段与原实现一致）
   static Map<String, dynamic> _buildGradeResult(List<Map<String, dynamic>> grades) {
     final bySem = <String, List<Map<String, dynamic>>>{};
     for (final g in grades) {
-      final key = '${g['xnmmc'] ?? ''} 第${g['xqmmc'] ?? ''}学期';
+      final key = _gradeSemesterLabel(g);
       bySem.putIfAbsent(key, () => []).add(g);
     }
 
@@ -131,9 +256,13 @@ class JwglClient {
     var allXfjd = 0.0;
     for (final s in semesters) {
       for (final c in (s['courses'] as List)) {
-        final cxf = (c['xf'] as num).toDouble();
+        if (c is! Map) continue;
+        // 🔴 用 tryParse 而不是裸 `as num`：教务不同版本的字段类型不稳定，
+        //    值为字符串时裸转会抛 TypeError → 整个成绩查询失败。
+        final cxf = double.tryParse('${c['xf'] ?? 0}') ?? 0.0;
+        final cjd = double.tryParse('${c['jd'] ?? 0}') ?? 0.0;
         allXf += cxf;
-        allXfjd += cxf * (c['jd'] as num).toDouble();
+        allXfjd += cxf * cjd;
       }
     }
     final first = grades.isNotEmpty ? grades.first : const <String, dynamic>{};
@@ -201,7 +330,7 @@ class JwglClient {
     return {
       'success': true,
       'message': exams.isEmpty ? '本学期暂无考试安排' : '考试安排查询成功',
-      'semester': '$xnm-${int.parse(xnm) + 1} 第${xqm == '3' ? 1 : 2}学期',
+      'semester': '${_academicYear(xnm)} 第${xqm == '3' ? 1 : 2}学期',
       'exams': exams,
       'count': exams.length,
     };
@@ -299,7 +428,7 @@ class JwglClient {
     }
 
     if (books.isEmpty && lastError is CampusException) throw lastError;
-    // 2026-10-13（与在线版同步）：**网络类异常也必须抛出去**。原来只重抛
+    // 2026-10-13：**网络类异常也必须抛出去**。原来只重抛
     // CampusException，断网/超时被吞掉后返回 success:true 且文案
     // 「本学期暂无教材信息」—— 用户以为教务真的没教材（代码审查报告：断网误报空）。
     if (books.isEmpty && lastError != null) {
@@ -516,4 +645,13 @@ class CampusException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// 学年名称：「2025」→「2025-2026」。
+///
+/// 用 tryParse 而不是裸 int.parse：xnm 来自 UI 透传，一旦传进来
+/// 「2025-2026」或空串，裸 parse 会抛 FormatException 打断整条抓取链路。
+String _academicYear(String xnm) {
+  final y = int.tryParse(xnm);
+  return y == null ? xnm : '$xnm-${y + 1}';
 }

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件选择器预览 · 考试倒计时（静态示范） -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:background="@drawable/widget_card_bg_light">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="考试倒计时"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#667085" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="高等数学期末"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="2 天"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="bottom"
+        android:text="2026-06-15 · 08:30 · A301 教学楼"
+        android:textSize="10.5sp"
+        android:lineSpacingExtra="1dp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="#667085" />
+</LinearLayout>

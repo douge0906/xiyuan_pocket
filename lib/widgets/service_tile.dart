@@ -38,7 +38,7 @@ class ServiceTile extends StatelessWidget {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(isDark ? 0.20 : 0.10),
+                  color: iconColor.withValues(alpha: isDark ? 0.20 : 0.10),
                   borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Icon(tool.icon, size: 19, color: iconColor),
@@ -54,7 +54,7 @@ class ServiceTile extends StatelessWidget {
                           child: Text(
                             tool.name,
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: AppTheme.fontBody,
                               fontWeight: FontWeight.w600,
                               color: titleColor,
                             ),
@@ -62,16 +62,6 @@ class ServiceTile extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (tool.isNew) ...[
-                          const SizedBox(width: 6),
-                          const Text(
-                            '新',
-                            style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF10B981)),
-                          ),
-                        ],
                         if (tool.badgeText != null && tool.badgeText!.isNotEmpty) ...[
                           const SizedBox(width: 6),
                           Container(
@@ -83,21 +73,12 @@ class ServiceTile extends StatelessWidget {
                             ),
                             child: Text(
                               tool.badgeText!,
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
+                              style: const TextStyle(fontSize: AppTheme.fontCaption, fontWeight: FontWeight.w600, color: Color(0xFFB45309)),
                             ),
                           ),
                         ],
                       ],
                     ),
-                    if (tool.description.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        tool.description,
-                        style: TextStyle(fontSize: 11, color: subColor),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
                   ],
                 ),
               ),

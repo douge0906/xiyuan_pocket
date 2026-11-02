@@ -119,7 +119,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
             Text(
               '选择日期',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: AppTheme.fontTitle,
                 fontWeight: FontWeight.bold,
                 color: _text,
               ),
@@ -142,7 +142,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
                 child: Text(
                   '${_month.year} 年 ${_month.month} 月',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w600,
                     color: _text,
                   ),
@@ -158,7 +158,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
             for (final w in _weekCn)
               Expanded(
                 child: Center(
-                  child: Text(w, style: TextStyle(fontSize: 11, color: _faint)),
+                  child: Text(w, style: TextStyle(fontSize: AppTheme.fontCaption, color: _faint)),
                 ),
               ),
           ],
@@ -179,7 +179,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
                 child: Text(
                   '今天',
                   style: TextStyle(
-                      fontSize: 13,
+                      fontSize: AppTheme.fontSmall,
                       color: _faint,
                       fontWeight: FontWeight.w500),
                 ),
@@ -193,7 +193,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 child: Text('取消',
-                    style: TextStyle(fontSize: 13, color: _faint)),
+                    style: TextStyle(fontSize: AppTheme.fontSmall, color: _faint)),
               ),
             ),
             const SizedBox(width: 6),
@@ -210,7 +210,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
                 child: const Text(
                   '确定',
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTheme.fontSmall,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
                   ),
@@ -228,7 +228,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
       onPressed: enabled ? onTap : null,
       icon: Icon(icon, size: 20),
       color: _faint,
-      disabledColor: _faint.withOpacity(0.3),
+      disabledColor: _faint.withValues(alpha: 0.3),
       visualDensity: VisualDensity.compact,
       tooltip: icon == Icons.chevron_left_rounded ? '上个月' : '下个月',
     );
@@ -243,7 +243,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
     if (selected) {
       fg = Colors.white;
     } else if (!inRange) {
-      fg = _faint.withOpacity(0.35);
+      fg = _faint.withValues(alpha: 0.35);
     } else if (isToday) {
       fg = AppTheme.primaryColor;
     } else {
@@ -270,7 +270,7 @@ class _DatePickPanelState extends State<DatePickPanel> {
             child: Text(
               '${date.day}',
               style: TextStyle(
-                fontSize: 13.5,
+                fontSize: AppTheme.fontBody,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 color: fg,
               ),

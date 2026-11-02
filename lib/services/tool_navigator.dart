@@ -4,6 +4,8 @@ import 'auth_gate.dart';
 import 'tool_usage_storage.dart';
 import '../pages/tools/grade_query_page.dart';
 import '../pages/tools/exam_query_page.dart';
+import '../pages/tools/my_study_page.dart';
+import '../pages/tools/resource_center_page.dart';
 import '../pages/tools/xyl_calendar_page.dart';
 import '../pages/tools/textbook_page.dart';
 import '../pages/tools/campus_map_page.dart';
@@ -18,6 +20,7 @@ class ToolNavigator {
     'grade_push',
     'exam_query',
     'textbook',
+    'my_study',
   };
 
   static Future<void> open(
@@ -44,9 +47,17 @@ class ToolNavigator {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ExamQueryPage()));
         break;
+      case 'my_study':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const MyStudyPage()));
+        break;
       case 'xyl_calendar':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const XylCalendarPage()));
+        break;
+      case 'library':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const ResourceCenterPage()));
         break;
       // 地图不需要登录（纯内置图片）；教材已在上面过闸门
       case 'textbook':

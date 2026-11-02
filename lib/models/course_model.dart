@@ -442,7 +442,7 @@ Color _shiftColor(
 Color textOnColor(Color bg) {
   // 相对亮度（Rec. 601）
   final luminance =
-      (0.299 * bg.red + 0.587 * bg.green + 0.114 * bg.blue) / 255;
+      0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
   return luminance > 0.62 ? AppTheme.textPrimaryLight : Colors.white;
 }
 

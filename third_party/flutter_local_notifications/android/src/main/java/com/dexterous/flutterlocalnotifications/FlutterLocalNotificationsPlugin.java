@@ -745,7 +745,19 @@ public class FlutterLocalNotificationsPlugin
         AlarmManagerCompat.setExact(
             alarmManager, AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
       } else if (notificationDetails.scheduleMode.useAlarmClock()) {
-        checkCanScheduleExactAlarms(alarmManager);
+        // ⚠️ [掌上锡院 v1.0.8 补丁] 2026-10-31：
+        //    上游这里也调了 checkCanScheduleExactAlarms()，但
+        //    **系统 AlarmManager.setAlarmClock() 本身并不需要
+        //    SCHEDULE_EXACT_ALARM 权限**（那是给闹钟应用的特权），
+        //    它照样能在 Doze / 应用 standby 下准时唤醒。
+        //
+        //    上游多这一道检查的结果：用户没拿到精确闹钟权限时，
+        //    alarmClock 也用不了 → 只能退到 inexactAllowWhileIdle
+        //    → Doze 下可能延迟数小时甚至不响 → 用户反馈
+        //    「清除后台后收不到提醒」。
+        //
+        //    这里放开：alarmClock 不再检查该权限，作为
+        //    「没有精确闹钟权限」时的**准时兜底**。
         AlarmManagerCompat.setAlarmClock(alarmManager, epochMilli, pendingIntent, pendingIntent);
       } else {
         alarmManager.set(AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
@@ -763,7 +775,8 @@ public class FlutterLocalNotificationsPlugin
       AlarmManagerCompat.setExactAndAllowWhileIdle(
           alarmManager, AlarmManager.RTC_WAKEUP, epochMilli, pendingIntent);
     } else if (notificationDetails.scheduleMode.useAlarmClock()) {
-      checkCanScheduleExactAlarms(alarmManager);
+      // ⚠️ 同上：alarmClock 不需要 SCHEDULE_EXACT_ALARM，
+      //    不做权限检查（系统 setAlarmClock 本身就有 Doze 唤醒能力）。
       AlarmManagerCompat.setAlarmClock(alarmManager, epochMilli, pendingIntent, pendingIntent);
     } else {
       AlarmManagerCompat.setAndAllowWhileIdle(
@@ -1321,6 +1334,15 @@ public class FlutterLocalNotificationsPlugin
         // ③ 状态栏胶囊/流体云里的短文案（short critical text）——
         // 成熟案例做法：只放关键短信息。这里从标题「距上课 N 分钟 · 课程名」提取成「还剩 N 分钟」，
         // 提取不到时截断标题，兜底「即将上课」。
+        //
+        // ⚠️ 2026-10-31（用户反馈「通知岛太宽」）：
+        //    胶囊的**宽度由这段短文案决定**，文案越长胶囊越宽。
+        //    原来「还剩 10 分钟」带前后缀与空格，标题兜底还截到 12 个字
+        //    （中文 12 字 ≈ 胶囊横跨大半个屏幕）。
+        //    现在压到最短：
+        //      · 有分钟数 → 「10分钟」（去掉「还剩」与空格）
+        //      · 标题兜底 → 最多 6 字（一个课程名足够辨识）
+        //    这样胶囊只占屏幕一小段，不再横跨。
         try {
           CharSequence title = extras == null ? null : extras.getCharSequence("android.title");
           String raw = title == null ? "" : title.toString();
@@ -1328,9 +1350,11 @@ public class FlutterLocalNotificationsPlugin
           java.util.regex.Matcher m =
               java.util.regex.Pattern.compile("(\\d+)\\s*分钟").matcher(raw);
           if (m.find()) {
-            shortText = "还剩 " + m.group(1) + " 分钟";
-          } else if (raw.length() > 12) {
-            shortText = raw.substring(0, 12);
+            // 「还剩 10 分钟」→「10分钟」
+            shortText = m.group(1) + "分钟";
+          } else if (raw.length() > 6) {
+            // 兜底截断：6 个中文字以内，胶囊才不会太宽。
+            shortText = raw.substring(0, 6);
           } else if (raw.isEmpty()) {
             shortText = "即将上课";
           } else {

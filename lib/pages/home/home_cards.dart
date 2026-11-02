@@ -19,6 +19,7 @@ class HomeTodayOverview extends StatelessWidget {
     required this.todoDone,
     required this.todoTotal,
     required this.nextExam,
+    this.courseLabel = '今天课程',
   });
 
   final bool isDark;
@@ -29,6 +30,7 @@ class HomeTodayOverview extends StatelessWidget {
 
   /// 最近一场考试（无则显示「暂无考试」）。
   final ExamCountdown? nextExam;
+  final String courseLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +70,7 @@ class HomeTodayOverview extends StatelessWidget {
                 icon: Icons.menu_book_rounded,
                 iconColor: const Color(0xFF3B82F6),
                 main: '$todayCourseCount',
-                sub: '今天课程',
+                sub: courseLabel,
                 titleColor: titleColor,
                 subColor: subColor,
               ),
@@ -136,7 +138,7 @@ class _OverviewItem extends StatelessWidget {
           main,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: titleColor),
+          style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.bold, color: titleColor),
         ),
         const SizedBox(height: 2),
         Padding(
@@ -146,7 +148,7 @@ class _OverviewItem extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: subColor),
+            style: TextStyle(fontSize: AppTheme.fontCaption, color: subColor),
           ),
         ),
       ],
@@ -198,7 +200,7 @@ class HomeCampusNetStatus extends StatelessWidget {
           const SizedBox(width: 5),
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: context.textTertiary),
+            style: TextStyle(fontSize: AppTheme.fontCaption, color: context.textTertiary),
           ),
         ],
       ),

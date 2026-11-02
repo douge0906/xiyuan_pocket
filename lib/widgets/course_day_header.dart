@@ -36,13 +36,16 @@ class CourseDayHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     // 直接由开学日期正向推算第 N 周的周一，避免「今天回推」跨学期错乱（9.7 bug 修复）
     final monday = semesterStart.add(Duration(days: (selectedWeek - 1) * 7));
-    final surfaceColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final surfaceColor = context.cardColor;
+    // 日期栏要和时间栏一样透出全屏背景，否则顶部留一条实色（2026-10-26）
+    final hasFullBg = CourseStorage.backgroundImageCache.isNotEmpty ||
+        CourseStorage.backgroundColorCache != null;
 
     return Container(
       // v1.6.4：日期栏高度可调（课表布局滑杆，默认 56）
       height: CourseStorage.dateRowHeightCache,
       decoration: BoxDecoration(
-        color: surfaceColor,
+        color: hasFullBg ? Colors.transparent : surfaceColor,
         border: Border(bottom: BorderSide(color: context.borderColor)),
       ),
       child: Row(
@@ -56,7 +59,7 @@ class CourseDayHeader extends StatelessWidget {
                 children: [
                   Text(
                     '第$selectedWeek周',
-                    style:  TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+                    style:  TextStyle(fontSize: AppTheme.fontCaption, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
                     textAlign: TextAlign.center,
                   ),
                    Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppTheme.primaryColor),
@@ -66,178 +69,217 @@ class CourseDayHeader extends StatelessWidget {
           ),
           for (int i = 0; i < 7; i++)
             Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                    courseDayLabels[i],
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: i + 1 == todayWeekday ? FontWeight.bold : FontWeight.w500,
-                      color: i + 1 == todayWeekday ? AppTheme.primaryColor : (isDark ? Colors.grey.shade400 : const Color(0xFF6B7280)),
-                    ),
-                  ),
-                  // 2026-10-13：设置里可隐藏「月/日」（只留周几）
-                  if (!CourseStorage.hideDateRowCache) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: i + 1 == todayWeekday
-                            ? AppTheme.primaryColor.withOpacity(0.85)
-                            : (isDark ? Colors.grey.shade600 : Colors.grey.shade500),
+              child: Container(
+                color: i + 1 == todayWeekday &&
+                        CourseStorage.highlightTodayCache
+                    ? AppTheme.primaryColor.withValues(alpha: 0.05)
+                    : Colors.transparent,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        courseDayLabels[i],
+                        style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          fontWeight: i + 1 == todayWeekday
+                              ? FontWeight.bold
+                              : FontWeight.w500,
+                          color: i + 1 == todayWeekday
+                              ? AppTheme.primaryColor
+                              : (isDark
+                                  ? Colors.grey.shade400
+                                  : const Color(0xFF6B7280)),
+                        ),
                       ),
-                    ),
-                  ],
-                ],
+                      // 2026-10-13：设置里可隐藏「月/日」（只留周几）
+                      if (!CourseStorage.hideDateRowCache) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
+                          style: TextStyle(
+                            fontSize: AppTheme.fontCaption,
+                            color: i + 1 == todayWeekday
+                                ? AppTheme.primaryColor.withValues(alpha: 0.85)
+                                : (isDark
+                                    ? Colors.grey.shade600
+                                    : Colors.grey.shade500),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
   void _pickWeek(BuildContext context) {
+    // 🔴 白色弹层内的文字一律用固定深色常量，不再跟 isDark 走三元。
+    //    弹层底色写死纯白（与 semester_picker 一致），若文字仍取深色主题的浅灰
+    //    就是白底浅灰字，深色模式下几乎读不出来（v1.0.9 修正）。
+    const ink = Color(0xFF1F1F1F);
+    const sub = Color(0xFF9CA3AF);
     final currentWeek = CourseStorage.teachingWeek(DateTime.now(), semesterStart);
     final startStr =
         '${semesterStart.year}-${semesterStart.month.toString().padLeft(2, '0')}-${semesterStart.day.toString().padLeft(2, '0')}';
-    showModalBottomSheet(
+    showDialog<void>(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Color(0xFFE8E8EE)),
         ),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        child: SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
-              ),
-              const SizedBox(height: 12),
-              Text('选择周数', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: context.textPrimary)),
-              const SizedBox(height: 4),
-              Text(
-                '点击「调整」可修改开学日期，周次随之变化',
-                style: TextStyle(fontSize: 11, color: isDark ? Colors.grey.shade500 : const Color(0xFF9CA3AF)),
-              ),
-              const SizedBox(height: 12),
-              // 开学日期卡片
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                  border: Border.all(color: AppTheme.primaryColor.withOpacity(0.15)),
-                ),
-                child: Row(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400, maxHeight: 560),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 标题行 + 右上角 ×（UI 死律：居中 Dialog 必须可关）
+                Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(7),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryColor.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                      ),
-                      child:  Icon(Icons.event_rounded, size: 17, color: AppTheme.primaryColor),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text('选择周数',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontTitle,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F1F1F))),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('开学日期（第 1 周周一）',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 2),
-                          Text(
-                            startStr,
-                            style: TextStyle(fontSize: 12.5, color: isDark ? Colors.grey.shade300 : const Color(0xFF374151)),
-                          ),
-                        ],
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () async {
-                        final picked = await showCourseDatePicker(
-                          context: ctx,
-                          initialDate: semesterStart,
-                          firstDate: DateTime(2020, 1, 1),
-                          lastDate: DateTime(2035, 12, 31),
-                          helpText: '选择开学日期（用于计算教学周）',
-                        );
-                        if (picked != null && ctx.mounted) {
-                          onSemesterStartChanged(picked);
-                          Navigator.of(ctx).pop();
-                        }
-                      },
-                      icon: const Icon(Icons.edit_calendar_rounded, size: 16),
-                      label: const Text('调整'),
-                      style: TextButton.styleFrom(foregroundColor: AppTheme.primaryColor),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close_rounded,
+                          size: 20, color: Color(0xFF9CA3AF)),
+                      tooltip: '关闭',
+                      visualDensity: VisualDensity.compact,
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 8),
-              const Divider(height: 1),
-              const SizedBox(height: 4),
-              SizedBox(
-                height: 260,
-                child: ListView.builder(
-                  itemCount: 25,
-                  itemBuilder: (_, i) {
-                    final week = i + 1;
-                    final isCurrent = week == currentWeek;
-                    final isSelected = week == selectedWeek;
-                    // 该周日期范围（周一 ~ 周日）
-                    final wm = semesterStart.add(Duration(days: (week - 1) * 7));
-                    final dateText = '${wm.month}/${wm.day} - ${wm.add(const Duration(days: 6)).month}/${wm.add(const Duration(days: 6)).day}';
-                    return ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                      leading: isCurrent
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryColor,
-                                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                              ),
-                              child: const Text('本周', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)),
-                            )
-                          : null,
-                      title: Text(
-                        '第$week周',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                          color: isSelected
-                              ? AppTheme.primaryColor
-                              : (isDark ? Colors.grey.shade300 : const Color(0xFF374151)),
+                const SizedBox(height: 4),
+                Text(
+                  '点击「调整」可修改开学日期，周次随之变化',
+                  style: const TextStyle(fontSize: AppTheme.fontCaption, color: sub),
+                ),
+                const SizedBox(height: 12),
+                // 开学日期卡片
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                    border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.15)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                        ),
+                        child:  Icon(Icons.event_rounded, size: 17, color: AppTheme.primaryColor),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('开学日期（第 1 周周一）',
+                                style: TextStyle(
+                                    fontSize: AppTheme.fontSmall,
+                                    fontWeight: FontWeight.w600,
+                                    color: ink)),
+                            const SizedBox(height: 2),
+                            Text(
+                              startStr,
+                              style: const TextStyle(fontSize: AppTheme.fontSmall, color: ink),
+                            ),
+                          ],
                         ),
                       ),
-                      subtitle: Text(
-                        dateText,
-                        style: TextStyle(fontSize: 11, color: isDark ? Colors.grey.shade600 : const Color(0xFF9CA3AF)),
+                      TextButton.icon(
+                        onPressed: () async {
+                          final picked = await showCourseDatePicker(
+                            context: ctx,
+                            initialDate: semesterStart,
+                            firstDate: DateTime(2020, 1, 1),
+                            lastDate: DateTime(2035, 12, 31),
+                            helpText: '选择开学日期（用于计算教学周）',
+                          );
+                          if (picked != null && ctx.mounted) {
+                            onSemesterStartChanged(picked);
+                            Navigator.of(ctx).pop();
+                          }
+                        },
+                        icon: const Icon(Icons.edit_calendar_rounded, size: 16),
+                        label: const Text('调整'),
+                        style: TextButton.styleFrom(foregroundColor: AppTheme.primaryColor),
                       ),
-                      trailing: isSelected ?  Icon(Icons.check_circle_rounded, color: AppTheme.primaryColor, size: 20) : null,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
-                      selectedTileColor: AppTheme.primaryColor.withOpacity(0.08),
-                      onTap: () {
-                        onWeekChanged(week);
-                        Navigator.of(ctx).pop();
-                      },
-                    );
-                  },
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                const Divider(height: 1),
+                const SizedBox(height: 4),
+                SizedBox(
+                  height: 260,
+                  child: ListView.builder(
+                    itemCount: 25,
+                    itemBuilder: (_, i) {
+                      final week = i + 1;
+                      final isCurrent = week == currentWeek;
+                      final isSelected = week == selectedWeek;
+                      // 该周日期范围（周一 ~ 周日）
+                      final wm = semesterStart.add(Duration(days: (week - 1) * 7));
+                      final dateText = '${wm.month}/${wm.day} - ${wm.add(const Duration(days: 6)).month}/${wm.add(const Duration(days: 6)).day}';
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                        leading: isCurrent
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primaryColor,
+                                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                                ),
+                                child: const Text('本周', style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.white, fontWeight: FontWeight.w600)),
+                              )
+                            : null,
+                        title: Text(
+                          '第$week周',
+                          style: TextStyle(
+                            fontSize: AppTheme.fontBody,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                            color: isSelected
+                                ? AppTheme.primaryColor
+                                : ink,
+                          ),
+                        ),
+                        subtitle: Text(
+                          dateText,
+                          style: const TextStyle(fontSize: AppTheme.fontCaption, color: sub),
+                        ),
+                        trailing: isSelected ?  Icon(Icons.check_circle_rounded, color: AppTheme.primaryColor, size: 20) : null,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+                        selectedTileColor: AppTheme.primaryColor.withValues(alpha: 0.08),
+                        onTap: () {
+                          onWeekChanged(week);
+                          Navigator.of(ctx).pop();
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

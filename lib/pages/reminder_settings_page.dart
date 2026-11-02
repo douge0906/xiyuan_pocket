@@ -6,6 +6,7 @@ import '../services/course_reminder_service.dart';
 import '../services/live_update_service.dart';
 import '../services/notification_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_card.dart';
 
 /// 上课提醒设置页（v2.3.0）。
 ///
@@ -29,6 +30,8 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
   bool _notifOk = false;
   bool _exactOk = false;
   bool _hang = false; // 是否倒计时（默认关：通知 5 秒后消失）
+  /// 安卓通知岛（实时更新 / 流体云）开关，默认开。
+  bool _liveUpdate = true;
   Map<String, dynamic> _stats = {}; // 排程统计（条数 + 下一条提醒）
   /// Android 16 实时胶囊（Live Updates / 流体云）诊断状态
   Map<String, dynamic> _capsule = {};
@@ -56,6 +59,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
     final enabled = await CourseReminderService.isEnabled();
     final lead = await CourseReminderService.leadMinutes();
     final hang = await CourseReminderService.hangCountdown();
+    final liveUpdate = await CourseReminderService.liveUpdateEnabled();
     final notifOk = await NotificationService.notificationsEnabled();
     final exactOk = await NotificationService.exactAlarmsEnabled();
     final capsule = await LiveUpdateService.status();
@@ -71,6 +75,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
       _enabled = enabled;
       _lead = lead;
       _hang = hang;
+      _liveUpdate = liveUpdate;
       _notifOk = notifOk;
       _exactOk = exactOk;
       _capsule = capsule;
@@ -117,19 +122,20 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
   Future<bool?> _showSetupDialog({bool firstTime = false}) async {
     var lead = _lead;
     var hang = _hang;
+    var liveUpdate = _liveUpdate;
     return showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           title: Text(firstTime ? '开启上课提醒' : '提醒设置',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              style: const TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
           content: SingleChildScrollView(
             child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('提前提醒时间',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -143,7 +149,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                       onSelected: (_) => setLocal(() => lead = m),
                       selectedColor: AppTheme.primaryColor,
                       labelStyle: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         fontWeight: FontWeight.w600,
                         color: selected ? Colors.white : const Color(0xFF374151),
                       ),
@@ -158,7 +164,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                       (lead != 5 && lead != 10 && lead != 15 && lead != 20)
                           ? '自定义 $lead 分钟'
                           : '自定义',
-                      style: const TextStyle(fontSize: 12.5),
+                      style: const TextStyle(fontSize: AppTheme.fontSmall),
                     ),
                     onPressed: () async {
                       final v = await _askCustomLead(lead);
@@ -174,10 +180,26 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                 value: hang,
                 onChanged: (v) => setLocal(() => hang = v),
                 title: const Text('倒计时',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
                 subtitle: Text(
                   hang ? '通知常驻，实时倒数到上课时刻' : '提醒只显示 5 秒后自动消失（默认）',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade600),
+                ),
+              ),
+              const SizedBox(height: 4),
+              // 安卓通知岛（实时更新）：与「倒计时」是**两条独立通道**。
+              // 通知岛要求通知常驻 + 系统倒计时，5 秒即撤的短提醒进不了胶囊。
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: liveUpdate,
+                onChanged: (v) => setLocal(() => liveUpdate = v),
+                title: const Text('通知岛（实时更新）',
+                    style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                  liveUpdate
+                      ? '通知常驻并倒数到上课，可在状态栏胶囊/流体云中查看（Android 16+）'
+                      : '关闭后只显示普通横幅通知',
+                  style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade600),
                 ),
               ),
             ],
@@ -192,6 +214,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
               onPressed: () async {
                 await CourseReminderService.setLeadMinutes(lead);
                 await CourseReminderService.setHangCountdown(hang);
+                await CourseReminderService.setLiveUpdate(liveUpdate);
                 if (ctx.mounted) Navigator.of(ctx).pop(true);
               },
               style: ElevatedButton.styleFrom(
@@ -213,7 +236,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('自定义提前时间',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
         content: TextField(
           controller: ctl,
           autofocus: true,
@@ -301,14 +324,14 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
       height: 22,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: done ? const Color(0xFF22C55E) : const Color(0xFFF59E0B).withOpacity(0.15),
+        color: done ? const Color(0xFF22C55E) : const Color(0xFFF59E0B).withValues(alpha: 0.15),
       ),
       child: done
           ? const Icon(Icons.check_rounded, size: 14, color: Colors.white)
           : Center(
               child: Text('$n',
                   style: const TextStyle(
-                      fontSize: 12.5,
+                      fontSize: AppTheme.fontSmall,
                       fontWeight: FontWeight.w600,
                       color: Color(0xFFB45309))),
             ),
@@ -336,16 +359,16 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(hint,
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                      style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade600)),
                 ],
               ),
             ),
             Text(done ? '已完成' : '去开启',
                 style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: AppTheme.fontSmall,
                     fontWeight: FontWeight.w600,
                     color: done ? const Color(0xFF16A34A) : AppTheme.primaryColor)),
             const SizedBox(width: 4),
@@ -358,18 +381,12 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
   }
 
   Widget _card({required Widget child}) {
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      decoration: BoxDecoration(
-        border: Border.all(color: context.borderColor),
-        // 2026-10-13：原来硬编码白底 —— 深色模式下整页白卡刺眼，改为跟随主题。
-        color: Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF1E1E1E)
-            : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        boxShadow: AppTheme.cardShadow,
+      child: AppCard(
+        radius: AppTheme.radiusLg,
+        child: child,
       ),
-      child: child,
     );
   }
 
@@ -398,7 +415,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                 const SizedBox(width: 6),
                 Text('实时胶囊（Android 16）',
                     style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTheme.fontBody,
                         fontWeight: FontWeight.w600,
                         color: Colors.grey.shade800)),
                 const Spacer(),
@@ -406,16 +423,16 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: promotedOk == true
-                        ? const Color(0xFF22C55E).withOpacity(0.15)
-                        : const Color(0xFFF59E0B).withOpacity(0.15),
+                        ? const Color(0xFF22C55E).withValues(alpha: 0.15)
+                        : const Color(0xFFF59E0B).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
                     !supported
                         ? '系统不支持'
-                        : (promotedOk == true ? '已提升 ✓' : '未提升'),
+                        : (promotedOk == true ? '已提升' : '未提升'),
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: AppTheme.fontCaption,
                         fontWeight: FontWeight.w600,
                         color: !supported
                             ? Colors.grey.shade600
@@ -444,13 +461,13 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
             Text(
               '说明：通知栏条数=本应用当前在通知栏的通知；已变胶囊=被系统显示为胶囊/流体云卡片的条数。'
               '测试提醒到达后会立即刷新。',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade500, height: 1.4),
+              style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade500, height: 1.4),
             ),
             const SizedBox(height: 4),
             Text('最近通知：$lastTitle',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade600)),
             const SizedBox(height: 2),
             Align(
               alignment: Alignment.centerRight,
@@ -461,7 +478,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                     if (mounted) _refresh();
                   });
                 },
-                child: const Text('打开系统实时更新设置', style: TextStyle(fontSize: 12.5)),
+                child: const Text('打开系统实时更新设置', style: TextStyle(fontSize: AppTheme.fontSmall)),
               ),
             ),
           ],
@@ -528,7 +545,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                   child: Text(
                     '未来 7 天已排 $count 条提醒',
                     style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         fontWeight: FontWeight.w600,
                         color: Colors.grey.shade800),
                   ),
@@ -541,7 +558,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
               child: Text('下一条：$nextText',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700)),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: Colors.grey.shade700)),
             ),
             if (savedAt != null) ...[
               const SizedBox(height: 2),
@@ -550,7 +567,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                 child: Text(
                   '上次排程：${savedAt.month}/${savedAt.day} '
                   '${savedAt.hour.toString().padLeft(2, '0')}:${savedAt.minute.toString().padLeft(2, '0')}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                  style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade500),
                 ),
               ),
             ],
@@ -558,7 +575,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
             Padding(
               padding: const EdgeInsets.only(left: 20),
               child: Text('点此处可修改提前时间与倒计时',
-                  style: TextStyle(fontSize: 11, color: AppTheme.primaryColor)),
+                  style: TextStyle(fontSize: AppTheme.fontCaption, color: AppTheme.primaryColor)),
             ),
           ],
         ),
@@ -581,13 +598,13 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                 : (ok ? const Color(0xFF22C55E) : const Color(0xFFF59E0B)),
           ),
           const SizedBox(width: 6),
-          Text('$label：', style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600)),
+          Text('$label：', style: TextStyle(fontSize: AppTheme.fontSmall, color: Colors.grey.shade600)),
           Expanded(
             child: Text(value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: AppTheme.fontSmall,
                     color: Colors.grey.shade800,
                     fontWeight: FontWeight.w500)),
           ),
@@ -603,7 +620,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('上课提醒',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
       ),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
@@ -621,12 +638,12 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                             color: Color(0xFF6C5CE7)),
                         title: const Text('课程提醒',
                             style: TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.w600)),
+                                fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
                         subtitle: Text(
                           _enabled
                               ? '提前 $_lead 分钟 · ${_hang ? '倒计时' : '提醒 5 秒后消失'}'
                               : '开启后按课表自动提醒',
-                          style: const TextStyle(fontSize: 12.5),
+                          style: const TextStyle(fontSize: AppTheme.fontSmall),
                         ),
                       ),
                       if (_enabled) _reminderStatusBlock(),
@@ -648,7 +665,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                             const SizedBox(width: 6),
                             Text('让提醒 100% 到达，只需三步',
                                 style: TextStyle(
-                                    fontSize: 14,
+                                    fontSize: AppTheme.fontBody,
                                     fontWeight: FontWeight.w600,
                                     color: Colors.grey.shade800)),
                           ],
@@ -671,7 +688,14 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                           n: 2,
                           done: _exactOk,
                           title: '开启「闹钟和提醒」精确闹钟',
-                          hint: _exactOk ? '已开启，提醒准点不迟到' : '不开启提醒可能晚几分钟',
+                          // ⚠️ 2026-10-31：文案如实说明后果。
+                          //    没精确闹钟权限时会退到「闹钟模式」兜底
+                          //    （仍能准时，但状态栏多一个闹钟图标）；
+                          //    再退一步才是非精确 —— 那在 Doze 下可能**晚几小时**，
+                          //    甚至整个下午都不响。原来的「可能晚几分钟」太乐观。
+                          hint: _exactOk
+                              ? '已开启，提醒准点不迟到'
+                              : '未开启：提醒仍会响，但可能延后，个别机型会晚数小时',
                           onTap: _openExactAlarm,
                         ),
                         _guideTile(
@@ -697,7 +721,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                     '修改课表或开学日期后会自动重新排程。',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade500, height: 1.5),
+                        fontSize: AppTheme.fontCaption, color: Colors.grey.shade500, height: 1.5),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -708,7 +732,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                     onPressed: _enabled ? _sendTest : null,
                     icon: const Icon(Icons.alarm_rounded, size: 18),
                     label: const Text('发送测试提醒',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryColor,
                       foregroundColor: Colors.white,
@@ -726,7 +750,7 @@ class _ReminderSettingsPageState extends State<ReminderSettingsPage>
                     _enabled
                         ? '测试提醒 3 秒后到达（120 秒倒计时），可退出 App 验证'
                         : '先开启课程提醒',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                    style: TextStyle(fontSize: AppTheme.fontCaption, color: Colors.grey.shade500),
                   ),
                 ),
               ],

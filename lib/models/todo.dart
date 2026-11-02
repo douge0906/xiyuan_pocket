@@ -15,6 +15,9 @@ class Todo {
   final DateTime? reminderTime;
   final bool completed;
 
+  /// 优先级：0=普通，1=重要，2=紧急。
+  final int priority;
+
   /// 2026-10-17（新版首页）：类型标签（作业 / 复习 / 其他）。可空 = 未分类。
   final String? type;
 
@@ -38,6 +41,30 @@ class Todo {
   /// 非重复任务仍用 [completed]；重复任务每条实例各自独立，不能只用一个 bool。
   final List<String> completedDates;
 
+  /// **这条「已完成」归属于哪一天**（`yyyy-MM-dd`）。
+  ///
+  /// 🔴 为什么需要（2026-10-31）：
+  ///    课程待办的 id 是**派生**出来的（`course_<课程id>_<yyyyMMdd>`），
+  ///    历史版本没补零时 `2026-01-12` 与 `2026-11-02` 会撞成同一个 id
+  ///    `course_5_2026112`。库里一旦存在**同 id 不同日期**的两行，
+  ///    仓库里那些「按 id 首个匹配」的写路径就会把 A 天的完成态写到 B 天上
+  ///    —— 表现为「查看明日待办时，课程因为时间原因被默认完成，状态延续到今日」。
+  ///
+  ///    把「完成态属于哪一天」显式记下来之后，完成态天然按天隔离：
+  ///    即使 id 撞号，两行的 [completedDay] 不同，互不影响。
+  ///
+  /// 为空 = 沿用旧的 [completed] 布尔（历史数据兼容）。
+  final String? completedDay;
+
+  /// **提前提醒分钟数**（0 = 准点提醒）。
+  ///
+  /// [dueAt] 是事项本身的时间（"15:30 交作业"），
+  /// [reminderTime] 是**实际响铃的时刻** = dueAt − 本字段。
+  ///
+  /// 2026-10-31：原来待办只能准点提醒（课程提醒才有提前量），
+  /// 这里给待办也加上提前档位（提前 5 / 10 / 30 分钟等）。
+  final int remindLeadMinutes;
+
   const Todo({
     required this.id,
     required this.title,
@@ -45,16 +72,34 @@ class Todo {
     required this.date,
     this.reminderTime,
     this.completed = false,
+    this.priority = 0,
     this.type,
     this.dueAt,
     this.repeatType,
     this.repeatDays = const <int>[],
     this.completedDates = const <String>[],
+    this.completedDay,
+    this.remindLeadMinutes = 0,
   });
 
-  /// 统一的一天标识（本地时区），用于 [completedDates]。
-  static String dayKey(DateTime d) =>
+  /// 统一的一天标识（本地时区），用于 [completedDates] / [completedDay]。
+  ///
+  /// ⚠️ 叫 `dayKeyOf` 而不是 `dayKey`：实例 getter [dayKey] 才是「本条待办
+  ///    自己那天的标识」，静态方法要显式传日期 —— 同名会让人误用。
+  static String dayKeyOf(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// 本条待办**自身日期**的一天标识。
+  String get dayKey => Todo.dayKeyOf(date);
+
+  /// **复合身份键**：`id@日期`。
+  ///
+  /// 🔴 这才是待办真正的身份 —— 不是 `id`。
+  ///    课程待办的 id 是派生的，历史撞号会让「同 id 不同日期」的两行共存；
+  ///    仓库里所有按 id 单键匹配的写路径（add/addMany/update/delete/
+  ///    toggleComplete*）都会因此改错行。
+  ///    改用这个键后，跨天串写从根上消失。
+  String get compositeKey => '$id@$dayKey';
 
   /// 是否为重复任务。
   bool get isRepeating => repeatType == 'daily' || repeatType == 'weekly';
@@ -75,23 +120,43 @@ class Todo {
     }
   }
 
-  /// 这一天是否已完成（重复任务按日期记，非重复按 [completed]）。
-  bool isDoneOn(DateTime day) =>
-      isRepeating ? completedDates.contains(dayKey(day)) : completed;
+  /// 这一天是否已完成。
+  ///
+  /// - 重复任务：看 [completedDates] 里有没有这一天；
+  /// - 非重复任务且填了 [completedDay]：看它是否等于这一天
+  ///   （**按天隔离**，即使 id 撞号也不会串）；
+  /// - 非重复任务且没填 [completedDay]（历史数据）：退回 [completed]。
+  bool isDoneOn(DateTime day) {
+    if (isRepeating) return completedDates.contains(Todo.dayKeyOf(day));
+    final cd = completedDay;
+    if (cd != null) return cd == Todo.dayKeyOf(day);
+    return completed;
+  }
 
   /// 通知 ID：由 [id] 确定性推导，非负、稳定、无随机。
   /// Android 通知 id 为 32 位 int，这里折叠到 31 位正整数区间。
   int get notifyId => stableNotifyId(id);
 
-  /// FNV-1a 哈希，把任意 id 字符串映射为稳定的 31 位正整数。
+  /// FNV-1a 哈希 + 固定高位偏移，把任意 id 字符串映射为稳定的通知 id。
+  ///
+  /// 🔴 为什么要加 `0x40000000` 偏移（2026-11-01 修）：
+  ///    「上课提醒」占用 `CourseReminderService` 的
+  ///    `_idBase(100000) + dayIndex(0..6)*_dayStride(20) + startSlot(1..12)`
+  ///    = 100000..100152 这一整段。而这里原来只把哈希折到 31 位，
+  ///    结果可能落进 100000..100152（概率 ≈153/2³¹），一旦撞上就是
+  ///    「取消上课提醒时把某条待办提醒一起取消」。
+  ///    抬高到 2³⁰ 以上后两段**物理不相交**，不会再撞。
+  ///
+  /// ⚠️ 改这里会让升级后重新计算的 id 与旧版不同：旧通知靠
+  ///    [TodoRepository.rescheduleAll] 里 cancel 掉 tracked 集合来清理，
+  ///    正常情况下不会留幽灵通知。
   static int stableNotifyId(String source) {
     var hash = 0x811c9dc5;
     for (final unit in source.codeUnits) {
       hash ^= unit;
       hash = (hash * 0x01000193) & 0x7fffffff;
     }
-    // 避免 0（部分平台把 0 当作特殊值），落到 0 时偏移为 1。
-    return hash == 0 ? 1 : hash;
+    return 0x40000000 + (hash & 0x3FFFFFFF);
   }
 
   Todo copyWith({
@@ -102,6 +167,7 @@ class Todo {
     DateTime? reminderTime,
     bool clearReminder = false,
     bool? completed,
+    int? priority,
     String? type,
     DateTime? dueAt,
     bool clearDueAt = false,
@@ -109,6 +175,9 @@ class Todo {
     bool clearRepeat = false,
     List<int>? repeatDays,
     List<String>? completedDates,
+    String? completedDay,
+    bool clearCompletedDay = false,
+    int? remindLeadMinutes,
   }) {
     return Todo(
       id: id ?? this.id,
@@ -117,11 +186,15 @@ class Todo {
       date: date ?? this.date,
       reminderTime: clearReminder ? null : (reminderTime ?? this.reminderTime),
       completed: completed ?? this.completed,
+      priority: priority ?? this.priority,
       type: type ?? this.type,
       dueAt: clearDueAt ? null : (dueAt ?? this.dueAt),
       repeatType: clearRepeat ? null : (repeatType ?? this.repeatType),
       repeatDays: repeatDays ?? this.repeatDays,
       completedDates: completedDates ?? this.completedDates,
+      completedDay:
+          clearCompletedDay ? null : (completedDay ?? this.completedDay),
+      remindLeadMinutes: remindLeadMinutes ?? this.remindLeadMinutes,
     );
   }
 
@@ -132,11 +205,14 @@ class Todo {
         'date': date.toIso8601String(),
         'reminderTime': reminderTime?.toIso8601String(),
         'completed': completed,
+        'priority': priority,
         'type': type,
         'dueAt': dueAt?.toIso8601String(),
         'repeatType': repeatType,
         'repeatDays': repeatDays,
         'completedDates': completedDates,
+        'completedDay': completedDay,
+        'remindLeadMinutes': remindLeadMinutes,
       };
 
   /// 从 JSON 还原。**宽松解析**（v2.4.0）：
@@ -171,6 +247,16 @@ class Todo {
     final doneRaw = json['completedDates'];
     final completedDates =
         doneRaw is List ? doneRaw.whereType<String>().toList() : <String>[];
+    // 2026-10-31：完成态归属日。脏数据（非字符串）一律当没有。
+    final completedDayRaw = json['completedDay'];
+    final completedDay = completedDayRaw is String &&
+            completedDayRaw.trim().isNotEmpty
+        ? completedDayRaw.trim()
+        : null;
+    // 2026-10-31：提前提醒分钟数（脏数据 → 0 = 准点）。
+    final leadRaw = json['remindLeadMinutes'];
+    final remindLeadMinutes =
+        leadRaw is num ? leadRaw.toInt().clamp(0, 24 * 60) : 0;
     return Todo(
       id: (json['id'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
@@ -178,6 +264,10 @@ class Todo {
       date: parsedDate ?? DateTime.now(),
       reminderTime: parsedReminder,
       completed: json['completed'] == true || json['completed'] == 1,
+      priority: (json['priority'] is num
+              ? (json['priority'] as num).toInt()
+              : 0)
+          .clamp(0, 2),
       type: (typeRaw is String && typeRaw.trim().isNotEmpty)
           ? typeRaw.trim()
           : null,
@@ -185,6 +275,8 @@ class Todo {
       repeatType: repeatType,
       repeatDays: repeatDays,
       completedDates: completedDates,
+      completedDay: completedDay,
+      remindLeadMinutes: remindLeadMinutes,
     );
   }
 }

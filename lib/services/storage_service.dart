@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../theme/app_theme.dart';
 
 /// 统一用户配置：ShowDoc 链接、统一认证账密、游客/登录状态、主题、最后版本。
 class UserConfig {
@@ -50,7 +51,6 @@ class StorageService {
   static const String _kThemeMode = 'user_theme_mode';
   static const String _kPrimaryColor = 'user_primary_color'; // v1.8.0 自定义主题色
   static const String _kStudentName = 'student_name'; // 学生姓名缓存（「我的」页展示）
-  static const String _kJwglNoticeDismissed = 'jwgl_notice_dismissed';
   static const String _kHiddenServices = 'hidden_services'; // v1.9.0 服务页显示/隐藏
 
   // 教务密码专用键：存放在系统安全存储（Android Keystore / iOS Keychain），
@@ -98,7 +98,7 @@ class StorageService {
       username: username,
       password: password,
       rememberPassword: remember,
-      themeMode: _parseThemeMode(prefs.getString(_kThemeMode)),
+      themeMode: parseThemeMode(prefs.getString(_kThemeMode)),
       primaryColor: prefs.getInt(_kPrimaryColor) ?? 0,
     );
   }
@@ -121,12 +121,21 @@ class StorageService {
     await prefs.remove(_kOldPassword);
   }
 
-  static ThemeMode _parseThemeMode(String? v) {
+  /// 解析持久化的主题模式字符串。
+  ///
+  /// 🔴 「跟随系统」(system) 必须原样返回：它是设置页里真实存在的选项，
+  ///    之前这里把它迁移成浅色 → 用户选了跟随系统、重启后又变回浅色。
+  ///    公开出来是为了能直接测这条规则。
+  @visibleForTesting
+  static ThemeMode parseThemeMode(String? v) {
     switch (v) {
       case 'dark':
         return ThemeMode.dark;
-      // 旧版本存过 'system'（跟随系统）；该选项已取消 → 迁移为浅色。
+      // 「跟随系统」是真实存在的选项（设置 → 界面与显示 → 明暗模式），
+      // 必须原样读回 —— 之前这里把它强制迁移成浅色，导致用户选了
+      // 「跟随系统」重启后又变回浅色。
       case 'system':
+        return ThemeMode.system;
       default:
         return ThemeMode.light;
     }
@@ -155,16 +164,6 @@ class StorageService {
   // 2026-10-18：免责声明弹窗已按用户要求整段删除，这两个读写方法一并移除。
 
   /// 教务系统时段提示（温馨提示）是否已被用户选择「不再提醒」。
-  static Future<bool> loadJwglNoticeDismissed() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_kJwglNoticeDismissed) ?? false;
-  }
-
-  static Future<void> saveJwglNoticeDismissed(bool dismissed) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kJwglNoticeDismissed, dismissed);
-  }
-
   // ---- 服务页显示/隐藏（v1.9.0） ----
 
   /// 读取被隐藏的服务 id 列表。未设置返回空列表（= 全部显示）。
@@ -255,17 +254,83 @@ class StorageService {
   // 启动时读出并 apply 到 AppTheme；改的时候立刻 apply + 存盘。
   static const String _kUiRadiusScale = 'ui_radius_scale';
 
-  /// 没调过 → 用默认（最小，趋近直角）；调过 → 以存盘值为准并夹到合法区间。
+  /// 没调过 → 用 [AppTheme.defaultRadiusScale]（设计稿原值）；
+  /// 调过 → 以存盘值为准并夹到合法区间。
+  ///
+  /// 2026-11-02（用户审批 D1「圆角恢复成设计稿大小」）：
+  /// 这里原来写死 `0.55`，只改 AppTheme 的默认值对**老用户完全无效** ——
+  /// 他们手机上已经存了 0.55，启动时照样把 0.55 读回来覆盖掉新默认。
+  /// 现在改成：没有存盘值就用 AppTheme 的默认值；存的是 0.55 就一次性迁到默认值。
+  ///
+  /// 为什么 0.55 可以无脑迁：它既是 2026-10-24 之前的 AppTheme 默认值，
+  /// 也是那次「0.2 → 0.55」强制迁移的目标值，停在这个数上的人几乎都不是主动选的。
+  /// 真主动调过 0.55 的人重新拨一下只要两秒，而留在 0.55 等于 D1 永远不生效。
   static Future<double> loadUiRadiusScale() async {
     final prefs = await SharedPreferences.getInstance();
     final v = prefs.getDouble(_kUiRadiusScale);
-    if (v == null || v <= 0) return 0.2;
-    return v.clamp(0.2, 1.6);
+    if (v == null || v <= 0) return AppTheme.defaultRadiusScale;
+
+    // 0.2 是更早的「趋近直角」默认值，直接归到新默认，不再经过中间态 0.55。
+    const migrated020 = 'ui_radius_default_migrated_055';
+    const migratedDefault = 'ui_radius_default_migrated_design';
+    final lookedLikeOldDefault = (v - 0.2).abs() < 0.001 || (v - 0.55).abs() < 0.001;
+    if (lookedLikeOldDefault && prefs.getBool(migratedDefault) != true) {
+      await prefs.setBool(migrated020, true);
+      await prefs.setBool(migratedDefault, true);
+      await prefs.setDouble(_kUiRadiusScale, AppTheme.defaultRadiusScale);
+      return AppTheme.defaultRadiusScale;
+    }
+
+    return v.clamp(AppTheme.minRadiusScale, AppTheme.maxRadiusScale);
   }
 
   static Future<void> saveUiRadiusScale(double scale) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kUiRadiusScale, scale);
+  }
+
+  // ---------------- 全局外观：字体缩放 / 动效强度 ----------------
+
+  static const String _kUiTextScale = 'ui_text_scale';
+  static const String _kUiMotion = 'ui_motion';
+
+  /// 字体缩放（0.85~1.30）；没调过 → 1.0。
+  static Future<double> loadUiTextScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getDouble(_kUiTextScale);
+    if (v == null || v <= 0) return 1.0;
+    return v.clamp(0.85, 1.30);
+  }
+
+  static Future<void> saveUiTextScale(double v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kUiTextScale, v);
+  }
+
+  /// 动效强度（0~1）；没调过 → 1.0。
+  static Future<double> loadUiMotion() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getDouble(_kUiMotion);
+    if (v == null || v < 0) return 1.0;
+    return v.clamp(0.0, 1.0);
+  }
+
+  static Future<void> saveUiMotion(double v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kUiMotion, v);
+  }
+
+  static const String _kUiHaptics = 'ui_haptics';
+
+  /// 振动反馈开关；没调过 → 开。
+  static Future<bool> loadUiHaptics() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kUiHaptics) ?? true;
+  }
+
+  static Future<void> saveUiHaptics(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kUiHaptics, v);
   }
 
   // ---------------- 页面背景色（v1.5.0，浅色模式生效） ----------------
@@ -281,7 +346,7 @@ class StorageService {
 
   static Future<void> saveUiBackgroundColor(Color? c) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_kUiBackgroundColor, c?.value ?? -1);
+    await prefs.setInt(_kUiBackgroundColor, c?.toARGB32() ?? -1);
   }
 
   // ---------------- 消息页栏目样式（v1.1.0） ----------------
@@ -324,7 +389,7 @@ class StorageService {
 
   static Future<String> loadMessageStyle() async {
     final prefs = await SharedPreferences.getInstance();
-    // 2026-10-11：默认改为圆角卡片（v1.7.1 起与在线版对齐 —— 此前开源版还停在纯白，
+    // 2026-10-11：默认改为圆角卡片（v1.7.1 起 —— 此前此前还停在纯白，
     // 新装用户在两个版本上看到的默认样式不一样）
     return prefs.getString(_kMessageStyle) ?? kMessageStyleCard;
   }

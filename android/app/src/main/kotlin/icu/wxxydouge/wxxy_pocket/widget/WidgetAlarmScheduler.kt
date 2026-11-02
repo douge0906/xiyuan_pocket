@@ -52,6 +52,13 @@ object WidgetAlarmScheduler {
                 next = minOf(next, startOfMinute(now, course.endMinute))
             }
         }
+        // 2026-10-26：倒计时开关打开时**每分钟**刷一次文案 ——
+        // 「还有 X 分钟」是静态文本，只靠课程切换点刷新会一直显示旧值。
+        // 与下一个课程切换点取较早者，闹钟链自动持续。
+        if (data.prefs.countdown) {
+            val perMinute = now + 60_000
+            if (perMinute < next) next = perMinute
+        }
         return if (next == Long.MAX_VALUE) null else next
     }
 

@@ -1,10 +1,12 @@
 import 'auth_gate.dart';
 import 'campus/campus_store.dart';
+import 'dorm_service.dart';
 import 'storage_service.dart';
+import 'widget_sync_service.dart';
 
 /// 「我的」页与查询页 到 **客户端直连** 的门面。
 ///
-/// ⚠️ 开源版说明：本类原名 `ApiService`，是服务端 HTTP 接口的封装。改成客户端
+/// ⚠️ 说明：本类原名 `ApiService`，是服务端 HTTP 接口的封装。改成客户端
 /// 直连后，它只剩一层很薄的转发 —— 把 `LocalCampusService`（CAS 统一认证 +
 /// 正方教务 + 融合门户）包装成界面层习惯的签名。
 ///
@@ -66,6 +68,11 @@ class ApiService {
     final data =
         await LocalCampusService.fetchCardBalance(c.username, c.password);
     // 门面返回的是「余额本身」，而页面读的是 res['data']['balance'] —— 包一层对齐旧契约。
+    final balance = data['balance'];
+    if (balance is num) {
+      await DormService.saveCardCache(balance.toDouble());
+      await WidgetSyncService.syncCardWidget();
+    }
     return {'data': data};
   }
 
@@ -86,7 +93,7 @@ class ApiService {
 
   /// 搜索班级（跨专业自选 · 步骤1：选班）。
   ///
-  /// 开源版无服务器：客户端直连教务「班级课表打印」模块。
+  /// 无服务器：客户端直连教务「班级课表打印」模块。
   /// [keyword] 留空返回全部（357 个班，本机缓存 30 分钟）。
   static Future<Map<String, dynamic>> searchClassList({
     required String xnm,
@@ -123,6 +130,22 @@ class ApiService {
     // ⚠️ 同上：页面读 res['data']['exams']，不包一层就会「查询成功但 0 门考试」。
     final data = await LocalCampusService.queryExams(
         c.username, c.password, xnm, xqm);
+    return {'data': data};
+  }
+
+  /// 从教务系统读取「我的学业」学业档案（客户端直连抓取）。
+  ///
+  /// [xnm] / [xqm] 仅在教务没配培养方案（Mode B）查本学期课表时用到。
+  static Future<Map<String, dynamic>> fetchStudy({
+    String username = '',
+    String password = '',
+    required String xnm,
+    required String xqm,
+  }) async {
+    final c = await _resolveCredential(username, password);
+    // 与其他方法同一约定：页面读 res['data']。
+    final data =
+        await LocalCampusService.fetchStudy(c.username, c.password, xnm, xqm);
     return {'data': data};
   }
 

@@ -37,6 +37,7 @@ const Map<int, (String, String)> kDefaultSlots = {
   9: ('18:45', '19:30'),
   10: ('19:40', '20:25'),
   11: ('20:35', '21:20'),
+  12: ('21:40', '22:25'),
 };
 
 /// 规格表转成 `slotTimesFrom` 的产物形态（`"起-止"`）。
@@ -64,9 +65,10 @@ void main() {
       expect(text, isNot('08:00-08:55'));
     });
 
-    test('🔴 全矩阵：66 种节次组合，起止都必须落在「首节开始 → 末节结束」', () {
-      for (var a = 1; a <= 11; a++) {
-        for (var b = a; b <= 11; b++) {
+    test('🔴 全矩阵：78 种节次组合，起止都必须落在「首节开始 → 末节结束」', () {
+      final n = kDefaultSlots.length;
+      for (var a = 1; a <= n; a++) {
+        for (var b = a; b <= n; b++) {
           final text = WidgetSyncService.timeTextFor(_c(a, b), kDefaultMap);
           final want = '${kDefaultSlots[a]!.$1}-${kDefaultSlots[b]!.$2}';
           expect(text, want, reason: '第 $a-$b 节显示错了');

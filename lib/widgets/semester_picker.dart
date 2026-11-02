@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 /// 统一的学期选择器（2026-10-20）。
 ///
@@ -42,7 +43,7 @@ Future<int?> showSemesterPicker(
                       child: Text(
                         title,
                         style: const TextStyle(
-                            fontSize: 14,
+                            fontSize: AppTheme.fontBody,
                             fontWeight: FontWeight.w600,
                             color: ink),
                       ),
@@ -76,7 +77,7 @@ Future<int?> showSemesterPicker(
                               child: Text(
                                 labels[i],
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: AppTheme.fontBody,
                                   fontWeight: selected
                                       ? FontWeight.w600
                                       : FontWeight.w400,
@@ -87,7 +88,7 @@ Future<int?> showSemesterPicker(
                             if (i == 0 && !selected)
                               const Text('本学期',
                                   style:
-                                      TextStyle(fontSize: 12, color: sub)),
+                                      TextStyle(fontSize: AppTheme.fontSmall, color: sub)),
                             if (selected)
                               const Icon(Icons.check_rounded,
                                   size: 18, color: Color(0xFF1F6F5C)),

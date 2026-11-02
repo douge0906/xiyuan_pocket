@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../lib/services/textbook_storage.dart';
+import 'package:xiyuan_pocket/services/textbook_storage.dart';
 
 /// 教材缓存的守卫测试（v2.4.9 补）。
 ///

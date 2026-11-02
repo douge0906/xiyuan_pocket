@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/todo_database.dart';
@@ -23,6 +25,27 @@ class TodoRepository {
 
   final TodoDatabase _db = TodoDatabase.instance;
 
+  /// 写操作串行锁。
+  ///
+  /// 🔴 为什么必须有：所有写方法都是「readAll → 改内存列表 → writeAll」，
+  ///    两个并发写（典型：课程待办同步的 addMany 与用户手动新增同时进来）
+  ///    会各自读到同一份快照，后写者把前写者的记录整个覆盖 —— 丢一条待办
+  ///    且无任何报错。course_todo_service.dart 的 _syncLock 是同一套做法。
+  static Future<void> _writeLock = Future<void>.value();
+
+  static Future<T> _exclusive<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    final prev = _writeLock;
+    _writeLock = prev.then((_) async {
+      try {
+        completer.complete(await action());
+      } catch (e, st) {
+        completer.completeError(e, st);
+      }
+    });
+    return completer.future;
+  }
+
   /// 本仓库「已排上」的待办通知 id 集合（持久化）。
   ///
   /// 为什么要记录：Android 重启/强停后 AlarmManager 会清空定时任务，App 启动需要
@@ -35,16 +58,42 @@ class TodoRepository {
   static const String _kScheduledIds = 'todo_scheduled_notify_ids';
 
   // ---------------------------------------------------------------------------
+  // 身份键：id **不够用**，必须用 (id, 日期)
+  // ---------------------------------------------------------------------------
+
+  /// 定位一条待办在库中的下标。
+  ///
+  /// 🔴 为什么不能只按 id（2026-10-31）：
+  ///    课程待办的 id 是**派生**出来的（`course_<课程id>_<yyyyMMdd>`），
+  ///    历史版本没补零时 `2026-01-12` 与 `2026-11-02` 会撞成同一个
+  ///    `course_5_2026112`。库里一旦存在**同 id 不同日期**的两行，
+  ///    任何「按 id 首个匹配」的写路径都会改到**别的行**上：
+  ///      · 勾选明日课程 → 改成了 1 月 12 日那行；
+  ///      · 删明日课程 → 连带删掉另一天的历史记录；
+  ///      · 「自愈未来脏数据」→ 把未来行的日期写到别的行上，
+  ///        结果未来行永远修不好、反而把历史记录改没了。
+  ///
+  ///    真正的身份是 **(id, 日期)** —— 见 [Todo.compositeKey]。
+  static int _indexOf(List<Todo> list, Todo todo) {
+    return list.indexWhere((t) =>
+        t.id == todo.id && _sameDay(t.date, todo.date));
+  }
+
+  // ---------------------------------------------------------------------------
   // 查询
   // ---------------------------------------------------------------------------
 
   /// 全部待办。
   Future<List<Todo>> getAll() => _db.readAll();
 
-  /// 指定日期（按年月日）的待办。
+  /// 指定日期的待办。
+  ///
+  /// 🔴 用 [Todo.occursOn] 而不是「date 精确相等」：重复待办的 date 只是
+  ///    **起始日**，按精确匹配会让它在次日从列表里消失。
+  ///    课程待办是非重复的，occursOn 与精确匹配等价，不受影响。
   Future<List<Todo>> getByDate(DateTime day) async {
     final all = await _db.readAll();
-    return all.where((t) => _sameDay(t.date, day)).toList();
+    return all.where((t) => t.occursOn(day)).toList();
   }
 
   // ---------------------------------------------------------------------------
@@ -52,86 +101,86 @@ class TodoRepository {
   // ---------------------------------------------------------------------------
 
   /// 新增待办：落库 + （若设置了将来的提醒且未完成）立即创建通知。
-  Future<void> add(Todo todo) async {
+  Future<void> add(Todo todo) => _exclusive(() async {
     final list = await _db.readAll();
-    list.add(todo);
-    await _db.writeAll(list);
-    await _syncNotification(todo);
-  }
-
-  /// 编辑待办：落库 + 先取消旧通知再按最新提醒时间重排。
-  /// 因 notifyId 由 id 推导、id 不随编辑改变，取消/重排命中同一 id，天然幂等。
-  Future<void> update(Todo todo) async {
-    final list = await _db.readAll();
-    final idx = list.indexWhere((t) => t.id == todo.id);
-    if (idx < 0) return;
-    list[idx] = todo;
-    await _db.writeAll(list);
-    // 改时间：先取消旧通知，再按新状态重建（不重复创建，同 id 覆盖）。
-    await _cancelNotification(todo.notifyId);
-    await _syncNotification(todo);
-  }
-
-  /// 删除待办：删库 + 取消通知。
-  Future<void> delete(Todo todo) async {
-    final list = await _db.readAll();
-    list.removeWhere((t) => t.id == todo.id);
-    await _db.writeAll(list);
-    await _cancelNotification(todo.notifyId);
-  }
-
-  /// 切换完成态：落库 + 完成则取消通知 / 未完成且提醒在将来则重排。
-  /// 返回更新后的待办，便于调用方做乐观 UI 校正。
-  Future<Todo> toggleComplete(Todo todo) async {
-    final list = await _db.readAll();
-    final idx = list.indexWhere((t) => t.id == todo.id);
-    if (idx < 0) return todo;
-    final updated = list[idx].copyWith(completed: !list[idx].completed);
-    list[idx] = updated;
-    await _db.writeAll(list);
-    await _syncNotification(updated);
-    return updated;
-  }
-
-  /// 切换**某一天**的完成态（2026-10-18，重复任务用）。
-  ///
-  /// 非重复任务等价于 [toggleComplete]；重复任务只翻转当天在
-  /// [Todo.completedDates] 里的记录，不影响其它日期。
-  Future<Todo> toggleCompleteOn(Todo todo, DateTime day) async {
-    final list = await _db.readAll();
-    final idx = list.indexWhere((t) => t.id == todo.id);
-    if (idx < 0) return todo;
-    final cur = list[idx];
-    final Todo updated;
-    if (cur.isRepeating) {
-      final key = Todo.dayKey(day);
-      final dates = List<String>.from(cur.completedDates);
-      if (!dates.remove(key)) dates.add(key);
-      updated = cur.copyWith(completedDates: dates);
+    // 同 **(id, 日期)** 覆盖而不是追加：任何并发/重试都不该产生两条一样的待办。
+    // ⚠️ 不能只按 id：同 id 不同日期是**两条不同的待办**（见 [_indexOf] 注释）。
+    final idx = _indexOf(list, todo);
+    if (idx >= 0) {
+      list[idx] = todo;
     } else {
-      updated = cur.copyWith(completed: !cur.completed);
+      list.add(todo);
     }
-    list[idx] = updated;
     await _db.writeAll(list);
-    await _syncNotification(updated);
-    return updated;
-  }
+    await _syncNotification(todo);
+  });
 
-  /// 批量标记完成（一次读、一次写、一次落库）。
-  /// 用于「课程结束后自动划掉」这类批量场景，避免逐条 toggle 造成 N 次整表读写。
-  /// 返回实际改变的条数。
-  Future<int> completeMany(Set<String> ids) async {
-    if (ids.isEmpty) return 0;
+  /// 批量新增：一次读表、一次写表、逐条排通知。
+  ///
+  /// 为什么要批量：课程待办同步一次可能要写十几条（7 天 × 每天几门课），
+  /// 逐条 add() 就是 N 次「读全表 + 写全表」+ N 次通知排程 → 首屏明显卡顿。
+  Future<void> addMany(List<Todo> todos) => _exclusive(() async {
+    if (todos.isEmpty) return;
+    final list = await _db.readAll();
+    // ⚠️ 索引键必须是 **(id, 日期)** 而不是 id：
+    //    同 id 不同日期是两条不同的待办，按 id 建索引会让后一条**静默覆盖**
+    //    前一条（同 id 撞号时会把「另一天的完成态」搬进新记录）。
+    final indexByKey = <String, int>{
+      for (var i = 0; i < list.length; i++) list[i].compositeKey: i
+    };
+    final added = <Todo>[];
+    for (final todo in todos) {
+      final key = todo.compositeKey;
+      final idx = indexByKey[key];
+      if (idx == null) {
+        indexByKey[key] = list.length;
+        list.add(todo);
+      } else {
+        list[idx] = todo;
+      }
+      added.add(todo);
+    }
+    await _db.writeAll(list);
+    for (final t in added) {
+      await _syncNotification(t);
+    }
+  });
+
+  /// 批量标记完成（**按 id + 日期**精确匹配）。
+  ///
+  /// ⚠️ 为什么必须带日期：历史课程待办 id 是**未补零**的
+  /// （`course_5_2026112` 既可能是 01-12 也可能是 11-02），只按 id 匹配
+  /// 会把**未来日期**的那条一起划掉 —— 表现为「未来日期却显示课程已完成」。
+  /// 这里额外校验日期，确保只动当天那条。
+  Future<int> completeManyWithDays(
+          List<({String id, DateTime day})> targets) =>
+      _exclusive(() async {
+    if (targets.isEmpty) return 0;
     final list = await _db.readAll();
     final hit = <Todo>[];
     var changed = 0;
     for (var i = 0; i < list.length; i++) {
       final t = list[i];
-      if (ids.contains(t.id) && !t.completed) {
-        list[i] = t.copyWith(completed: true);
-        hit.add(list[i]);
-        changed++;
+      // 找到 (id, 日期) 完全匹配的那一条才动。
+      // 找出匹配的那一天（(id, 日期) 复合键）。
+      DateTime? matchedDay;
+      for (final x in targets) {
+        if (x.id == t.id && _sameDay(t.date, x.day)) {
+          matchedDay = x.day;
+          break;
+        }
       }
+      if (matchedDay == null) continue;
+      if (t.completed) continue;
+      // 🔴 完成态**按天归属**：记录「这条完成属于哪一天」。
+      //    这样即使库里存在同 id 不同日期的两行，完成态也天然隔离，
+      //    不会「查看明日待办时课程默认完成、状态延续到今日」。
+      list[i] = t.copyWith(
+        completed: true,
+        completedDay: Todo.dayKeyOf(matchedDay),
+      );
+      hit.add(list[i]);
+      changed++;
     }
     if (changed == 0) return 0;
     await _db.writeAll(list);
@@ -139,7 +188,136 @@ class TodoRepository {
       await _cancelNotification(t.notifyId);
     }
     return changed;
-  }
+  });
+
+  /// 编辑待办：落库 + 先取消旧通知再按最新提醒时间重排。
+  /// 因 notifyId 由 id 推导、id 不随编辑改变，取消/重排命中同一 id，天然幂等。
+  ///
+  /// 返回 false = 库里没有匹配记录，调用方应当提示用户而不是假装成功。
+  Future<bool> update(Todo todo) => _exclusive(() async {
+    final list = await _db.readAll();
+    // ⚠️ 按 (id, 日期) 定位：只按 id 会命中**另一天**的同 id 行，
+    //    把整行（含 date / completed）写到它头上。
+    var idx = _indexOf(list, todo);
+    if (idx < 0 && !todo.id.startsWith('course_')) {
+      // 普通待办的 id 是一次性生成的唯一串，**日期可以被用户改**。
+      // 日期一改，(id, 日期) 复合键就变了，按复合键必然找不到 ——
+      // 这里退回按 id 单键定位。课程待办不能这么退：它的 id 里编着日期，
+      // 单键命中可能落到撞号的历史行上（见 [_indexOf] 注释），改期走
+      // CourseTodoService.moveCourseTodo。
+      idx = list.indexWhere((t) => t.id == todo.id);
+    }
+    if (idx < 0) {
+      debugPrint('[TodoRepository] update 未命中：${todo.compositeKey}');
+      return false;
+    }
+    list[idx] = todo;
+    await _db.writeAll(list);
+    // 改时间：先取消旧通知，再按新状态重建（不重复创建，同 id 覆盖）。
+    await _cancelNotification(todo.notifyId);
+    await _syncNotification(todo);
+    return true;
+  });
+
+  /// 按 **(id, 日期)** 精确更新：找不到就跳过，**不会**写到别的行上。
+  ///
+  /// 用于「自愈脏数据」这类按天定位的写入。
+  Future<void> updateOn(Todo todo) => _exclusive(() async {
+    final list = await _db.readAll();
+    final idx = _indexOf(list, todo);
+    if (idx < 0) return;
+    list[idx] = todo;
+    await _db.writeAll(list);
+  });
+
+  /// 删除待办：删库 + 取消通知。
+  Future<void> delete(Todo todo) => _exclusive(() async {
+    final list = await _db.readAll();
+    // ⚠️ 按 (id, 日期) 删：只按 id 会把**另一天**的同 id 历史记录一起删掉
+    //    （用户删一条今天的课程，明天的记录凭空消失）。
+    final before = list.length;
+    list.removeWhere((t) =>
+        t.id == todo.id && _sameDay(t.date, todo.date));
+    await _db.writeAll(list);
+    if (list.length != before) await _cancelNotification(todo.notifyId);
+  });
+
+  /// 按 **id + 日期** 精确删除。
+  ///
+  /// 🔴 为什么需要：课程待办 id 历史上未补零（`course_5_2026112` 既是 01-12
+  ///    也是 11-02），库里可能存在**同 id 不同日期**的记录。
+  ///    用只按 id 的 [delete] 会把另一日期的待办连带删掉
+  ///    （历史已完成记录凭空消失）。
+  Future<void> deleteOn(Todo todo) => _exclusive(() async {
+    final list = await _db.readAll();
+    final before = list.length;
+    list.removeWhere((t) =>
+        t.id == todo.id &&
+        t.date.year == todo.date.year &&
+        t.date.month == todo.date.month &&
+        t.date.day == todo.date.day);
+    if (list.length == before) return;
+    await _db.writeAll(list);
+    await _cancelNotification(todo.notifyId);
+  });
+
+  /// 切换完成态：落库 + 完成则取消通知 / 未完成且提醒在将来则重排。
+  /// 返回更新后的待办，便于调用方做乐观 UI 校正。
+  Future<Todo> toggleComplete(Todo todo) => _exclusive(() async {
+    final list = await _db.readAll();
+    // ⚠️ 按 (id, 日期) 定位：点明日那行却改到 1 月那行是真实发生过的问题。
+    final idx = _indexOf(list, todo);
+    if (idx < 0) return todo;
+    final cur = list[idx];
+    // 完成态**按天记录**（[Todo.completedDay]）：即使 id 撞号，
+    // 也不会把「某天的完成」带到「另一天」。
+    // 🔴 取消完成必须用 clearCompletedDay：copyWith 的 completedDay
+    //    是 `?? this.completedDay` —— 传 null 表示「不改」，不是「清空」。
+    //    之前写 `completedDay: null` 等于没清，isDoneOn 仍读回旧日期 →
+    //    用户点完成后**再也取消不掉**（2026-11-02 用户报告）。
+    final updated = cur.copyWith(
+      completed: !cur.completed,
+      completedDay: cur.completed ? null : cur.dayKey,
+      clearCompletedDay: cur.completed,
+    );
+    list[idx] = updated;
+    await _db.writeAll(list);
+    await _syncNotification(updated);
+    return updated;
+  });
+
+  /// 切换**某一天**的完成态（2026-10-18，重复任务用）。
+  ///
+  /// 非重复任务等价于 [toggleComplete]；重复任务只翻转当天在
+  /// [Todo.completedDates] 里的记录，不影响其它日期。
+  Future<Todo> toggleCompleteOn(Todo todo, DateTime day) => _exclusive(() async {
+    final list = await _db.readAll();
+    // ⚠️ 按 (id, 日期) 定位：同 id 不同日期时不能改到别的行。
+    final idx = _indexOf(list, todo);
+    if (idx < 0) return todo;
+    final cur = list[idx];
+    final Todo updated;
+    if (cur.isRepeating) {
+      final key = Todo.dayKeyOf(day);
+      final dates = List<String>.from(cur.completedDates);
+      if (!dates.remove(key)) dates.add(key);
+      updated = cur.copyWith(completedDates: dates);
+    } else {
+      // 完成态按天记录（[Todo.completedDay]）→ 完成「明天」不会影响「今天」。
+      final willComplete = !cur.isDoneOn(day);
+      // 🔴 取消完成必须 clearCompletedDay（同 toggleComplete 的注释）：
+      //    传 completedDay: null 是「保留旧值」，会让取消操作静默失效。
+      updated = cur.copyWith(
+        completed: willComplete,
+        completedDay: willComplete ? Todo.dayKeyOf(day) : null,
+        clearCompletedDay: !willComplete,
+      );
+    }
+    list[idx] = updated;
+    await _db.writeAll(list);
+    await _syncNotification(updated);
+    return updated;
+  });
 
   /// 重排所有「未完成且提醒在将来」的待办通知。
   ///
@@ -148,20 +326,40 @@ class TodoRepository {
   ///
   /// v2.4.0：只精确取消「本仓库排过的 + 当前待办对应」的 id，再逐条重建，
   /// **不会**再误清上课提醒等其它模块的通知（见 [_kScheduledIds] 注释）。
-  Future<void> rescheduleAll() async {
-    final all = await _db.readAll();
-    final tracked = await _loadScheduledIds();
-    final currentIds = all.map((t) => t.notifyId).toSet();
-    // 先清：上轮残留（tracked）+ 本轮将要重建（current），保证无重复、无幽灵。
-    for (final id in {...tracked, ...currentIds}) {
-      await NotificationService.cancel(id);
-    }
-    await _saveScheduledIds({});
-    // 再建：仅「未完成且提醒在将来」的会被真正排上。
-    for (final t in all) {
-      await _syncNotification(t);
-    }
-  }
+  /// 全量重排，返回**真正排上**的条数（2026-11-02 改为有返回值）。
+  ///
+  /// ## 为什么要把返回值交出来
+  ///
+  /// 原来这里是 `Future<void>`，而 `_syncNotification()` 内部
+  /// `NotificationService.schedule()` 的 `bool` 返回值**被直接丢弃**——
+  /// 于是「精确闹钟、闹钟模式、非精确」三级降级全失败时，
+  /// 整个 App 里没有任何一处知道「这条提醒其实没排上」。
+  /// 用户看到的现象就是「待办列表里明明有提醒时间，但就是不响」，
+  /// 而我们连一句「排程失败」的日志都没有。
+  ///
+  /// 现在返回 `(scheduled, failed)` 计数，供首页与设置页展示真实数字。
+  Future<({int scheduled, int failed})> rescheduleAll() => _exclusive(() async {
+        final all = await _db.readAll();
+        final tracked = await _loadScheduledIds();
+        final currentIds = all.map((t) => t.notifyId).toSet();
+        // 先清：上轮残留（tracked）+ 本轮将要重建（current），保证无重复、无幽灵。
+        for (final id in {...tracked, ...currentIds}) {
+          await NotificationService.cancel(id);
+        }
+        await _saveScheduledIds({});
+        // 再建：仅「未完成且提醒在将来」的会被真正排上。
+        var scheduled = 0;
+        var failed = 0;
+        for (final t in all) {
+          final ok = await _syncNotification(t);
+          if (!ok && nextReminderFor(t, DateTime.now()) != null) {
+            // 本该有提醒却没排上 —— 这才是真正需要报警的情况。
+            failed++;
+          }
+          if (ok) scheduled++;
+        }
+        return (scheduled: scheduled, failed: failed);
+      });
 
   /// 申请通知 + 精确闹钟权限，返回通知权限是否授予。
   Future<bool> ensureNotificationPermission() =>
@@ -201,27 +399,78 @@ class TodoRepository {
   }
 
   /// 依据待办当前状态，创建或取消其提醒通知（幂等）。
-  /// - 未完成 + 有提醒 + 提醒时间在将来 → 创建/覆盖通知；
-  /// - 其余情况（已完成 / 无提醒 / 时间已过）→ 取消通知。
-  Future<void> _syncNotification(Todo todo) async {
-    final reminder = todo.reminderTime;
-    final shouldNotify =
-        !todo.completed && reminder != null && reminder.isAfter(DateTime.now());
+  /// - 未完成 + 有下一次提醒时刻 → 创建/覆盖通知；
+  /// - 其余情况（已完成 / 无提醒 / 之后不再发生）→ 取消通知。
+  /// 排/取消一条提醒，返回**是否真的排上**（取消也算成功）。
+  ///
+  /// 2026-11-02：原来返回 `void`，`schedule()` 的 bool 被吞掉，
+  /// 三级降级全失败时无人知晓 —— 见 [rescheduleAll] 的说明。
+  Future<bool> _syncNotification(Todo todo) async {
+    final now = DateTime.now();
+    final reminder = nextReminderFor(todo, now);
+    final shouldNotify = !todo.completed && reminder != null;
     if (shouldNotify) {
-      await NotificationService.schedule(
+      final ok = await NotificationService.schedule(
         id: todo.notifyId,
         title: '待办提醒：${todo.title}',
         body: todo.description ?? '到时间啦',
         scheduledTime: reminder,
         payload: todo.id,
+        // 🔴 优先级 → 通知渠道 → 振动强度（普通轻震 / 重要双震 / 紧急长震）。
+        priority: todo.priority,
       );
       final ids = await _loadScheduledIds();
       if (ids.add(todo.notifyId)) await _saveScheduledIds(ids);
+      return ok;
     } else {
       await _cancelNotification(todo.notifyId);
+      return true; // 「不需要提醒」本身就是期望状态，不算失败
     }
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
+  /// 这条待办「下一次」应当响铃的时刻（null = 不需要排程）。
+  ///
+  /// 🔴 为什么不能直接用 [Todo.reminderTime]（2026-11-01 修）：
+  ///    `reminderTime` 是**新增时算死的一次性时刻**（`dueAt − 提前量`）。
+  ///    对「每天 / 每周」的重复待办，只有创建当天那一次会响 —— 次日
+  ///    [rescheduleAll] 一看 `reminder.isAfter(now)` 为 false 就取消，
+  ///    之后永远不再排程，表现为「重复待办只有第一天响」。
+  ///    这里改成按重复规则滚动到**下一次未完成实例**。
+  ///
+  /// 滚动口径：把「提醒相对当天 dueAt 的偏移」套到每一次发生的日子上。
+  ///   - 有 [Todo.dueAt] → 偏移 = `dueAt − reminderTime`（可跨天：
+  ///     如 00:05 提前 30 分钟 = 前一天 23:35）；
+  ///   - 无 [Todo.dueAt] → 偏移为 0，直接用 `reminderTime` 的时分。
+  @visibleForTesting
+  DateTime? nextReminderFor(Todo todo, DateTime now) {
+    final base = todo.reminderTime;
+    if (base == null) return null;
+
+    // 非重复：仍用建时算好的那个时刻，只判「是否已过 / 是否已完成」。
+    if (!todo.isRepeating) {
+      if (!base.isAfter(now)) return null;
+      if (todo.isDoneOn(base)) return null;
+      return base;
+    }
+
+    // 重复：往后找第一个「会发生且当天还没勾掉、且提醒时刻仍在未来」的实例。
+    //   上限 366 天，防「weekly 但 repeatDays 为空」这类脏数据死循环。
+    final due = todo.dueAt;
+    final lead = due == null ? Duration.zero : due.difference(base);
+    final startDay = DateTime(now.year, now.month, now.day);
+    for (var i = 0; i < 366; i++) {
+      final day = startDay.add(Duration(days: i));
+      if (!todo.occursOn(day)) continue;
+      if (todo.isDoneOn(day)) continue;
+      final instanceDue = due == null
+          ? DateTime(day.year, day.month, day.day, base.hour, base.minute)
+          : DateTime(day.year, day.month, day.day, due.hour, due.minute);
+      final candidate = instanceDue.subtract(lead);
+      if (candidate.isAfter(now)) return candidate;
+    }
+    return null;
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 }

@@ -43,9 +43,9 @@ object TodayWidgetRenderer {
 
     // 卡片内边距（上下各 12dp）、标题行（13~14sp + 与列表的间距）、
     // 「还有 N 门」那一行的高度 —— 都按 dp 估，用于算「放得下几门」。
-    private const val CARD_PAD_V = 24
-    private const val TITLE_BLOCK = 23
-    private const val MORE_BLOCK = 14
+    private const val CARD_PAD_V = 20
+    private const val TITLE_BLOCK = 20
+    private const val MORE_BLOCK = 12
 
     /// 条目样式：布局 + 高度（含内边距）+ 间距。
     ///
@@ -223,9 +223,9 @@ object TodayWidgetRenderer {
         // 深色皮肤下要提亮：默认主题色是墨黑（#1F2937），落在深色卡片（#1E1E1E）
         // 上几乎看不见；用户选的彩色（蓝/绿/紫…）亮度够就保持原样。
         views.setInt(R.id.widget_icon, "setColorFilter", iconTint(prefs, dark))
-        setSize(views, R.id.widget_next, scaled(prefs, 13f))
-        setSize(views, R.id.widget_next_time, scaled(prefs, 10f))
-        setSize(views, R.id.widget_next_place, scaled(prefs, 10f))
+        setSize(views, R.id.widget_next, scaled(prefs, 12f))
+        setSize(views, R.id.widget_next_time, scaled(prefs, 9.5f))
+        setSize(views, R.id.widget_next_place, scaled(prefs, 9.5f))
 
         if (data == null || !data.hasSchedule || data.courses.isEmpty()) {
             views.setTextViewText(R.id.widget_next, "今日无课")
@@ -255,10 +255,11 @@ object TodayWidgetRenderer {
 
         val now = nowMinute()
         val ongoing = now >= next.startMinute && now < next.endMinute
-        val cd = if (prefs.countdown) countdownText(next, now, ongoing) else ""
+        val useCountdown = prefs.smallMode == "countdown"
+        val cd = if (useCountdown) countdownText(next, now, ongoing) else ""
         val line2 = when {
             cd.isNotEmpty() -> cd
-            prefs.showTime && next.timeText.isNotBlank() -> next.timeText
+            !useCountdown && next.timeText.isNotBlank() -> next.timeText
             else -> weekTitle
         }
         views.setTextViewText(R.id.widget_next_time, line2)
@@ -291,9 +292,9 @@ object TodayWidgetRenderer {
         views.setTextColor(R.id.widget_title, ink(dark))
         views.setTextColor(R.id.widget_more, moreText(dark))
         views.setTextColor(R.id.widget_empty, subText(dark))
-        setSize(views, R.id.widget_title, scaled(prefs, 13f))
-        setSize(views, R.id.widget_more, scaled(prefs, 10f))
-        setSize(views, R.id.widget_empty, scaled(prefs, 12f))
+        setSize(views, R.id.widget_title, scaled(prefs, 12f))
+        setSize(views, R.id.widget_more, scaled(prefs, 9f))
+        setSize(views, R.id.widget_empty, scaled(prefs, 11f))
         // v1.6.8：中号标题也**不带教学周次**（与上一版的大号一致）
         views.setTextViewText(R.id.widget_title, titleNoWeek(data))
 
@@ -359,9 +360,9 @@ object TodayWidgetRenderer {
         views.setTextColor(R.id.widget_title, ink(dark))
         views.setTextColor(R.id.widget_more, moreText(dark))
         views.setTextColor(R.id.widget_empty, subText(dark))
-        setSize(views, R.id.widget_title, scaled(prefs, 14f))
-        setSize(views, R.id.widget_more, scaled(prefs, 10f))
-        setSize(views, R.id.widget_empty, scaled(prefs, 12f))
+        setSize(views, R.id.widget_title, scaled(prefs, 13f))
+        setSize(views, R.id.widget_more, scaled(prefs, 9f))
+        setSize(views, R.id.widget_empty, scaled(prefs, 11f))
         // v1.6.7：大号标题**不带教学周次**（用户要求去除）
         views.setTextViewText(R.id.widget_title, titleNoWeek(data))
 
@@ -456,9 +457,9 @@ object TodayWidgetRenderer {
             // 三行：课程名 / 上课时间 / 教室（与小号的排版口径一致）
             item.setTextColor(R.id.item_time, subText(dark))
             item.setTextColor(R.id.item_room, subText(dark))
-            setSize(item, R.id.item_name, scaled(prefs, 10.5f))
-            setSize(item, R.id.item_time, scaled(prefs, 8.5f))
-            setSize(item, R.id.item_room, scaled(prefs, 8.5f))
+            setSize(item, R.id.item_name, scaled(prefs, 10f))
+            setSize(item, R.id.item_time, scaled(prefs, 8f))
+            setSize(item, R.id.item_room, scaled(prefs, 8f))
             toggleRow(item, R.id.item_time, showTime, course.timeText)
             toggleRow(item, R.id.item_room, showClassroom, course.classroom)
         } else {

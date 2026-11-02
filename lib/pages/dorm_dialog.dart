@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/dorm_service.dart';
+import '../theme/app_theme.dart';
 
 /// 宿舍填写弹窗（2026-10-23）。
 ///
@@ -109,7 +110,7 @@ class _DormDialogState extends State<_DormDialog> {
                   const Expanded(
                     child: Text('宿舍',
                         style: TextStyle(
-                            fontSize: 15,
+                            fontSize: AppTheme.fontTitle,
                             fontWeight: FontWeight.w600,
                             color: _ink)),
                   ),
@@ -130,13 +131,13 @@ class _DormDialogState extends State<_DormDialog> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('宿舍楼',
-                      style: TextStyle(fontSize: 12, color: _ink)),
+                      style: TextStyle(fontSize: AppTheme.fontSmall, color: _ink)),
                   const SizedBox(height: 6),
                   if (_loading)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),
                       child: Text('加载中…',
-                          style: TextStyle(fontSize: 13, color: _sub)),
+                          style: TextStyle(fontSize: AppTheme.fontSmall, color: _sub)),
                     )
                   else
                     LayoutBuilder(
@@ -160,12 +161,12 @@ class _DormDialogState extends State<_DormDialog> {
                             controller: ctl,
                             focusNode: focusNode,
                             style: const TextStyle(
-                                fontSize: 13.5, color: _ink),
+                                fontSize: AppTheme.fontBody, color: _ink),
                             decoration: InputDecoration(
                               isDense: true,
                               hintText: '搜索或选择宿舍楼',
                               hintStyle: const TextStyle(
-                                  fontSize: 13, color: _sub),
+                                  fontSize: AppTheme.fontSmall, color: _sub),
                               suffixIcon: const Icon(
                                   Icons.keyboard_arrow_down_rounded,
                                   size: 20,
@@ -239,7 +240,7 @@ class _DormDialogState extends State<_DormDialog> {
                                                 overflow:
                                                     TextOverflow.ellipsis,
                                                 style: TextStyle(
-                                                  fontSize: 13.5,
+                                                  fontSize: AppTheme.fontBody,
                                                   color: b.available
                                                       ? _ink
                                                       : _sub,
@@ -268,17 +269,17 @@ class _DormDialogState extends State<_DormDialog> {
                     ),
                   const SizedBox(height: 14),
                   const Text('宿舍号',
-                      style: TextStyle(fontSize: 12, color: _ink)),
+                      style: TextStyle(fontSize: AppTheme.fontSmall, color: _ink)),
                   const SizedBox(height: 6),
                   TextField(
                     controller: _room,
                     onChanged: (_) => setState(() {}),
                     keyboardType: TextInputType.text,
-                    style: const TextStyle(fontSize: 13.5, color: _ink),
+                    style: const TextStyle(fontSize: AppTheme.fontBody, color: _ink),
                     decoration: InputDecoration(
                       isDense: true,
                       hintText: '例如 408',
-                      hintStyle: const TextStyle(fontSize: 13, color: _sub),
+                      hintStyle: const TextStyle(fontSize: AppTheme.fontSmall, color: _sub),
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 13),
                       border: OutlineInputBorder(
@@ -314,7 +315,7 @@ class _DormDialogState extends State<_DormDialog> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
-                  child: const Text('确定', style: TextStyle(fontSize: 14)),
+                  child: const Text('确定', style: TextStyle(fontSize: AppTheme.fontBody)),
                 ),
               ),
             ),

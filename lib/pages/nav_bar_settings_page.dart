@@ -33,7 +33,7 @@ class NavBarSettingsPage extends StatelessWidget {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('底部导航',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: ValueListenableBuilder<NavLayout>(
         valueListenable: NavPrefs.notifier,
@@ -89,7 +89,7 @@ class NavBarSettingsPage extends StatelessWidget {
               child: Text(
                 page.label,
                 style: TextStyle(
-                  fontSize: 14.5,
+                  fontSize: AppTheme.fontBody,
                   color: on ? context.textPrimary : context.textTertiary,
                 ),
               ),
@@ -131,7 +131,7 @@ class NavBarSettingsPage extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(kPinnedNavPage.label,
-                  style: TextStyle(fontSize: 14.5, color: context.textPrimary)),
+                  style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary)),
             ),
             Transform.scale(
               scale: 0.8,

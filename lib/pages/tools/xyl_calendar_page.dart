@@ -173,7 +173,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       appBar: AppBar(
         title: const Text('无锡学院校历',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        backgroundColor: context.cardColor,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
       ),
@@ -227,7 +227,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: _accent.withOpacity(0.12),
+              color: _accent.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             ),
             child: const Icon(Icons.calendar_month_rounded,
@@ -240,7 +240,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
               children: [
                 Text('2026 - 2027 学年',
                     style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTheme.fontBody,
                         fontWeight: FontWeight.w600,
                         color: titleColor)),
                 const SizedBox(height: 3),
@@ -248,7 +248,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
                   week != null
                       ? '${_termNames[_term]} · 第 $week 周'
                       : '${_termNames[_term]} · 假期中',
-                  style: TextStyle(fontSize: 12.5, color: subColor),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor),
                 ),
               ],
             ),
@@ -283,7 +283,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
                     child: Text(
                       _termNames[i],
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTheme.fontBody,
                         fontWeight:
                             _term == i ? FontWeight.w600 : FontWeight.normal,
                         color: _term == i ? Colors.white : subColor,
@@ -310,7 +310,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
               child: Center(
                 child: Text(w,
                     style: TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         fontWeight: FontWeight.w500,
                         color: subColor)),
               ),
@@ -342,7 +342,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
       height: _rowH,
       decoration: isCurrentWeek
           ? BoxDecoration(
-              color: _accent.withOpacity(isDark ? 0.16 : 0.07),
+              color: _accent.withValues(alpha: isDark ? 0.16 : 0.07),
               borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             )
           : null,
@@ -355,7 +355,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
                 row.month,
                 maxLines: 1,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: AppTheme.fontCaption,
                   fontWeight: FontWeight.w500,
                   color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280),
                 ),
@@ -437,7 +437,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
             child: Text(
               '${row.days[colIndex]}',
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: AppTheme.fontSmall,
                 fontWeight: isToday ? FontWeight.bold : FontWeight.w500,
                 color: numColor,
               ),
@@ -448,7 +448,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
               row.holidayName!,
               maxLines: 1,
               style: const TextStyle(
-                fontSize: 11, // 2026-10-13：8.5px 几乎读不了，按最小可读字号提上来
+                fontSize: AppTheme.fontCaption, // 2026-10-13：8.5px 几乎读不了，按最小可读字号提上来
                 height: 1.1,
                 fontWeight: FontWeight.w600,
                 color: _weekendColor,
@@ -476,7 +476,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
           children: [
             mark,
             const SizedBox(width: 5),
-            Text(label, style: TextStyle(fontSize: 11, color: subColor)),
+            Text(label, style: TextStyle(fontSize: AppTheme.fontCaption, color: subColor)),
           ],
         );
 
@@ -488,13 +488,13 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
         children: [
           item(const Text('红',
               style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTheme.fontSmall,
                   fontWeight: FontWeight.w700,
                   color: _weekendColor)),
               '周末 / 假期'),
           item(const Text('蓝',
               style: TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w700, color: _accent)),
+                  fontSize: AppTheme.fontSmall, fontWeight: FontWeight.w700, color: _accent)),
               '周次'),
           item(dot(_accent, true), '今天'),
           item(const Text('小字',
@@ -521,7 +521,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
         children: [
           Text('报到与开课',
               style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTheme.fontSmall,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.grey.shade300 : const Color(0xFF6B7280))),
           const SizedBox(height: 4),
@@ -530,7 +530,7 @@ class _XylCalendarPageState extends State<XylCalendarPage> {
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(
                 '${_termNames[i]}：${_termNotes[i]}',
-                style: TextStyle(fontSize: 11, height: 1.55, color: subColor),
+                style: TextStyle(fontSize: AppTheme.fontCaption, height: 1.55, color: subColor),
               ),
             ),
         ],

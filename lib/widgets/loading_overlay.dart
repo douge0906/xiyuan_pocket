@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'app_card.dart';
 
 /// 工具爬取教务系统时的等待遮罩，带已等待秒数读秒，避免用户干等。
 class LoadingOverlay extends StatelessWidget {
@@ -15,17 +16,12 @@ class LoadingOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      color: Colors.black.withOpacity(0.45),
+      color: Colors.black.withValues(alpha: 0.45),
       child: Center(
-        child: Container(
+        child: AppCard(
           margin: const EdgeInsets.symmetric(horizontal: 40),
           padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            border: Border.all(color: context.borderColor),
-            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-            boxShadow: AppTheme.cardShadow,
-          ),
+          radius: AppTheme.radiusLg,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -42,7 +38,7 @@ class LoadingOverlay extends StatelessWidget {
                 message,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTheme.fontBody,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.white : AppTheme.textPrimaryLight,
                 ),
@@ -51,7 +47,7 @@ class LoadingOverlay extends StatelessWidget {
               Text(
                 '已等待 $seconds 秒',
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: AppTheme.fontSmall,
                   color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280),
                 ),
               ),

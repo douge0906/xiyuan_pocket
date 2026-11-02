@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/empty_state_art.dart';
 import '../widgets/state_views.dart';
 
 import '../models/message.dart';
 import '../services/message_channel_service.dart';
+import '../services/current_tab.dart';
 import '../services/message_repository.dart';
 import '../services/message_source.dart';
 import '../services/storage_service.dart';
@@ -97,6 +99,8 @@ class _NotificationPageState extends State<NotificationPage>
     // 发布-订阅是**两端**契约：只写 notifyListeners() 而没人订阅，
     // 等于没接线（历史上「搜索完全失效」就是这么来的）。
     _repo.addListener(_onRepoChanged);
+    // 用户真正切到消息页时才更新（App 启动会预热所有 Tab，预热不联网）。
+    _unsubEntered = CurrentTab.addListener(_onEntered);
     _boot();
   }
 
@@ -167,7 +171,20 @@ class _NotificationPageState extends State<NotificationPage>
     if (tabs.isEmpty) return;
     // 只定页签，不单独加载 —— 下面的批量更新会把**所有**页签都铺好。
     _repo.setActive(tabs.first.id, loadIfNeeded: false);
+    // 预热时**照常加载**：各页预热间隔 400ms，请求天然错开，
+    // 不会同时打出去；而切页时内容已经就绪 → 没有「空 → 满」的闪动。
     unawaited(_refreshFromEntry());
+  }
+
+  /// 注销「用户进入」监听。
+  void Function()? _unsubEntered;
+
+  /// 用户真正切到消息页。
+  ///
+  /// 数据已在预热时加载完，这里**不重复更新**（重复更新会让列表重新排序，
+  //  观感上就是「闪一下」）。
+  void _onEntered(NavPageRef page) {
+    if (page != NavPageRef.message || !mounted) return;
   }
 
   /// 进页面时的更新。
@@ -184,6 +201,7 @@ class _NotificationPageState extends State<NotificationPage>
 
   @override
   void dispose() {
+    _unsubEntered?.call();
     _noticeTimer?.cancel();
     _repo.removeListener(_onRepoChanged);
     _searchController.dispose();
@@ -307,7 +325,7 @@ class _NotificationPageState extends State<NotificationPage>
                 const Text(
                   '消息通知',
                   style: TextStyle(
-                    fontSize: 26,
+                    fontSize: AppTheme.fontDisplay,
                     fontWeight: FontWeight.bold,
                     letterSpacing: -0.5,
                   ),
@@ -316,8 +334,8 @@ class _NotificationPageState extends State<NotificationPage>
                 Text(
                   _booting ? '加载中…' : '共 ${_tabs.length} 个栏目',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    color: Colors.grey.shade500,
+                    fontSize: AppTheme.fontSmall,
+                    color: context.textTertiary,
                   ),
                 ),
               ],
@@ -336,7 +354,7 @@ class _NotificationPageState extends State<NotificationPage>
               child: Icon(
                 Icons.settings_outlined,
                 size: 20,
-                color: Colors.grey.shade600,
+                color: context.textSecondary,
               ),
             ),
           ),
@@ -396,9 +414,9 @@ class _NotificationPageState extends State<NotificationPage>
         label: Text(
           label,
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: AppTheme.fontSmall,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-            color: selected ? Colors.white : Colors.grey.shade700,
+            color: selected ? Colors.white : context.textPrimary,
           ),
         ),
         onSelected: (_) => onTap(),
@@ -424,37 +442,38 @@ class _NotificationPageState extends State<NotificationPage>
               shape: BoxShape.circle,
               border: Border.all(color: context.borderColor),
             ),
-            child: Icon(Icons.add_rounded, size: 19, color: Colors.grey.shade600),
+            child: Icon(Icons.add_rounded, size: 19, color: context.textSecondary),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSearchBox(bool isDark) {
+  Widget _buildSearchBox() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
       child: Container(
         height: 44,
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+          color: context.cardColor,
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(color: context.borderColor),
         ),
         child: TextField(
           controller: _searchController,
           onChanged: _onSearchChanged,
-          style: TextStyle(fontSize: 14, color: context.textPrimary),
+          style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary),
           decoration: InputDecoration(
             isDense: true,
             hintText: '搜索标题',
-            hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade400),
+            hintStyle: TextStyle(
+                fontSize: AppTheme.fontBody, color: context.textTertiary),
             prefixIcon:
-                Icon(Icons.search_rounded, size: 20, color: Colors.grey.shade400),
+                Icon(Icons.search_rounded, size: 20, color: context.textTertiary),
             suffixIcon: _searchQuery.isNotEmpty
                 ? IconButton(
                     icon: Icon(Icons.close_rounded,
-                        size: 18, color: Colors.grey.shade500),
+                        size: 18, color: context.textTertiary),
                     onPressed: _clearSearch,
                   )
                 : null,
@@ -491,7 +510,19 @@ class _NotificationPageState extends State<NotificationPage>
       // 那条进度只会显示 1/1 —— 与「总的更新」这个概念自相矛盾。
       // 另外它**不受「每次进入自动更新」影响** —— 那是用户的明确动作。
       onRefresh: () => _repo.syncAll(),
-      child: ListView.separated(
+      // 🔴 移动端默认**没有**滚动条（MaterialScrollBehavior 只给桌面平台加），
+      //    长列表滑到哪儿全靠记忆 —— 这就是「滑动质感缺失」的一大块。
+      //    这里显式加一根细滚动条，滑动时右侧淡入、停手后淡出。
+      //
+      // ⚠️ `notificationPredicate` 必须自定义：消息列表套在 **PageView** 里，
+      //    Scrollbar 的默认谓词是 `depth == 0`，会把嵌套层（depth>0）的
+      //    通知全部过滤掉 → 滚动条永远不显示。
+      child: Scrollbar(
+        thumbVisibility: false,
+        thickness: 3,
+        radius: const Radius.circular(3),
+        notificationPredicate: (n) => n.depth == 1,
+        child: ListView.separated(
         // 内容不足一屏时也要能下拉刷新
         physics: const AlwaysScrollableScrollPhysics(),
         // 无缝白底：左右不留页面边距（行内自带 20），分割线贯通到屏幕两侧
@@ -511,11 +542,15 @@ class _NotificationPageState extends State<NotificationPage>
           }
           final m = state.items[i];
           return MessageCard(
+            // 🔴 列表项必须有**稳定 key**：没有 key 时数据更新会按位置
+            //    复用子节点 → 已读红点、标题在滑动中错位串行。
+            key: ValueKey(m.id),
             message: m,
             isUnread: _repo.isUnread(m),
             onTap: () => _openDetail(ch, m),
           );
         },
+        ),
       ),
     );
   }
@@ -530,7 +565,8 @@ class _NotificationPageState extends State<NotificationPage>
         child: Center(
           child: Text(
             '已加载 $n 条',
-            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade400),
+            style: TextStyle(
+                fontSize: AppTheme.fontSmall, color: context.textTertiary),
           ),
         ),
       );
@@ -539,6 +575,9 @@ class _NotificationPageState extends State<NotificationPage>
           {bool searching = false}) =>
       EmptyState(
         icon: searching ? Icons.search_off_rounded : Icons.inbox_outlined,
+        // 搜索无结果 → 放大镜；栏目无内容 → 信封（消息本身的属性）。
+        artVariant:
+            searching ? EmptyArtVariant.search : EmptyArtVariant.inbox,
         message: searching ? '未找到相关标题' : '暂无${ch.name}内容',
         hint: searching ? '换个关键词试试' : '下拉可刷新',
       );
@@ -553,6 +592,8 @@ class _NotificationPageState extends State<NotificationPage>
   /// 一个栏目都没订阅时的空态 —— 必须显式给出，否则页面只剩一排「＋」。
   Widget _noChannels(bool isDark) => EmptyState(
         icon: Icons.inbox_outlined,
+        // 未订阅任何栏目 → 一张「待添加的订阅卡片」。
+        artVariant: EmptyArtVariant.subscribe,
         message: '还没有订阅任何栏目',
         hint: '点右上角「＋」挑选想看的栏目',
         action: ElevatedButton.icon(
@@ -608,16 +649,18 @@ class _NotificationPageState extends State<NotificationPage>
 
     return Container(
       width: 214,
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      padding: const EdgeInsets.fromLTRB(11, 8, 11, 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xF21E1E1E) : const Color(0xF2FFFFFF),
+        // 轻量化：底色更透、描边更淡、阴影几乎不要 —— 状态条不该抢内容。
+        color: isDark ? const Color(0xD91E1E1E) : const Color(0xD9FFFFFF),
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: context.borderColor),
+        border: Border.all(
+            color: context.borderColor.withValues(alpha: isDark ? 0.9 : 0.7)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.30 : 0.06),
-            blurRadius: 14,
-            offset: const Offset(0, 3),
+            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.035),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -634,9 +677,9 @@ class _NotificationPageState extends State<NotificationPage>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: context.textPrimary,
+                    fontSize: AppTheme.fontSmall,
+                    fontWeight: FontWeight.w500,
+                    color: context.textSecondary,
                   ),
                 ),
               ),
@@ -644,7 +687,7 @@ class _NotificationPageState extends State<NotificationPage>
               Text(
                 _formatElapsed(_repo.busyElapsed),
                 style: TextStyle(
-                  fontSize: 11.5,
+                  fontSize: AppTheme.fontCaption,
                   // 等宽数字：秒数从 9s → 10s 时宽度不变，不会把左边的
                   // 文案挤得抖一下。
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -653,16 +696,16 @@ class _NotificationPageState extends State<NotificationPage>
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 7),
           // 内嵌细进度条：**确定性**时按 done/total 填充，否则来回扫。
           ClipRRect(
-            borderRadius: BorderRadius.circular(2),
+            borderRadius: BorderRadius.circular(1),
             child: SizedBox(
-              height: 3,
+              height: 2,
               child: LinearProgressIndicator(
                 value: value,
                 minHeight: 3,
-                backgroundColor: AppTheme.primaryColor.withOpacity(0.12),
+                backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
                 valueColor:
                     AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
               ),
@@ -684,7 +727,7 @@ class _NotificationPageState extends State<NotificationPage>
         child: CircularProgressIndicator(
           strokeWidth: 2,
           valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
-          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
+          backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.15),
         ),
       );
     }
@@ -702,7 +745,7 @@ class _NotificationPageState extends State<NotificationPage>
           value: v,
           strokeCap: StrokeCap.round,
           valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
-          backgroundColor: AppTheme.primaryColor.withOpacity(0.15),
+          backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.15),
         ),
       ),
     );
@@ -740,7 +783,7 @@ class _NotificationPageState extends State<NotificationPage>
           Text(
             data.headline,
             style: TextStyle(
-              fontSize: 11.5,
+              fontSize: AppTheme.fontSmall,
               fontWeight: FontWeight.w500,
               color: context.textSecondary,
             ),
@@ -752,7 +795,7 @@ class _NotificationPageState extends State<NotificationPage>
                 data.detail!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11.5, color: context.textTertiary),
+                style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
               ),
             ),
           ],
@@ -777,7 +820,7 @@ class _NotificationPageState extends State<NotificationPage>
                 _buildHeader(),
                 const SizedBox(height: 12),
                 _buildFilterChips(),
-                _buildSearchBox(isDark),
+                _buildSearchBox(),
                 const SizedBox(height: 4),
                 Expanded(
                   child: _booting

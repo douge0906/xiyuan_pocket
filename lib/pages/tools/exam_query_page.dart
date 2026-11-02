@@ -1,17 +1,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../../widgets/empty_state_art.dart';
 import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../services/exam_storage.dart';
+import '../../services/widget_sync_service.dart';
 import '../../providers/user_config_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/loading_overlay.dart';
 import '../../widgets/semester_picker.dart';
 import '../../widgets/site_links.dart';
+import '../../widgets/app_card.dart';
 
 /// 考试安排（v2.4.5 起与「成绩查询」彻底分开，各自独立页面）。
 ///
@@ -162,6 +165,9 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   }
 
   Future<void> _query() async {
+    // 🔴 重入保护：连点刷新会并发查询，后完成的旧请求覆盖新学期的数据
+    //    （考试缓存是单槽）→ 首页的「最近考试倒计时」也会跟着错。
+    if (_querying) return;
     setState(() {
       _querying = true;
       _errorText = null;
@@ -180,6 +186,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
       final parsed =
           rawList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       await ExamStorage.saveExams(parsed, semester: data['semester'] as String?);
+      unawaited(WidgetSyncService.syncExamWidget());
       if (!mounted) return;
       setState(() {
         _exams = parsed;
@@ -243,7 +250,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
       appBar: AppBar(
         title: const Text('考试安排',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        backgroundColor: context.cardColor,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         // 仿掌上徐工：右上角一个刷新按钮（取代原来的大查询按钮）
@@ -289,7 +296,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   /// 学期选择（点击弹出选择面板）
   Widget _buildSemesterRow(bool isDark) {
     return Material(
-      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      color: context.cardColor,
       borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
         onTap: _querying ? null : _pickSemester,
@@ -311,7 +318,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                 child: Text(
                   _selectedLabel,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w600,
                     color: context.textPrimary,
                   ),
@@ -334,9 +341,9 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
           width: double.infinity,
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+            color: context.cardColor,
             borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-            border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.45)),
+            border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.45)),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,7 +355,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                 child: Text(
                   _errorText!,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: AppTheme.fontBody,
                     height: 1.5,
                     color: context.textPrimary,
                   ),
@@ -377,7 +384,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
             '还剩 ${_exams.length} 门考试',
             textAlign: TextAlign.center,
             style: TextStyle(
-                fontSize: 13,
+                fontSize: AppTheme.fontSmall,
                 color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280)),
           ),
         ),
@@ -390,7 +397,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
               Text(
                 _semester!,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTheme.fontBody,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.grey.shade300 : const Color(0xFF4B5563),
                 ),
@@ -400,7 +407,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B).withOpacity(0.15),
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: Text(
@@ -408,7 +415,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                         ? '缓存'
                         : '缓存 ${_cacheUpdatedAt!.month}/${_cacheUpdatedAt!.day}',
                     style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: AppTheme.fontSmall,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFFB45309)),
                   ),
@@ -429,7 +436,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
         onPressed: () => _openExternal(kJwglLoginUrl),
         icon: const Icon(Icons.open_in_new_rounded, size: 19),
         label: const Text('在教务系统查询',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontBody, fontWeight: FontWeight.w600)),
         style: OutlinedButton.styleFrom(
           foregroundColor: isDark ? Colors.grey.shade300 : const Color(0xFF4B5563),
           side: BorderSide(
@@ -441,7 +448,11 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
   }
 
   Widget _emptyState(bool isDark, IconData icon, String text) {
-    return EmptyState(icon: icon, message: text);
+    return EmptyState(
+      icon: icon,
+      artVariant: EmptyArtVariant.calendar,
+      message: text,
+    );
   }
 
 }
@@ -467,15 +478,10 @@ class _ExamTile extends StatelessWidget {
     final isResit = name.contains('补考');
     final days = _daysUntil(exam);
 
-    return Container(
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-      decoration: BoxDecoration(
-        border: Border.all(color: context.borderColor),
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        boxShadow: AppTheme.cardShadow,
-      ),
+      radius: AppTheme.radiusMd,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -487,7 +493,7 @@ class _ExamTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 15.5,
+                    fontSize: AppTheme.fontTitle,
                     fontWeight: FontWeight.w700,
                     color: context.textPrimary,
                   ),
@@ -498,7 +504,7 @@ class _ExamTile extends StatelessWidget {
                 Icon(Icons.place_outlined, size: 15, color: muted),
                 const SizedBox(width: 2),
                 Text(classroom,
-                    style: TextStyle(fontSize: 13, color: muted)),
+                    style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
               ],
               if (isResit) ...[
                 const SizedBox(width: 8),
@@ -506,12 +512,12 @@ class _ExamTile extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEF4444).withOpacity(0.12),
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   ),
                   child: const Text('补考',
                       style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: AppTheme.fontSmall,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFFEF4444))),
                 ),
@@ -525,11 +531,11 @@ class _ExamTile extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(time,
-                    style: TextStyle(fontSize: 13.5, color: muted)),
+                    style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
               ),
               if (days != null && days >= 0)
                 Text('$days 天',
-                    style: TextStyle(fontSize: 13.5, color: muted)),
+                    style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
             ],
           ),
           if (teacher.isNotEmpty) ...[
@@ -539,7 +545,7 @@ class _ExamTile extends StatelessWidget {
                 Icon(Icons.person_outline_rounded, size: 15, color: muted),
                 const SizedBox(width: 8),
                 Text(teacher,
-                    style: TextStyle(fontSize: 13, color: muted)),
+                    style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
               ],
             ),
           ],

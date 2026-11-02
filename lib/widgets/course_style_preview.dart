@@ -121,20 +121,6 @@ class CourseStylePreview extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 8),
-          child: Row(
-            children: [
-              Icon(Icons.visibility_outlined,
-                  size: 14, color: context.textTertiary),
-              const SizedBox(width: 6),
-              Text(
-                _hasThisWeekCourse ? '实时预览 · 你的课表' : '实时预览 · 示例课表（本周无课）',
-                style: TextStyle(fontSize: 11.5, color: context.textTertiary),
-              ),
-            ],
-          ),
-        ),
         ClipRRect(
           borderRadius: BorderRadius.circular(AppTheme.radiusSm),
           child: Container(
@@ -208,32 +194,39 @@ class CourseStylePreview extends StatelessWidget {
             ),
           for (int i = 0; i < 7; i++)
             Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      labels[i],
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight:
-                            i + 1 == todayWeekday ? FontWeight.bold : FontWeight.w500,
-                        color: i + 1 == todayWeekday
-                            ? AppTheme.primaryColor
-                            : context.textSecondary,
-                      ),
-                    ),
-                    if (!hideDate)
+              child: Container(
+                color: i + 1 == todayWeekday &&
+                        CourseStorage.highlightTodayCache
+                    ? AppTheme.primaryColor.withValues(alpha: 0.05)
+                    : Colors.transparent,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                       Text(
-                        '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
+                        labels[i],
                         style: TextStyle(
-                          fontSize: 9,
+                          fontSize: AppTheme.fontCaption,
+                          fontWeight: i + 1 == todayWeekday
+                              ? FontWeight.bold
+                              : FontWeight.w500,
                           color: i + 1 == todayWeekday
-                              ? AppTheme.primaryColor.withOpacity(0.85)
-                              : context.textTertiary,
+                              ? AppTheme.primaryColor
+                              : context.textSecondary,
                         ),
                       ),
-                  ],
+                      if (!hideDate)
+                        Text(
+                          '${monday.add(Duration(days: i)).month}/${monday.add(Duration(days: i)).day}',
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: i + 1 == todayWeekday
+                                ? AppTheme.primaryColor.withValues(alpha: 0.85)
+                                : context.textTertiary,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),

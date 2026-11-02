@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -5,7 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'campus/campus_session.dart';
 import 'campus/cas_client.dart';
+import 'campus/webvpn.dart';
+import 'net_mode.dart';
 import 'storage_service.dart';
+part 'dorm_models.dart';
 
 /// 宿舍电费（2026-10-23）。
 ///
@@ -21,10 +25,22 @@ class DormService {
 
   static const String base = 'http://10.3.100.110';
 
+  /// 内网会话。校外（[CampusNetMode.webvpn]）时把 URL 改写挂到会话层——
+  /// 这样「起始请求 + 每一跳 302」都会被包装，平台换票链才不会断在中间。
+  static CampusSession _newSession() => CampusSession(
+        urlRewrite:
+            NetMode.current == CampusNetMode.webvpn ? WebVpn.wrapUrl : null,
+      );
+
   /// 平台注册给 CAS 的 service（从统一认证跳转地址抄下来，必须一字不差）。
   static const String casService =
       'http://10.3.100.110/berserker-auth/cas/login/lyCas'
       '?targetUrl=http%3A%2F%2F10.3.100.110%2Fplat%2F%3Fname%3DloginTransit';
+
+  /// 来源参数：**必须是 app**。实测 `h5` / `pc` 都会被服务端以 4030
+  /// 「服务大厅未授权」拒掉（2026-10-26 用真实账号验证）。
+  /// 且要**双份携带**：GET 走 query，再另加同名头（官方前端拦截器行为）。
+  static const String _synSource = 'app';
 
   static const String _basic =
       'Basic bW9iaWxlX3NlcnZpY2VfcGxhdGZvcm06bW9iaWxlX3NlcnZpY2VfcGxhdGZvcm1fc2VjcmV0';
@@ -33,9 +49,29 @@ class DormService {
   static String? _token;
   static String? _tokenSno;
 
+  /// 持久会话：CAS 登录态 + **WebVPN 网关 cookie** 都在这里。
+  ///
+  /// 🔴 校外必须复用同一个会话对象 —— 网关认 `wengine_vpn_ticket…` cookie，
+  /// 每次新建空会话都会被当成未登录、直接回登录页 HTML。
+  /// （2026-10-26「查询失败」的真因：ensureLogin 用完就把会话关掉了，
+  ///   后面每个接口又各自 new 一个空会话，直连靠 token 头能过、走网关全挂。）
+  static CampusSession? _session;
+
+  /// 该会话创建时的网络模式。模式切换（直连 ↔ 网关）必须重建 ——
+  /// 否则会话里挂的 urlRewrite 还是旧的，请求会发错地方。
+  static CampusNetMode? _sessionMode;
+
+  /// CAS 票据（TGT）。有效期远长于 ST，留着可反复换 ST ——
+  /// 充值跳转、卡包换票就不必每次重新登录（省 3~5 秒，也少碰风控）。
+  static String? _tgt;
+  static String? _tgtSno;
+
+  /// 已登录会话（[ensureLogin] 成功后非空）。
+  static CampusSession? get activeSession => _session;
+
   /// 内网可达性（2 秒超时）。不在校园网时用它快速短路，避免弹窗卡住。
   static Future<bool> isAvailable() async {
-    final s = CampusSession();
+    final s = _newSession();
     try {
       final r = await s
           .get('$base/berserker-app/frontInfo?synAccessSource=mobile')
@@ -52,20 +88,92 @@ class DormService {
   /// 最近一次登录失败的具体阶段（空 = 没失败）。
   static String lastLoginError = '';
 
-  static Future<bool> ensureLogin() async {
+  /// 登录进行中的 Future：并发调用共享同一次登录。
+  ///
+  /// 没有它的话，两个页面同时触发登录会各建一个会话，后完成的那个
+  /// `_session?.close()` 会把前一个**正在被使用**的会话关掉（请求直接断）。
+  static Future<String?>? _loginInflight;
+
+  /// 登录并返回**本次调用**的失败原因（null = 成功）。
+  ///
+  /// 为什么不读共享的 [lastLoginError]：多个页面会先后/并发调用，后一次开头
+  /// 就把前一次的错误清空了，界面于是读到空文案（2026-10-26「一卡通报登录失败
+  /// 却没有任何原因」就是这么来的）。
+  /// 测试用：直接注入账密（生产不设置）。供 live 联通测试跑完整业务方法。
+  @visibleForTesting
+  static String? debugSno;
+  @visibleForTesting
+  static String? debugPwd;
+
+  /// 测试用：读当前 access_token（只在诊断脚本里用）。
+  @visibleForTesting
+  static String? get debugToken => _token;
+
+  /// 串行化所有 CAS / WebVPN / 平台票据操作。
+  ///
+  /// 之前余额刷新和充值预热会各自登录一次，后者换票时可能让前者的 TGT
+  /// 失效；表现就是「更新数据时点充值，偶尔打不开充值页」。
+  static Future<void> _authGate = Future<void>.value();
+
+  static Future<T> _authLocked<T>(Future<T> Function() action) async {
+    final previous = _authGate;
+    final gate = Completer<void>();
+    _authGate = gate.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      gate.complete();
+    }
+  }
+
+  static Future<String?> loginOrError() =>
+      _authLocked(_loginSingleFlight);
+
+  static Future<String?> _loginSingleFlight() {
+    final running = _loginInflight;
+    if (running != null) return running;
+    // 整体超时兜底：CAS + 网关 + 换票最多走十几跳，单跳 25 秒叠起来能拖到几分钟，
+    // 界面就一直是「更新中」。40 秒拿不到结果就直接判失败（2026-10-26）。
+    final fut = _loginRun().timeout(
+      const Duration(seconds: 40),
+      onTimeout: () {
+        _loginInflight = null;
+        lastLoginError = '登录失败(超时)';
+        return lastLoginError;
+      },
+    );
+    _loginInflight = fut;
+    return fut;
+  }
+
+  static Future<String?> _loginRun() async {
     lastLoginError = '';
-    final cfg = await StorageService.loadUserConfig();
-    final sno = cfg.username.trim();
-    final pwd = cfg.password;
+    // 测试注入时完全绕过本机存储（flutter_secure_storage 在测试环境无平台通道）
+    String sno;
+    String pwd;
+    if (debugSno != null) {
+      sno = debugSno!.trim();
+      pwd = debugPwd ?? '';
+    } else {
+      final cfg = await StorageService.loadUserConfig();
+      sno = cfg.username.trim();
+      pwd = cfg.password;
+    }
     if (sno.isEmpty || pwd.isEmpty) {
       lastLoginError = '登录失败(缺账密)';
-      return false;
+      return lastLoginError;
     }
-    if (_token != null && _tokenSno == sno) return true;
+    if (_token != null &&
+        _tokenSno == sno &&
+        _session != null &&
+        _sessionMode == NetMode.current) {
+      return null;
+    }
 
     CampusSession? s;
     try {
-      s = CampusSession();
+      s = _newSession();
       final login = await CasClient.login(s, sno, pwd, service: casService);
       if (!login.ok || login.tgt == null) {
         lastLoginError = switch (login.status) {
@@ -73,7 +181,21 @@ class DormService {
           CasClient.captchaFailed => '登录失败(验证码)',
           _ => '登录失败(账号)',
         };
-        return false;
+        return lastLoginError;
+      }
+
+      // 🔴 校外必须先登录 WebVPN 网关，再走平台换票。
+      //
+      // 位置很关键：平台的登录链（lyCas → 302 /plat/?ticket=…）**全在内网**，
+      // 没有网关登录态就到不了、平台票也就拿不到。而 CAS 换 ST 时传的 service
+      // 必须保持**原始内网地址**（CAS 会校验与平台注册值一致），包装交给
+      // CampusSession.urlRewrite 逐跳完成 —— 所以这里只补网关登录这一步。
+      if (NetMode.current == CampusNetMode.webvpn) {
+        final vpnErr = await WebVpn.login(s, login.tgt!);
+        if (vpnErr != null) {
+          lastLoginError = '登录失败($vpnErr)';
+          return lastLoginError;
+        }
       }
 
       final stResp = await s.postForm(
@@ -84,20 +206,24 @@ class DormService {
       final st = stResp.body.trim();
       if (!st.startsWith('ST-')) {
         lastLoginError = '登录失败(票据)';
-        return false;
+        return lastLoginError;
       }
 
       // 🔴 关键：CAS 的 ST 不能直接换 token。
       // 必须先访问 lyCas?ticket=ST，平台会 302 到 /plat/?ticket=<平台自己的票>，
       // 拿这张「转换后的票」去 oauth 才能换到 access_token（已实测）。
+      // 🔴 平台票只出现在**中间那一跳**的 URL 上，必须逐跳捕获。
+      //
+      // 直连时 `/plat/?ticket=` 直接 200，最终 URL 里还有票，所以「只看最终 URL」
+      // 碰巧能用；走 WebVPN 时网关会多跳一次、最终落点是门户首页，票就丢了 ——
+      // 于是退回用 ST 换 token，拿到的是低权限 token，一卡通报
+      // 「4030 服务大厅未授权1」（2026-10-26 实测）。
       var platformTicket = '';
       try {
-        final res = await s.get(
+        platformTicket = await locatePlatformTicket(
+          s,
           "$casService&ticket=${Uri.encodeComponent(st)}",
-          headers: {'Referer': '${CasClient.casBase}/'},
         );
-        // CampusResponse.url = 跟随重定向后的最终地址，里面带着平台票
-        platformTicket = _ticketParam(res.url);
       } catch (_) {
         // 拿不到就退回用 ST 试一次
       }
@@ -121,24 +247,37 @@ class DormService {
       final token = j?['access_token']?.toString();
       if (token == null || token.isEmpty) {
         lastLoginError = '登录失败(换取)';
-        return false;
+        return lastLoginError;
       }
 
       _token = token;
       _tokenSno = sno;
-      return true;
+      _tgt = login.tgt;
+      _tgtSno = sno;
+      // 保留会话：WebVPN 的登录 cookie 就存在这里，后续所有内网请求必须复用它
+      _session?.close();
+      _session = s;
+      _sessionMode = NetMode.current;
+      s = null; // 已由 _session 持有，别让 finally 关掉
+      return null;
     } catch (e) {
       debugPrint('电费登录失败: $e');
       if (lastLoginError.isEmpty) lastLoginError = '登录失败(网络)';
-      return false;
+      return lastLoginError;
     } finally {
       s?.close();
+      _loginInflight = null;
     }
   }
 
   static void clearToken() {
     _token = null;
     _tokenSno = null;
+    _tgt = null;
+    _tgtSno = null;
+    _session?.close();
+    _session = null;
+    _sessionMode = null;
   }
 
   /// 预置楼栋：即使不在校园网，弹窗也能选。
@@ -152,9 +291,9 @@ class DormService {
     DormBuilding(feeitemid: 448, value: 'A10&李园陆号A10', name: '李六', available: true),
     DormBuilding(feeitemid: 448, value: 'A11&李园柒号A11', name: '李七', available: true),
     DormBuilding(feeitemid: 448, value: 'A12&李园捌号A12', name: '李八', available: true),
-    DormBuilding(feeitemid: 449, value: '12460&李九', name: '李九', available: true),
-    DormBuilding(feeitemid: 449, value: '13276&李十', name: '李十', available: true),
-    DormBuilding(feeitemid: 449, value: '12868&李十一', name: '李十一', available: true),
+    DormBuilding(feeitemid: 449, value: '12460&李九', name: '李九', campus: '1&无锡学院', available: true),
+    DormBuilding(feeitemid: 449, value: '13276&李十', name: '李十', campus: '1&无锡学院', available: true),
+    DormBuilding(feeitemid: 449, value: '12868&李十一', name: '李十一', campus: '1&无锡学院', available: true),
     DormBuilding(feeitemid: 448, value: 'A1&桃园壹號A1', name: '桃一', available: true),
     DormBuilding(feeitemid: 448, value: 'A2&桃园贰號A2', name: '桃二', available: true),
     DormBuilding(feeitemid: 448, value: 'A3&桃园叁號A3', name: '桃三', available: true),
@@ -169,7 +308,11 @@ class DormService {
   static Future<List<DormBuilding>> buildings() async => _seed;
 
   static Future<ElectricityInfo?> query(DormInfo dorm) async {
-    if (!await ensureLogin()) return null;
+    final loginErr = await loginOrError();
+    if (loginErr != null) {
+      lastLoginError = loginErr; // 绑定本次，避免被并发调用清空
+      return null;
+    }
     final map = await _post(dorm.feeitemid, 'IEC', 3, {
       'campus': dorm.campus,
       'building': dorm.buildingValue,
@@ -180,10 +323,17 @@ class DormService {
     final show = (map['showData'] as Map?)?.cast<String, dynamic>() ?? const {};
     final text = (show['信息'] ?? '').toString();
     final data = (map['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final balance = parseMoney(text);
+    var kwh = parseKwh(text);
+    if (kwh == null && balance != null) {
+      // 449/450 不下发电量 → 按单价换算（文案自带单价优先，否则用学校电价）
+      final price = parseUnitPrice(text) ?? defaultUnitPrice;
+      if (price > 0) kwh = balance / price;
+    }
     return ElectricityInfo(
       text: text,
-      balance: _num(text, r'余额\s*([\d.]+)\s*元'),
-      kwh: _num(text, r'剩余电量\s*([\d.]+)\s*度'),
+      balance: balance,
+      kwh: kwh,
       buildingName: (data['buildingName'] ?? dorm.buildingName).toString(),
       room: (data['room'] ?? dorm.room).toString(),
     );
@@ -196,29 +346,46 @@ class DormService {
   ///   `无卡账号`  平台用户信息里找不到卡账号
   ///   `查询失败`  接口返回异常 / 没有卡
   static Future<CardQueryResult> fetchCardBalanceDetailed() async {
-    if (!await ensureLogin()) {
-      return CardQueryResult(
-          reason: lastLoginError.isEmpty ? '登录失败' : lastLoginError);
-    }
-    final s = CampusSession();
+    final loginErr = await loginOrError();
+    if (loginErr != null) return CardQueryResult(reason: loginErr);
+    final s = _session;
+    if (s == null) return const CardQueryResult(reason: '查询失败');
     try {
       final headers = {
         'synjones-auth': 'bearer $_token',
-        'synAccessSource': 'h5',
+        'synAccessSource': _synSource,
       };
 
       // ① 用户信息里找卡账号（字段名各版本不同，递归找 key 含 account/card 的）
-      final ur = await s.get('$base/berserker-base/user', headers: headers);
+      final ur = await s.get(
+        '$base/berserker-base/user?synAccessSource=$_synSource',
+        headers: headers,
+      );
       final uj = CampusSession.tryJson(ur.body);
+      if (uj == null) {
+        // 不是 JSON → 多半被网关/登录页拦了，**不能报「无卡账号」**
+        // （那两个字的误导性极强，2026-10-26 排查时就是被它带偏的）
+        if (ur.body.trimLeft().startsWith('<')) clearToken();
+        return const CardQueryResult(reason: '查询失败');
+      }
       final account = _findAccount(uj);
       if (account == null) {
+        // 区分「平台报错」和「确实没有卡号」：前者多半是 token 不对
+        // （VPN 下换了会话/票据），后者才是真没卡。混在一起会误导排查。
+        final code = uj['code']?.toString();
+        if (code != null && code != '200') {
+          final msg = (uj['msg'] ?? uj['message'] ?? uj['message'] ?? '')
+              .toString();
+          return CardQueryResult(
+              reason: '查询失败($code${msg.isEmpty ? '' : ' $msg'})');
+        }
         return const CardQueryResult(reason: '无卡账号');
       }
 
       // ② 查卡
       final r = await s.get(
         '$base/berserker-app/ykt/tsm/queryCard'
-        '?account=$account&synAccessSource=h5',
+        '?account=$account&synAccessSource=$_synSource',
         headers: headers,
       );
       final j = CampusSession.tryJson(r.body);
@@ -244,11 +411,41 @@ class DormService {
     } catch (_) {
       return const CardQueryResult(reason: '查询失败');
     } finally {
-      s.close();
+      // 持久会话**不能关**：WebVPN cookie 在里面，一关下一次请求就是空会话
     }
   }
 
   /// 从 302 的 Location 里取 `ticket` 参数（平台票是二次编码的，解一次）。
+  /// 逐跳跟随 302 链，找出**平台票**（非 `ST-` 前缀的 `?ticket=`）。
+  ///
+  /// 为什么不能只看最终 URL：平台票只出现在中间那一跳（`/plat/?ticket=…`）。
+  /// 直连时那一跳直接 200 所以碰巧能取到；走 WebVPN 时网关会多跳一次，
+  /// 最终落点已是门户首页，票就丢了 —— 退回用 ST 换 token 会得到低权限 token，
+  /// 一卡通报「4030 服务大厅未授权1」（2026-10-26 实测）。
+  ///
+  /// 抽成公开静态方法是为了能用本地桩服务器测（不依赖真实账号）。
+  static Future<String> locatePlatformTicket(
+    CampusSession s,
+    String startUrl, {
+    int maxHops = 6,
+  }) async {
+    var hopUrl = startUrl;
+    for (var i = 0; i < maxHops; i++) {
+      final res = await s.get(hopUrl, followRedirects: false);
+      var tk = _ticketParam(hopUrl);
+      if (tk.isEmpty) tk = _ticketParam(res.url);
+      if (tk.isNotEmpty && !tk.startsWith('ST-')) return tk;
+
+      final loc = res.location;
+      if (loc == null || loc.isEmpty) break;
+      hopUrl = CampusSession.nextHop(hopUrl, loc);
+
+      final tk2 = _ticketParam(hopUrl);
+      if (tk2.isNotEmpty && !tk2.startsWith('ST-')) return tk2;
+    }
+    return '';
+  }
+
   static String _ticketParam(String location) {
     if (location.isEmpty) return '';
     final uri = Uri.tryParse(location);
@@ -306,6 +503,8 @@ class DormService {
   static Future<void> saveCardCache(double v) async {
     final p = await SharedPreferences.getInstance();
     await p.setDouble(_kCardCache, v);
+    // 同步到旧缓存键，桌面小组件读的是这份。
+    await StorageService.saveCardBalanceCache(v);
   }
 
   /// 缓存按「楼栋 + 房号」区分：换宿舍后旧数据自动失效。
@@ -364,19 +563,41 @@ class DormService {
     int size = 20,
     String type = '',
   }) async {
-    if (!await ensureLogin()) return null;
-    final s = CampusSession();
+    var result = await _fetchTurnoverOnce(page: page, size: size, type: type);
+    // 平台 token 过期时请求会清 token 并返回 null；自动重登一次，
+    // 避免详情页偶发「进入后一片空白，要手动更新」。
+    if (result == null && _token == null) {
+      result = await _fetchTurnoverOnce(page: page, size: size, type: type);
+    }
+    return result;
+  }
+
+  static Future<CardTurnoverPage?> _fetchTurnoverOnce({
+    int page = 1,
+    int size = 20,
+    String type = '',
+  }) async {
+    if (await loginOrError() != null) return null;
+    final s = _session;
+    if (s == null) return null;
     try {
       final r = await s.get(
         '$base/berserker-search/search/personal/turnover'
-        '?type=$type&pageNum=$page&pageSize=$size',
+        '?type=$type&pageNum=$page&pageSize=$size'
+        '&synAccessSource=$_synSource',
         headers: {
           'synjones-auth': 'bearer $_token',
-          'synAccessSource': 'h5',
+          'synAccessSource': _synSource,
         },
       );
       final j = CampusSession.tryJson(r.body);
-      if (j == null || j['code']?.toString() != '200') return null;
+      if (j == null) {
+        // 回来不是 JSON = 多半被网关弹回登录页。清掉登录态，下次调用会静默重登；
+        // 否则 token 还在、永远走同一个死会话（表现为一直「查询失败」）。
+        if (r.body.trimLeft().startsWith('<')) clearToken();
+        return null;
+      }
+      if (j['code']?.toString() != '200') return null;
       final d = (j['data'] as Map?)?.cast<String, dynamic>() ?? const {};
       final records = (d['records'] as List<dynamic>?) ?? const [];
       final list = <CardTxn>[];
@@ -404,47 +625,137 @@ class DormService {
     } catch (_) {
       return null;
     } finally {
-      s.close();
+      // 持久会话**不能关**：WebVPN cookie 在里面，一关下一次请求就是空会话
     }
   }
 
   /// 电费充值页（官方 H5）：URL 自带 token，打开即登录。
+  /// 用已有 TGT 换一张 ST（指定 service）。失败即认为 TGT 失效并清空。
+  static Future<String?> _stFor(CampusSession s, String service) async {
+    final tgt = _tgt;
+    if (tgt == null) return null;
+    try {
+      final r = await s.postForm(
+        '${CasClient.casBase}/lyuapServer/v1/tickets/$tgt',
+        {'service': service},
+        headers: {'Referer': '${CasClient.casBase}/'},
+      );
+      final st = r.body.trim();
+      if (st.startsWith('ST-')) return st;
+    } catch (_) {
+      // 落到下面清 TGT
+    }
+    _tgt = null;
+    _tgtSno = null;
+    return null;
+  }
+
+  /// 确保有 TGT（优先复用；没有才真的登录一次）。返回 null = 登录失败。
+  static Future<String?> _ensureTgt(
+      CampusSession s, String sno, String pwd) async {
+    final cached = _tgt;
+    if (cached != null && _tgtSno == sno) return cached;
+    final login = await CasClient.login(s, sno, pwd, service: casService);
+    if (!login.ok || login.tgt == null) return null;
+    _tgt = login.tgt;
+    _tgtSno = sno;
+    return login.tgt;
+  }
+
+  /// 网关域的 cookie（供内置 WebView 注入，免去在页面里再登录一次）。
+  ///
+  /// 🔴 只挑网关自己的 cookie：平台侧 cookie（会话/票据）不往外给，
+  /// WebView 只该拿到"已登录网关"这一个事实。
+  static Map<String, String> get vpnCookies {
+    final all = _session?.cookies ?? const <String, String>{};
+    return {
+      for (final e in all.entries)
+        if (e.key.startsWith('wengine_vpn_ticket') ||
+            e.key.startsWith('show_') ||
+            e.key == 'heartbeat')
+          e.key: e.value,
+    };
+  }
+
+  /// 一卡通充值页的**直链**（靠平台会话，不靠 targetUrl）。
+  ///
+  /// `loginTransit` 只负责「用 ticket 建立会话」，它到底把浏览器送到哪不可靠
+  /// （实测返回 200 的 HTML，targetUrl 不保证生效）。所以 WebView 里分两步：
+  /// 先 open [cardBagLoginUrl] 建会话，再 load 本方法返回的地址。
+  static String? cardBagRechargeUrl() {
+    if (NetMode.current == CampusNetMode.offline) return null;
+    return WebVpn.wrapUrl(
+      '$base/campus-card/cardRecharge'
+      '?appId=27&loginFrom=h5&synAccessSource=h5',
+    );
+  }
+
+  /// 电费充值页（官方 H5，URL 自带 token，打开即登录）。
+  ///
+  /// 校外不拦，只把地址**包装成网关地址**：浏览器打开后若未登录 WebVPN 会跳一次
+  /// 登录页，登录后 cookie 由浏览器保留、后续直接进；校园网内 wrapUrl 原样返回。
   static Future<String?> rechargeUrlFor(int feeitemid) async {
-    if (!await ensureLogin()) return null;
+    // 离线（既不在校园网、网关也不通）时不要给地址：浏览器只会打开一个死链
+    if (NetMode.current == CampusNetMode.offline) return null;
+    if (await loginOrError() != null) return null;
     final pay = Uri.encodeComponent('$base/plat');
-    return '$base/charge-app?name=pays&id=$feeitemid&paymentUrl=$pay&token=$_token';
+    return WebVpn.wrapUrl(
+      '$base/charge-app?name=pays&id=$feeitemid&paymentUrl=$pay&token=$_token',
+    );
   }
 
   /// 卡包（充值入口）：需在页面内登录，交给浏览器/WebView 处理。
-  static String get cardBagUrl => '$base/campus-card/?name=campusCard';
+  static String get cardBagUrl => '$base/campus-card/cardRecharge'
+      '?appId=27&loginFrom=h5&synAccessSource=h5';
 
 
   /// 取一张**新鲜的平台票**（一次性，用于把已登录状态带进浏览器）。
   ///
   /// 流程：CAS 登录 → ST → lyCas 302 里拿平台票。
   static Future<String?> freshPlatformTicket() async {
-    final cfg = await StorageService.loadUserConfig();
-    final sno = cfg.username.trim();
-    final pwd = cfg.password;
+    var ticket = await _authLocked(_freshPlatformTicketRun);
+    // TGT 可能刚过期：第二次会重新走 CAS，避免充值偶发「票据失败」。
+    ticket ??= await _authLocked(_freshPlatformTicketRun);
+    return ticket;
+  }
+
+  static Future<String?> _freshPlatformTicketRun() async {
+    // 与 loginOrError 同口径：测试注入优先，否则读本机存储
+    String sno;
+    String pwd;
+    if (debugSno != null) {
+      sno = debugSno!.trim();
+      pwd = debugPwd ?? '';
+    } else {
+      final cfg = await StorageService.loadUserConfig();
+      sno = cfg.username.trim();
+      pwd = cfg.password;
+    }
     if (sno.isEmpty || pwd.isEmpty) return null;
 
     CampusSession? s;
     try {
-      s = CampusSession();
-      final login = await CasClient.login(s, sno, pwd, service: casService);
-      if (!login.ok || login.tgt == null) return null;
-      final stResp = await s.postForm(
-        '${CasClient.casBase}/lyuapServer/v1/tickets/${login.tgt}',
-        {'service': casService},
-        headers: {'Referer': '${CasClient.casBase}/'},
-      );
-      final st = stResp.body.trim();
-      if (!st.startsWith('ST-')) return null;
-      final res = await s.get(
+      s = _newSession();
+      final tgt = await _ensureTgt(s, sno, pwd);
+      if (tgt == null) return null;
+
+      // 校外必须先登录网关：后面的换票链（lyCas → /plat/）全在内网。
+      if (NetMode.current == CampusNetMode.webvpn) {
+        if (await WebVpn.login(s, tgt) != null) {
+          // 网关登录失败多半是 TGT 过期，清掉让下次重登
+          _tgt = null;
+          _tgtSno = null;
+          return null;
+        }
+      }
+
+      final st = await _stFor(s, casService);
+      if (st == null) return null;
+      // 逐跳找票（票只在中间那一跳，最终落点会丢）
+      return locatePlatformTicket(
+        s,
         "$casService&ticket=${Uri.encodeComponent(st)}",
-        headers: {'Referer': '${CasClient.casBase}/'},
       );
-      return _ticketParam(res.url);
     } catch (_) {
       return null;
     } finally {
@@ -453,13 +764,21 @@ class DormService {
   }
 
   /// 卡包登录跳转：先落登录态（loginTransit），再进卡包页。
+  /// 卡包（充值入口）。同样在校外包装成网关地址交给浏览器。
   static Future<String?> cardBagLoginUrl() async {
+    if (NetMode.current == CampusNetMode.offline) return null;
     final ticket = await freshPlatformTicket();
     if (ticket == null || ticket.isEmpty) return null;
-    final target =
-        Uri.encodeComponent('$base/campus-card/?name=campusCard');
-    return '$base/plat/?name=loginTransit'
-        '&ticket=${Uri.encodeComponent(ticket)}&targetUrl=$target';
+    // 目标是**充值页**而不是卡包首页（2026-10-26 用户指正）：
+    // 卡包首页只有概览，充值要进 cardRecharge。
+    final target = Uri.encodeComponent(
+      '$base/campus-card/cardRecharge'
+      '?appId=27&loginFrom=h5&synAccessSource=h5',
+    );
+    return WebVpn.wrapUrl(
+      '$base/plat/?name=loginTransit'
+      '&ticket=${Uri.encodeComponent(ticket)}&targetUrl=$target',
+    );
   }
 
 
@@ -531,13 +850,15 @@ class DormService {
     required double yuan,
     DormInfo? dorm,
   }) async {
-    if (!await ensureLogin()) return '登录失败';
-    final s = CampusSession();
+    final loginErr = await loginOrError();
+    if (loginErr != null) return loginErr;
+    final s = _session;
+    if (s == null) return '登录失败';
     try {
       final h = {
         'Authorization': _chargeBasic,
         'synjones-auth': 'bearer $_token',
-        'synAccessSource': 'h5',
+        'synAccessSource': _synSource,
       };
 
       // 电费：带上房间上下文（末级 IEC 的 map.data）
@@ -639,7 +960,7 @@ class DormService {
     } catch (_) {
       return '网络异常';
     } finally {
-      s.close();
+      // 持久会话**不能关**：WebVPN cookie 在里面，一关下一次请求就是空会话
     }
   }
 
@@ -750,10 +1071,46 @@ class DormService {
     }
   }
 
-  static double? _num(String text, String pattern) {
-    final m = RegExp(pattern).firstMatch(text);
-    if (m == null) return null;
-    return double.tryParse(m.group(1) ?? '');
+  /// 解析平台文案里的**金额**。
+  ///
+  /// 三个片区的文案格式**各不相同**（平台自己就没统一，2026-10-26 实测）：
+  ///   448 `当前余额517.05元,当前剩余电量957.50度`
+  ///   449 `房间当前剩余电费625.35`（无「元」字、无电量）
+  ///   450 `房间号：211,剩余金额：29.79，单价：0.5400`
+  /// 且余额可能为**负**（`当前余额-12.19元`，欠费）。
+  ///
+  /// 口径：关键词 + 可选分隔符 + 数字（允许负号），**不做位置解构**——
+  /// 不能"取文本里第一个数字"，平台改文案时会错报成房间号或单价。
+  @visibleForTesting
+  static double? parseMoney(String text) {
+    if (text.isEmpty) return null;
+    for (final k in const ['剩余金额', '剩余电费', '余额']) {
+      final m = RegExp('$k' r'\s*[:：=＝为是]?\s*(-?\d+(?:\.\d+)?)')
+          .firstMatch(text);
+      if (m != null) return double.tryParse(m.group(1)!);
+    }
+    return null;
+  }
+
+  /// 学校居民电价（元/度）。450 的文案自带单价（实测 0.5400），
+  /// 449 不提供 —— 用它换算；两片区实测一致。
+  static const double defaultUnitPrice = 0.54;
+
+  /// 解析文案里的单价（450 形如 `单价：0.5400`）。
+  @visibleForTesting
+  static double? parseUnitPrice(String text) {
+    if (text.isEmpty) return null;
+    final m = RegExp(r'单价\s*[:：=＝]?\s*(-?\d+(?:\.\d+)?)').firstMatch(text);
+    return m == null ? null : double.tryParse(m.group(1)!);
+  }
+
+  /// 解析剩余电量（只有 448 片区下发，其余返回 null）。
+  @visibleForTesting
+  static double? parseKwh(String text) {
+    if (text.isEmpty) return null;
+    final m = RegExp(r'剩余电量\s*[:：=＝为是]?\s*(-?\d+(?:\.\d+)?)')
+        .firstMatch(text);
+    return m == null ? null : double.tryParse(m.group(1)!);
   }
 
   static Future<Map<String, dynamic>?> _post(
@@ -762,7 +1119,8 @@ class DormService {
     int level,
     Map<String, String> extra,
   ) async {
-    final s = CampusSession();
+    final s = _session;
+    if (s == null) return null;
     try {
       final r = await s.postForm(
         '$base/charge/feeitem/getThirdData',
@@ -783,166 +1141,7 @@ class DormService {
     } catch (_) {
       return null;
     } finally {
-      s.close();
+      // 持久会话**不能关**：WebVPN cookie 在里面，一关下一次请求就是空会话
     }
   }
-}
-
-class DormBuilding {
-  const DormBuilding({
-    required this.feeitemid,
-    required this.value,
-    required this.name,
-    this.campus = '1',
-    this.available = true,
-  });
-
-  final int feeitemid;
-
-  /// 形如 `A7&李园贰號A7`，服务端要求的原样格式。
-  final String value;
-
-  /// 界面显示的短名（李二 / 桃一 / 梅三）。
-  final String name;
-
-  /// 该楼栋所属校区的「value」（不同片区编码不同：梅园是一长串数字）。
-  final String campus;
-
-  /// 平台是否已开通该楼栋。
-  final bool available;
-}
-
-class DormInfo {
-  const DormInfo({
-    required this.feeitemid,
-    required this.buildingValue,
-    required this.buildingName,
-    required this.room,
-    this.campus = '1',
-  });
-
-  final int feeitemid;
-  final String buildingValue;
-  final String buildingName;
-  final String room;
-  final String campus;
-
-  String get display => '$buildingName $room';
-
-  Map<String, dynamic> toMap() => {
-        'feeitemid': feeitemid,
-        'value': buildingValue,
-        'name': buildingName,
-        'room': room,
-        'campus': campus,
-      };
-
-  static DormInfo? fromMap(Map<String, dynamic> m) {
-    final fee = m['feeitemid'];
-    final value = (m['value'] ?? '').toString();
-    final name = (m['name'] ?? '').toString();
-    final room = (m['room'] ?? '').toString();
-    if (fee is! int || value.isEmpty || name.isEmpty || room.isEmpty) {
-      return null;
-    }
-    return DormInfo(
-      feeitemid: fee,
-      buildingValue: value,
-      buildingName: name,
-      room: room,
-      campus: (m['campus'] ?? '1').toString(),
-    );
-  }
-}
-
-class ElectricityInfo {
-  const ElectricityInfo({
-    required this.text,
-    required this.balance,
-    required this.kwh,
-    required this.buildingName,
-    required this.room,
-  });
-
-  /// 平台原句：`当前余额468.89元,当前剩余电量868.32度`
-  final String text;
-  final double? balance;
-  final double? kwh;
-  final String buildingName;
-  final String room;
-}
-
-/// 宿舍信息本机存储（用户页与电费卡片共用）。
-class DormStore {
-  static const String _kFee = 'dorm_feeitemid_v1';
-  static const String _kValue = 'dorm_building_value_v1';
-  static const String _kName = 'dorm_building_name_v1';
-  static const String _kRoom = 'dorm_room_v1';
-  static const String _kCampus = 'dorm_campus_v1';
-
-  static Future<DormInfo?> load() async {
-    final p = await SharedPreferences.getInstance();
-    final fee = p.getInt(_kFee);
-    final value = p.getString(_kValue);
-    final name = p.getString(_kName);
-    final room = p.getString(_kRoom);
-    if (fee == null || value == null || name == null || room == null) {
-      return null;
-    }
-    return DormInfo.fromMap({
-      'feeitemid': fee,
-      'value': value,
-      'name': name,
-      'room': room,
-      'campus': p.getString(_kCampus) ?? '1',
-    });
-  }
-
-  static Future<void> save(DormInfo d) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setInt(_kFee, d.feeitemid);
-    await p.setString(_kValue, d.buildingValue);
-    await p.setString(_kName, d.buildingName);
-    await p.setString(_kRoom, d.room);
-    await p.setString(_kCampus, d.campus);
-  }
-}
-
-class CardQueryResult {
-  const CardQueryResult({this.balance, this.reason});
-
-  final double? balance;
-  final String? reason;
-}
-
-class CardTxn {
-  const CardTxn({
-    required this.time,
-    required this.title,
-    required this.place,
-    required this.amountYuan,
-    required this.isIncome,
-    required this.balanceYuan,
-  });
-
-  final String time;
-  final String title;
-  final String place;
-  final double amountYuan;
-  final bool isIncome;
-  final double? balanceYuan;
-}
-
-class CardTurnoverPage {
-  const CardTurnoverPage({
-    required this.items,
-    required this.total,
-    required this.current,
-    required this.pages,
-  });
-
-  final List<CardTxn> items;
-  final int total;
-  final int current;
-  final int pages;
 }

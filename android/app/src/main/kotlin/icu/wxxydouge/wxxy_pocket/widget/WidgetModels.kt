@@ -49,6 +49,8 @@ data class WidgetPrefs(
     val showTime: Boolean = true,
     val showWeek: Boolean = true,
     val countdown: Boolean = true,
+    // 2026-10-30：小号第二行只保留两种机制 —— time（上课时间）/ countdown（倒计时）。
+    val smallMode: String = "countdown",
     // v1.6.7：中号 / 大号**各自独立**的显示开关。
     // 此前三种尺寸共用同一组开关 —— 中号关掉「老师」，大号跟着变（用户反馈的 bug）。
     // 旧版 App 下发的 JSON 没有这些字段 → 回落到上面那组全局值（行为不变）。
@@ -150,6 +152,10 @@ object WidgetDataStore {
                     showTime = pj?.optBoolean("showTime", true) ?: true,
                     showWeek = pj?.optBoolean("showWeek", true) ?: true,
                     countdown = pj?.optBoolean("countdown", true) ?: true,
+                    smallMode = pj?.optString(
+                        "smallMode",
+                        if (pj?.optBoolean("countdown", true) == true) "countdown" else "time"
+                    ) ?: "countdown",
                     // 新字段缺失时**回落到全局旧值**，老用户的设置不会丢
                     showTeacherMedium = pj?.optBoolean(
                         "showTeacherMedium", pj.optBoolean("showTeacher", true)

@@ -23,16 +23,16 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 JDK 17（Flutter 3.24 要求）
+      - name: 安装 JDK 21（Flutter 3.29 要求）
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: 安装 Flutter（与项目锁定版本一致）
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.24.3
+          flutter-version: 3.29.3
           channel: stable
           cache: true
 
@@ -45,6 +45,20 @@ jobs:
           sed -i 's#mirrors\.cloud\.tencent\.com/gradle#services.gradle.org/distributions#' \
             android/gradle/wrapper/gradle-wrapper.properties
 
+      - name: 还原正式签名（有 secrets 才生效）
+        # 不配 secrets 时这一步什么都不做，构建会回退 debug 签名 —— 见下一步的守卫。
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_PROPERTIES_B64: ${{ secrets.ANDROID_KEY_PROPERTIES_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEY_PROPERTIES_B64" ]; then
+            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64 / ANDROID_KEY_PROPERTIES_BASE64，本次构建将使用 debug 签名"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/xiyuan-release.jks
+          echo "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
+          echo "已还原正式签名材料"
+
       - name: 拉取依赖
         run: flutter pub get
 
@@ -56,6 +70,25 @@ jobs:
 
       - name: 构建 release APK（arm64）
         run: flutter build apk --release --target-platform android-arm64
+
+      - name: 校验签名（debug 签名禁止发布）
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          DIGEST=$(apksigner verify --print-certs "$APK" 2>/dev/null \
+                   | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}')
+          echo "APK 证书 SHA-256: $DIGEST"
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::未配置 ANDROID_KEYSTORE_BASE64 —— 本包是 debug 签名，装上无法覆盖正式版，已阻止发布"
+            echo "在仓库 Secrets 里加 ANDROID_KEYSTORE_BASE64 与 ANDROID_KEY_PROPERTIES_BASE64 后重试。"
+            exit 1
+          fi
+          if [ "$DIGEST" != "b44c98fffe6bbe81f1045c035aeefbf28daa2537cbf26a4027fe84cf26e86be1" ]; then
+            echo "::error::签名证书与线上正式版不一致（拿到 $DIGEST），用户无法覆盖安装，已阻止发布"
+            exit 1
+          fi
+          echo "::notice::签名校验通过"
 
       - name: 发布到 GitHub Release
         env:

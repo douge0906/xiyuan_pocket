@@ -2,6 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'campus/campus_info_crawler.dart';
 import 'message_source.dart';
+import 'sources/control_announcement_source.dart';
 import 'sources/jwc_source.dart';
 
 /// 消息栏目目录 + 订阅集合。
@@ -22,6 +23,10 @@ class MessageChannelService {
 
   /// 沿用旧键（见类注释，改键 = 老用户订阅丢失）。
   static const String _kSubscribed = 'notice_channel_subscribed_v1';
+
+  /// 控制台公告列的一次性迁移标记：老用户升级后自动多出「公告」列；
+  /// 用户之后主动取消订阅，不会再被自动加回来。
+  static const String _kControlNoticeAdded = 'control_notice_added_v1';
 
   /// 校园资讯栏目的说明文案。
   ///
@@ -59,9 +64,10 @@ class MessageChannelService {
     );
   }
 
-  /// 全部可订阅栏目：教务处 + 校园资讯栏目。
+  /// 全部可订阅栏目：教务处 + 控制台公告 + 校园资讯栏目。
   static List<MessageChannel> get allChannels => [
         kJwcChannel,
+        kControlAnnouncementChannel,
         ...campusChannels,
       ];
 
@@ -86,7 +92,15 @@ class MessageChannelService {
       if (raw == null) return defaultSubscribedIds;
       // 过滤掉已下线/不再开放的栏目 id（老版本存下的残留不会变成幽灵页签）。
       final known = {for (final c in allChannels) c.id};
-      return raw.where(known.contains).toSet();
+      final result = raw.where(known.contains).toSet();
+      // 一次性迁移：控制台公告列上线后，让已有订阅的老用户也看到它。
+      // 用户保存过空集合（明确全关）时不强行加回。
+      if (raw.isNotEmpty && !(prefs.getBool(_kControlNoticeAdded) ?? false)) {
+        result.add(kControlAnnouncementChannelId);
+        await prefs.setBool(_kControlNoticeAdded, true);
+        await prefs.setStringList(_kSubscribed, result.toList(growable: false));
+      }
+      return result;
     } catch (_) {
       return defaultSubscribedIds;
     }

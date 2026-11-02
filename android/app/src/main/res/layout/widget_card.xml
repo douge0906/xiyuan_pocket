@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 校园卡余额 · 2×1 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/info_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_card_bg_light">
+
+    <TextView
+        android:id="@+id/info_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="校园卡"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#667085" />
+
+    <TextView
+        android:id="@+id/info_value"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:text="¥ --"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/info_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="打开 App 刷新余额"
+        android:textSize="10sp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#667085" />
+</LinearLayout>

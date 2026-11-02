@@ -4,6 +4,9 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.app.AlarmManager
+import android.content.Context
+import android.provider.Settings
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -21,6 +24,65 @@ class MainActivity : FlutterActivity() {
         // 已随功能下线移除的通道（Dart 侧零调用，删于 v2.4.9）：
         //   · .../gallery —— 保存图片到相册（九宫格切图时代；权限 WRITE_EXTERNAL_STORAGE 一并移除）
         //   · .../text    —— GBK 解码（已由 Dart 侧 TextDecodeService.decodeSmart 取代）
+
+        // 2026-10-26：小组件「精确倒计时」权限桥 ——
+        // Android 12+ 的 SCHEDULE_EXACT_ALARM 在 14+ 默认不授予，
+        // 倒计时每分钟刷新依赖它；这里给 Flutter 一个「查状态 + 跳系统设置」的入口。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "wxxy/widget_alarm")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "canScheduleExact" -> {
+                        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                        result.success(
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                                am.canScheduleExactAlarms()
+                            else true
+                        )
+                    }
+                    "requestExact" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            try {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                        Uri.parse("package:$packageName")
+                                    )
+                                )
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.success(false)
+                            }
+                        } else {
+                            result.success(true)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 2026-11-01：稳定的设备标识桥 —— 只给「重装后还是同一台设备」用。
+        //
+        // 背景：安装标识原先由 Dart 侧纯随机生成、只存在本机安全存储，卸载即清空，
+        //     于是用户每重装一次，控制台就多出一台「新设备」，还会累积多设备风控。
+        // ANDROID_ID（Settings.Secure.ANDROID_ID）从 Android 8 起是
+        //     「应用签名 + 设备 + 用户」三元组的哈希，免权限、重装不变，
+        //     正好只解决「同一台机器」的问题，不涉及任何个人信息。
+        // 取不到（极少数 ROM）时返回 null，Dart 侧会退回原来的随机方案。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "xiyuan/device_id")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "androidId" -> result.success(
+                        try {
+                            Settings.Secure.getString(
+                                contentResolver, Settings.Secure.ANDROID_ID
+                            )
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    )
+                    else -> result.notImplemented()
+                }
+            }
 
         // v2.3.6：Android 16 实时更新（Live Updates / OPPO 流体云）状态诊断与设置跳转
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "icu.wxxydouge.wxxy_pocket/live_update")

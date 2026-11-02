@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../lib/services/exam_storage.dart';
+import 'package:xiyuan_pocket/services/exam_storage.dart';
 
 /// 考试缓存的守卫与倒计时逻辑测试（v2.4.9 补）。
 ///

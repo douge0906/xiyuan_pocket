@@ -52,7 +52,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
     final maxH = MediaQuery.of(context).size.height * 0.72;
 
     return Dialog(
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      backgroundColor: context.cardColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       child: ConstrainedBox(
@@ -70,7 +70,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
                     child: Text(
                       '订阅栏目',
                       style: TextStyle(
-                        fontSize: 16,
+                        fontSize: AppTheme.fontTitle,
                         fontWeight: FontWeight.bold,
                         color: context.textPrimary,
                       ),
@@ -83,9 +83,9 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
               Text(
                 '勾选后该栏目会出现在消息页顶部；取消勾选即隐藏。',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTheme.fontSmall,
                   height: 1.4,
-                  color: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
+                  color: Colors.grey.shade500,
                 ),
               ),
               const SizedBox(height: 8),
@@ -132,7 +132,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
           child: Icon(
             Icons.close_rounded,
             size: 20,
-            color: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
+            color: Colors.grey.shade500,
           ),
         ),
       );
@@ -178,7 +178,7 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
                   Text(
                     ch.name,
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: AppTheme.fontBody,
                       fontWeight: FontWeight.w500,
                       color: context.textPrimary,
                     ),
@@ -188,8 +188,8 @@ class _ChannelPickerDialogState extends State<_ChannelPickerDialog> {
                     Text(
                       ch.desc,
                       style: TextStyle(
-                        fontSize: 12.5,
-                        color: isDark ? Colors.grey.shade500 : Colors.grey.shade500,
+                        fontSize: AppTheme.fontSmall,
+                        color: Colors.grey.shade500,
                       ),
                     ),
                   ],

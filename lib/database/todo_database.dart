@@ -73,7 +73,11 @@ class TodoDatabase {
   /// 整串不是合法 JSON 数组时返回 null（交由调用方决定回退）；
   /// 单条解析失败只跳过该条，保留其余。
   List<Todo>? _parseList(String? raw) {
-    if (raw == null || raw.isEmpty) return [];
+    // 🔴 空值必须返回 null 而不是 []：readAll() 用 `parsed != null`
+    //    判断「主数据可用」，返回 [] 会让备份兜底整段变成死代码 ——
+    //    主键一旦被清空 / 写成空串，用户的待办会静默全丢（备份还在却读不到）。
+    //    与 course_storage.dart 的 _parseCourses 保持同一口径。
+    if (raw == null || raw.isEmpty) return null;
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return null;

@@ -1,0 +1,49 @@
+group 'com.csdcorp.speech_to_text'
+version '1.0-SNAPSHOT'
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'com.csdcorp.speech_to_text'
+    // 🔴 2026-10-31（本地 fork 补丁）：
+    //    上游用 `compileSdk = flutter.compileSdkVersion` /
+    //    `ndkVersion = flutter.ndkVersion` —— 这两个属性是
+    //    **Flutter 3.29+ 才有**的（新版插件模板）。
+    //    本项目是 Flutter 3.24.3，Gradle 会直接报
+    //    "Could not get unknown property 'flutter' for extension 'android'"，
+    //    连带 "compileSdkVersion is not specified" → 构建直接失败。
+    //
+    //    改成与主工程一致的硬编码值（compileSdk 35 / ndk 28.2.13676358）。
+    compileSdk 35
+    ndkVersion "28.2.13676358"
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        minSdkVersion 21
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+}
+

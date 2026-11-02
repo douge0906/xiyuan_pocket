@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/dorm_service.dart';
 import '../services/elec_unit.dart';
+import '../services/net_mode.dart';
 import '../theme/app_theme.dart';
+import '../widgets/empty_state_art.dart';
+import '../widgets/card_spending_chart.dart';
+import 'recharge_webview_page.dart';
 
 /// 今天 / 昨天 / MM-DD。
 String dayTagOf(DateTime t) {
@@ -43,6 +46,12 @@ class _CardBalancePageState extends State<CardBalancePage> {
   bool _loadingMore = false;
   bool _failed = false;
   bool _moreFailed = false;
+  bool _updating = false;
+  bool _openingRecharge = false;
+
+  /// 当前余额。**必须本地持有**：原先直接用 widget.balance，
+  /// 而它只在构造时赋值一次 —— 手动更新后数字永远不会变（2026-10-26 修）。
+  double? _balance;
   int _page = 1;
   int _pages = 1;
   int _total = 0;
@@ -50,10 +59,13 @@ class _CardBalancePageState extends State<CardBalancePage> {
   @override
   void initState() {
     super.initState();
+    _balance = widget.balance;
     _init();
   }
 
   Future<void> _init() async {
+    // 详情页也可能在切网后打开：先确认直连/网关路径，再拉流水。
+    await NetMode.ensureFresh();
     final cached = await DormService.loadTurnoverCache();
     if (cached != null && mounted) {
       setState(() {
@@ -137,7 +149,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('一卡通余额',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
       ),
       body: RefreshIndicator(
         onRefresh: () => _fetch(refresh: true),
@@ -145,6 +157,11 @@ class _CardBalancePageState extends State<CardBalancePage> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             _balanceCard(context),
+            // 消费趋势（明细不足两天时组件自己隐藏，不占位）
+            if (_items.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              CardSpendingChart(items: _items),
+            ],
             const SizedBox(height: 18),
             Padding(
               padding: const EdgeInsets.only(left: 2, bottom: 8),
@@ -152,14 +169,14 @@ class _CardBalancePageState extends State<CardBalancePage> {
                 children: [
                   Text('交易明细',
                       style: TextStyle(
-                          fontSize: 13.5,
+                          fontSize: AppTheme.fontBody,
                           fontWeight: FontWeight.w600,
                           color: context.textPrimary)),
                   const Spacer(),
                   if (_items.isNotEmpty)
                     Text(_total > _items.length ? '${_items.length}/$_total 条' : '共 ${_items.length} 条',
                         style: TextStyle(
-                            fontSize: 11.5, color: context.textTertiary)),
+                            fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                 ],
               ),
             ),
@@ -167,7 +184,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
             const SizedBox(height: 12),
             Text('校园网微弱情况下卡顿属于正常状态',
                 style: TextStyle(
-                    fontSize: 11.5, color: context.textTertiary)),
+                    fontSize: AppTheme.fontSmall, color: context.textTertiary)),
           ],
         ),
       ),
@@ -190,12 +207,12 @@ class _CardBalancePageState extends State<CardBalancePage> {
               children: [
                 Text('电子钱包余额',
                     style: TextStyle(
-                        fontSize: 12.5, color: context.textTertiary)),
+                        fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                 const SizedBox(height: 8),
                 Text(
-                  widget.balance == null
+                  _balance == null
                       ? '¥ --'
-                      : '¥ ${widget.balance!.toStringAsFixed(2)}',
+                      : '¥ ${_balance!.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: 30,
                     fontWeight: FontWeight.w700,
@@ -207,17 +224,26 @@ class _CardBalancePageState extends State<CardBalancePage> {
             ),
           ),
           const SizedBox(width: 10),
-          FilledButton(
-            onPressed: () => _rechargeCard(context),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF111111),
-              foregroundColor: Colors.white,
-              minimumSize: const Size(72, 36),
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-            child: const Text('充值', style: TextStyle(fontSize: 13.5)),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton(
+                onPressed:
+                    _openingRecharge ? null : () => _rechargeCard(context),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF111111),
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(72, 36),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                child: Text(_openingRecharge ? '打开中…' : '充值',
+                    style: const TextStyle(fontSize: AppTheme.fontBody)),
+              ),
+              const SizedBox(height: 8),
+              manualUpdateButton(context, busy: _updating, onTap: _manualUpdate),
+            ],
           ),
         ],
       ),
@@ -244,12 +270,16 @@ class _CardBalancePageState extends State<CardBalancePage> {
       );
     }
     if (_items.isEmpty) {
+      // 空态也用手绘插画，与全 App 的空状态观感统一。
       return Container(
-        height: 120,
-        alignment: Alignment.center,
         decoration: base,
-        child: Text(_failed ? '暂时无法获取' : '暂无交易记录',
-            style: TextStyle(fontSize: 12.5, color: context.textTertiary)),
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: AppEmptyState(
+          variant: _failed ? EmptyArtVariant.offline : EmptyArtVariant.wallet,
+          title: _failed ? '暂时无法获取' : '暂无交易记录',
+          subtitle: _failed ? '检查网络后重试' : '有过消费记录后会显示在这里',
+          compact: true,
+        ),
       );
     }
 
@@ -293,7 +323,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: AppTheme.fontSmall,
                   color: _moreFailed
                       ? const Color(0xFFC0392B)
                       : AppTheme.primaryColor,
@@ -308,7 +338,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Text('没有更多了',
-            style: TextStyle(fontSize: 11.5, color: context.textTertiary)),
+            style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
       );
     }
     return const SizedBox.shrink();
@@ -336,7 +366,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
                   t.title.isEmpty ? (t.isIncome ? '充值' : '消费') : t.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13.5, color: context.textPrimary),
+                  style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary),
                 ),
                 const SizedBox(height: 2),
                 Row(
@@ -347,7 +377,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
                     const SizedBox(width: 5),
                     Text(_shortTime(t.time),
                         style: TextStyle(
-                            fontSize: 10.5, color: context.textTertiary)),
+                            fontSize: AppTheme.fontCaption, color: context.textTertiary)),
                     if (_readablePlace(t.place).isNotEmpty) ...[
                       const SizedBox(width: 5),
                       Flexible(
@@ -355,7 +385,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 10.5,
+                                fontSize: AppTheme.fontCaption,
                                 color: context.textTertiary)),
                       ),
                     ],
@@ -371,7 +401,7 @@ class _CardBalancePageState extends State<CardBalancePage> {
               Text(
                 '$sign${t.amountYuan.toStringAsFixed(2)}',
                 style: TextStyle(
-                    fontSize: 14.5,
+                    fontSize: AppTheme.fontBody,
                     fontWeight: FontWeight.w600,
                     color: color),
               ),
@@ -412,15 +442,83 @@ class _CardBalancePageState extends State<CardBalancePage> {
     return t;
   }
 
-  Future<void> _rechargeCard(BuildContext context) async {
-    final url = await DormService.cardBagLoginUrl();
-    if (url == null) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('需要连接校园网')));
-      return;
+  /// 手动更新：强制重探内网路径（校园网 / 校外网关）+ **重拉余额** + 重拉明细。
+  ///
+  /// 注意 [_fetch] 只刷交易明细、不碰余额 —— 余额要在这里单独查，
+  /// 否则点了按钮只有列表在动、数字纹丝不动（2026-10-26 用户反馈）。
+  Future<void> _manualUpdate() async {
+    if (_updating) return;
+    setState(() => _updating = true);
+    try {
+      // 先用当前网络模式查（通常 1~2 秒）；只有网络类失败才重探 ——
+      // 无脑 probe(force) 每次要 2~6 秒，是「点更新像卡住」的主因。
+      var res = await DormService.fetchCardBalanceDetailed().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => const CardQueryResult(reason: '更新超时，请稍后重试'),
+      );
+      if (res.balance == null && _isTransient(res.reason)) {
+        await NetMode.probe(force: true);
+        if (!mounted) return;
+        res = await DormService.fetchCardBalanceDetailed().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => const CardQueryResult(reason: '更新超时，请稍后重试'),
+        );
+      }
+      if (!mounted) return;
+      if (res.balance != null) {
+        await DormService.saveCardCache(res.balance!);
+        if (!mounted) return;
+        setState(() => _balance = res.balance);
+      } else {
+        // 静默失败最坑：明确告诉用户这次没拿到数
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res.reason ?? '更新失败，请重试')),
+        );
+      }
+      await _fetch(refresh: true)
+          .timeout(const Duration(seconds: 30), onTimeout: () => false);
+    } finally {
+      // 超时路径也必须把指标复位，否则界面一直停在「更新中」
+      if (mounted) {
+        setState(() {
+          _updating = false;
+          _loading = false;
+        });
+      }
     }
-    await _openUrl(url);
+  }
+
+  Future<void> _rechargeCard(BuildContext context) async {
+    if (_openingRecharge) return;
+    setState(() => _openingRecharge = true);
+    try {
+      // 先确认当前路径，再取一张新的平台票。充值预热和余额刷新共用
+      // DormService 的认证锁，不会互相顶掉 TGT / 会话。
+      await NetMode.ensureFresh();
+      final warmup = await DormService.cardBagLoginUrl();
+      final url = DormService.cardBagRechargeUrl();
+      if (!context.mounted) return;
+      if (warmup == null || url == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(NetMode.current == CampusNetMode.offline
+                ? '网络不可用，请连接校园网或检查网络后重试'
+                : (DormService.lastLoginError.isEmpty
+                    ? '充值页准备失败，请稍后重试'
+                    : DormService.lastLoginError))));
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RechargeWebViewPage(
+            url: url,
+            warmupUrl: warmup,
+            title: '一卡通充值',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingRecharge = false);
+    }
   }
 }
 
@@ -438,24 +536,88 @@ class ElectricityPage extends StatefulWidget {
 class _ElectricityPageState extends State<ElectricityPage> {
   bool _showKwh = false;
   bool _recordsExpanded = false;
+  bool _updating = false;
+  bool _openingRecharge = false;
+
+  /// 当前展示的电费数据（手动更新会替换它，所以不能直接用 widget.info）。
+  ElectricityInfo? _info;
+
+  /// 当前宿舍。**可变**：用户可能在别的页改了宿舍，
+  /// 直接用 `_dorm` 会一直查旧房间（2026-10-26 反馈「手动更新也没用」）。
+  late DormInfo _dorm;
   List<({DateTime time, double balance, double? kwh})> _points = const [];
 
   @override
   void initState() {
     super.initState();
+    _info = widget.info;
+    _dorm = widget.dorm;
     ElecUnitStore.load().then((_) {
       if (!mounted) return;
       setState(() => _showKwh = ElecUnitStore.unit.value == ElecUnit.kwh);
     });
-    DormService.loadElecPoints(dorm: widget.dorm).then((v) {
+    DormService.loadElecPoints(dorm: _dorm).then((v) {
       if (!mounted) return;
       setState(() => _points = v);
     });
   }
 
+  /// 手动更新：重探内网路径 → 重查电费 → 补一条查询记录 → 重读记录列表。
+  Future<void> _manualUpdate() async {
+    if (_updating) return;
+    setState(() => _updating = true);
+    try {
+      // 先重读宿舍：用户可能刚在「我的」页改过，这里必须跟上
+      final latest = await DormStore.load();
+      if (latest != null && latest.display != _dorm.display) {
+        if (!mounted) return;
+        setState(() {
+          _dorm = latest;
+          _info = null; // 换房间后旧数据立即作废
+        });
+      }
+
+      var fresh = await DormService.query(_dorm).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => null,
+      );
+      if (fresh == null) {
+        // 可能是网络模式刚变（如从校外回到校园网），重探一次再试
+        await NetMode.probe(force: true);
+        fresh = await DormService.query(_dorm).timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => null,
+        );
+      }
+      if (fresh != null) {
+        await DormService.saveElecCache(fresh, _dorm);
+        if (fresh.balance != null) {
+          await DormService.saveElecPoint(fresh.balance!,
+              kwh: fresh.kwh, dorm: _dorm);
+        }
+      } else if (mounted) {
+        // 静默失败最坑：这次没拿到数也要说一声
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(DormService.lastLoginError.isEmpty
+                  ? '更新失败，请检查网络后重试'
+                  : DormService.lastLoginError)),
+        );
+      }
+      final pts = await DormService.loadElecPoints(dorm: _dorm);
+      if (!mounted) return;
+      setState(() {
+        if (fresh != null) _info = fresh;
+        _points = pts;
+      });
+    } finally {
+      if (mounted) setState(() => _updating = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final info = widget.info;
+    final info = _info;
     final value = _showKwh ? info?.kwh : info?.balance;
     final unit = _showKwh ? '度' : '元';
 
@@ -463,7 +625,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('电费余额',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -475,23 +637,58 @@ class _ElectricityPageState extends State<ElectricityPage> {
               borderRadius: BorderRadius.circular(AppTheme.radiusLg),
               border: Border.all(color: context.borderColor),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${widget.dorm.buildingName} ${widget.dorm.room}',
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${_dorm.buildingName} ${_dorm.room}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 12.5, color: context.textTertiary),
+                            fontSize: AppTheme.fontSmall, color: context.textTertiary),
                       ),
-                    ),
-                    const SizedBox(width: 10),
+                      const SizedBox(height: 8),
+                      Text(
+                        value == null
+                            ? '--'
+                            : '${value.toStringAsFixed(2)} $unit',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: context.textPrimary,
+                        ),
+                      ),
+                      if (info != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          // 449/450 片区**不下发电量**（只有金额），
+                          // 不能拿 0 兜底——那会显示成「剩余 0.00 度」，纯误导。
+                          _showKwh
+                              ? (info.balance == null
+                                  ? '暂无金额'
+                                  : '约 ¥ ${info.balance!.toStringAsFixed(2)}')
+                              : (info.kwh == null
+                                  ? '该片区仅提供金额'
+                                  : '剩余 ${info.kwh!.toStringAsFixed(2)} 度'),
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall, color: context.textTertiary),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
                     FilledButton(
-                      onPressed: _recharge,
+                      onPressed: _openingRecharge ? null : _recharge,
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFF111111),
                         foregroundColor: Colors.white,
@@ -500,31 +697,14 @@ class _ElectricityPageState extends State<ElectricityPage> {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10)),
                       ),
-                      child:
-                          const Text('充值', style: TextStyle(fontSize: 13.5)),
+                      child: Text(_openingRecharge ? '打开中…' : '充值',
+                          style: const TextStyle(fontSize: AppTheme.fontBody)),
                     ),
+                    const SizedBox(height: 8),
+                    manualUpdateButton(context,
+                        busy: _updating, onTap: _manualUpdate),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  value == null ? '--' : '${value.toStringAsFixed(2)} $unit',
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                    color: context.textPrimary,
-                  ),
-                ),
-                if (info != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    _showKwh
-                        ? '约 ¥ ${(info.balance ?? 0).toStringAsFixed(2)}'
-                        : '剩余 ${(info.kwh ?? 0).toStringAsFixed(2)} 度',
-                    style: TextStyle(
-                        fontSize: 12.5, color: context.textTertiary),
-                  ),
-                ],
               ],
             ),
           ),
@@ -542,7 +722,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
           ],
           const SizedBox(height: 12),
           Text('校园网微弱情况下卡顿属于正常状态',
-              style: TextStyle(fontSize: 11.5, color: context.textTertiary)),
+              style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
         ],
       ),
     );
@@ -579,13 +759,13 @@ class _ElectricityPageState extends State<ElectricityPage> {
               children: [
                 Text('查询记录',
                     style: TextStyle(
-                        fontSize: 13.5,
+                        fontSize: AppTheme.fontBody,
                         fontWeight: FontWeight.w600,
                         color: context.textPrimary)),
                 const Spacer(),
                 Text('共 ${all.length} 次',
                     style: TextStyle(
-                        fontSize: 11.5, color: context.textTertiary)),
+                        fontSize: AppTheme.fontSmall, color: context.textTertiary)),
               ],
             ),
           ),
@@ -601,7 +781,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
                   _recordsExpanded
                       ? '收起'
                       : '查看更多（还有 ${all.length - 8} 条）',
-                  style: TextStyle(fontSize: 13, color: AppTheme.primaryColor),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: AppTheme.primaryColor),
                 ),
               ),
             ),
@@ -687,7 +867,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
                   r.unit == '度'
                       ? '${r.value.toStringAsFixed(2)} 度'
                       : '¥ ${r.value.toStringAsFixed(2)}',
-                  style: TextStyle(fontSize: 13, color: context.textPrimary),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textPrimary),
                 ),
                 const SizedBox(height: 1),
                 Row(
@@ -698,7 +878,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
                     const SizedBox(width: 5),
                     Text(hmOf(r.time),
                         style: TextStyle(
-                            fontSize: 10.5, color: context.textTertiary)),
+                            fontSize: AppTheme.fontCaption, color: context.textTertiary)),
                   ],
                 ),
               ],
@@ -707,7 +887,7 @@ class _ElectricityPageState extends State<ElectricityPage> {
           const SizedBox(width: 10),
           Text(deltaText,
               style: TextStyle(
-                  fontSize: 13,
+                  fontSize: AppTheme.fontSmall,
                   fontWeight: FontWeight.w600,
                   color: deltaColor)),
         ],
@@ -716,15 +896,30 @@ class _ElectricityPageState extends State<ElectricityPage> {
   }
 
   Future<void> _recharge() async {
-    final url = await DormService.rechargeUrlFor(widget.dorm.feeitemid);
-    if (url == null) {
+    if (_openingRecharge) return;
+    setState(() => _openingRecharge = true);
+    try {
+      // 与电费刷新/一卡通刷新共用认证锁，避免同时登录把票据顶掉。
+      await NetMode.ensureFresh();
+      final url = await DormService.rechargeUrlFor(_dorm.feeitemid);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('需要连接校园网')));
-      return;
+      if (url == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(NetMode.current == CampusNetMode.offline
+                ? '网络不可用，请连接校园网或检查网络后重试'
+                : (DormService.lastLoginError.isEmpty
+                    ? '充值页准备失败，请稍后重试'
+                    : DormService.lastLoginError))));
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RechargeWebViewPage(url: url, title: '电费充值'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingRecharge = false);
     }
-    if (!mounted) return;
-    await _openUrl(url);
   }
 
   /// 设置项：显示单位（元 / 度）。
@@ -745,10 +940,10 @@ class _ElectricityPageState extends State<ElectricityPage> {
                   size: 20, color: AppTheme.primaryColor),
               const SizedBox(width: 12),
               Text('显示单位',
-                  style: TextStyle(fontSize: 14, color: context.textPrimary)),
+                  style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary)),
               const Spacer(),
               Text(_showKwh ? '度' : '元',
-                  style: TextStyle(fontSize: 13, color: context.textTertiary)),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
               const SizedBox(width: 4),
               Icon(Icons.chevron_right, size: 18, color: context.textTertiary),
             ],
@@ -787,10 +982,38 @@ class _ElecRecord {
   final double? delta;
 }
 
-Future<void> _openUrl(String url) async {
-  final uri = Uri.tryParse(url);
-  if (uri == null) return;
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
+/// 充值按钮下方的「手动更新」次要按钮（两个详情页共用）。
+///
+/// 描边样式，不抢充值的主视觉；更新中禁用并显示「更新中」。
+Widget manualUpdateButton(
+  BuildContext context, {
+  required bool busy,
+  required VoidCallback onTap,
+}) {
+  return SizedBox(
+    width: 72,
+    height: 32,
+    child: OutlinedButton(
+      onPressed: busy ? null : onTap,
+      style: OutlinedButton.styleFrom(
+        padding: EdgeInsets.zero,
+        foregroundColor: AppTheme.primaryColor,
+        side: BorderSide(color: context.borderColor),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text(busy ? '更新中' : '手动更新',
+          style: const TextStyle(fontSize: AppTheme.fontSmall)),
+    ),
+  );
+}
+
+/// 这类失败值得「重探网络后重试」；密码错、无卡账号等确定性问题重试没意义。
+bool _isTransient(String? reason) {
+  if (reason == null) return true;
+  return reason.contains('网络') ||
+      reason.contains('超时') ||
+      reason.contains('查询失败') ||
+      reason.contains('VPN');
 }
 
 
@@ -809,9 +1032,12 @@ class _TrendCardPainter extends CustomPainter {
     final span = (maxV - minV).abs() < 0.01 ? 1.0 : (maxV - minV);
 
     final dx = size.width / (values.length - 1);
+    // 上下各留 6px：否则最高点落在 y=0，末点圆点被裁掉一半
+    const padY = 6.0;
+    final usableH = size.height - padY * 2;
     final pts = <Offset>[
       for (var i = 0; i < values.length; i++)
-        Offset(i * dx, size.height - (values[i] - minV) / span * size.height),
+        Offset(i * dx, padY + usableH - (values[i] - minV) / span * usableH),
     ];
 
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);
@@ -829,7 +1055,7 @@ class _TrendCardPainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [color.withOpacity(0.18), color.withOpacity(0.02)],
+          colors: [color.withValues(alpha: 0.18), color.withValues(alpha: 0.02)],
         ).createShader(Offset.zero & size),
     );
 
@@ -851,6 +1077,8 @@ class _TrendCardPainter extends CustomPainter {
 }
 
 extension on _ElectricityPageState {
+  String _md(DateTime d) => '${d.month}/${d.day}';
+
   Widget _trendCard(BuildContext context) {
     final pts = _points.length > 30
         ? _points.sublist(_points.length - 30)
@@ -873,13 +1101,13 @@ extension on _ElectricityPageState {
             children: [
               Text('余额趋势',
                   style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: AppTheme.fontBody,
                       fontWeight: FontWeight.w600,
                       color: context.textPrimary)),
               const Spacer(),
               Text('近 ${pts.length} 次',
                   style: TextStyle(
-                      fontSize: 11.5, color: context.textTertiary)),
+                      fontSize: AppTheme.fontSmall, color: context.textTertiary)),
             ],
           ),
           const SizedBox(height: 10),
@@ -896,13 +1124,14 @@ extension on _ElectricityPageState {
           const SizedBox(height: 6),
           Row(
             children: [
-              Text('最低 ¥${minV.toStringAsFixed(2)}',
+              Text('${_md(pts.first.time)} - ${_md(pts.last.time)}',
                   style: TextStyle(
-                      fontSize: 11, color: context.textTertiary)),
+                      fontSize: AppTheme.fontCaption, color: context.textTertiary)),
               const Spacer(),
-              Text('最高 ¥${maxV.toStringAsFixed(2)}',
+              Text(
+                  '最低 ¥${minV.toStringAsFixed(2)} · 最高 ¥${maxV.toStringAsFixed(2)}',
                   style: TextStyle(
-                      fontSize: 11, color: context.textTertiary)),
+                      fontSize: AppTheme.fontCaption, color: context.textTertiary)),
             ],
           ),
         ],

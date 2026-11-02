@@ -21,22 +21,36 @@ jobs:
       - name: 安装 Flutter（与项目锁定版本一致）
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.24.3
+          flutter-version: 3.29.3
           channel: stable
           cache: true
+
+      - name: 还原正式签名（有 secrets 才生效）
+        # 不配 secrets 时这一步什么都不做，构建会回退 debug 签名 —— 见下一步的守卫。
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_PROPERTIES_B64: ${{ secrets.ANDROID_KEY_PROPERTIES_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEY_PROPERTIES_B64" ]; then
+            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64 / ANDROID_KEY_PROPERTIES_BASE64，本次构建将使用 debug 签名"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/xiyuan-release.jks
+          echo "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
+          echo "已还原正式签名材料"
 
       - name: 拉取依赖
         run: flutter pub get
 
       - name: 静态检查
-        run: flutter analyze lib
+        run: flutter analyze lib test
 
       - name: 单元测试
         run: flutter test
 
   # 自动构建 release APK。
-  # 开源版的分发方式：由 GitHub Actions 产出构建产物（artifact），
-  # 不依赖自建服务器 / CDN（那套是给另一个 App 用的）。
+  # 这是**校验用途**的产物，不是发布渠道：仓库不含 keystore，构建会用 debug 签名。
+  # 真正的发布包由维护者本地 build_pocket.py 构建并签名，走 CDN 分发。
   build-apk:
     runs-on: ubuntu-latest
     needs: analyze-and-test # 检查与测试通过才构建
@@ -44,16 +58,16 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 JDK 17（Flutter 3.24 要求）
+      - name: 安装 JDK 21（Flutter 3.29 要求）
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: 安装 Flutter（与项目锁定版本一致）
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.24.3
+          flutter-version: 3.29.3
           channel: stable
           cache: true
 
@@ -78,10 +92,26 @@ jobs:
       - name: 构建 release APK（arm64）
         run: flutter build apk --release --target-platform android-arm64
 
+      - name: 校验签名并决定产物名
+        id: sign
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          DIGEST=$(apksigner verify --print-certs "$APK" 2>/dev/null \
+                   | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}')
+          echo "APK 证书 SHA-256: $DIGEST"
+          if [ "$DIGEST" = "b44c98fffe6bbe81f1045c035aeefbf28daa2537cbf26a4027fe84cf26e86be1" ]; then
+            echo "name=掌上锡院-正式签名" >> "$GITHUB_OUTPUT"
+            echo "::notice::正式签名，可用于发布"
+          else
+            echo "name=掌上锡院-debug签名-不可发布" >> "$GITHUB_OUTPUT"
+            echo "::warning::这是 debug 签名的包，装上后无法覆盖正式版，禁止对外发布"
+          fi
+
       - name: 上传 APK 产物
         uses: actions/upload-artifact@v4
         with:
-          name: xiyuan-pocket-release-apk
+          name: ${{ steps.sign.outputs.name }}
+          # 名字里就写明签名类型，避免有人把 debug 包当正式版发出去
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 90

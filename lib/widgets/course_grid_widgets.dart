@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -16,8 +15,8 @@ Color gridLineColorFor(BuildContext context, double depth) {
   final d = depth.clamp(0.0, 1.0);
   final isDark = Theme.of(context).brightness == Brightness.dark;
   return isDark
-      ? const Color(0xFF8C8C8C).withOpacity(0.15 + 0.55 * d)
-      : const Color(0xFF9CA3AF).withOpacity(0.12 + 0.50 * d);
+      ? const Color(0xFF8C8C8C).withValues(alpha: 0.15 + 0.55 * d)
+      : const Color(0xFF9CA3AF).withValues(alpha: 0.12 + 0.50 * d);
 }
 
 // 课程表网格的展示层组件（v1.0.0 从 course_table_home_page.dart 剥离）。
@@ -62,7 +61,12 @@ class CourseBlock {
 }
 
 
-/// 默认上课时间块：按图片中的 11 节课，每节课一个单节块。
+/// 默认上课时间块：12 节课，每节课一个单节块。
+///
+/// ⚠️ 课程表单允许选到第 12 节（`course_form_sheet.dart` 的 List.generate(12)），
+///    `course_storage._defaultSlotEnd` 与 `course_reminder_service._defaultSlotStart`
+///    也都有第 12 节。这里少一块会让第 12 节的课在网格上 indexWhere 返回 -1 被静默跳过
+///    → 课存进去了但课表上看不见（v1.0.9 修正）。
 /// period: 0=上午 1=下午 2=晚上
 const List<CourseBlock> kDefaultCourseBlocks = [
   CourseBlock(label: '1', period: 0, start: 1, end: 1, time: '08:00\n08:45'),
@@ -76,6 +80,7 @@ const List<CourseBlock> kDefaultCourseBlocks = [
   CourseBlock(label: '9', period: 2, start: 9, end: 9, time: '18:45\n19:30'),
   CourseBlock(label: '10', period: 2, start: 10, end: 10, time: '19:40\n20:25'),
   CourseBlock(label: '11', period: 2, start: 11, end: 11, time: '20:35\n21:20'),
+  CourseBlock(label: '12', period: 2, start: 12, end: 12, time: '21:40\n22:25'),
 ];
 
 
@@ -184,18 +189,18 @@ class CourseTimeCell extends StatelessWidget {
             // v1.4.0：三行文字统一 maxLines:1 —— 系统字号放大时「08:00」可能换行撑破
             //         格子（widget 测试实测 Ahem 宽字体下溢出 23px），单行裁剪更稳。
             maxLines: 1,
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg, height: 14 / 11),
+            style: TextStyle(fontSize: AppTheme.fontCaption, fontWeight: FontWeight.w600, color: fg, height: 14 / 11),
           ),
           const SizedBox(height: 2),
           Text(
             start,
             maxLines: 1,
-            style: TextStyle(fontSize: 11, color: fg, height: 14 / 11),
+            style: TextStyle(fontSize: AppTheme.fontCaption, color: fg, height: 14 / 11),
           ),
           Text(
             end,
             maxLines: 1,
-            style: TextStyle(fontSize: 11, color: subFg, height: 14 / 11),
+            style: TextStyle(fontSize: AppTheme.fontCaption, color: subFg, height: 14 / 11),
           ),
         ],
       ),
@@ -233,11 +238,16 @@ class CourseDayCell extends StatelessWidget {
         behavior: HitTestBehavior.translucent,
         child: Container(
           decoration: BoxDecoration(
-            color: transparent
-                ? Colors.transparent
-                : (isToday
-                    ? AppTheme.primaryColor.withOpacity(0.04)
-                    : (context.surfaceColor)),
+            // 🔴 自定义背景色时格子必须**透明**：
+            // 每个格子原本各自铺 surfaceColor，会把外层背景色整片盖住，
+            // 只剩没格子的地方透色 —— 表现就是「只有一列变色」（2026-10-26 反馈）。
+            color: isToday && CourseStorage.highlightTodayCache
+                ? AppTheme.primaryColor.withValues(alpha: 0.05)
+                : (transparent
+                    ? Colors.transparent
+                    : (CourseStorage.backgroundColorCache != null
+                        ? Colors.transparent
+                        : context.surfaceColor)),
             border: showLines
                 ? Border(
                     right: BorderSide(
@@ -293,7 +303,7 @@ class CourseNumberChip extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 12,
+            fontSize: AppTheme.fontSmall,
             fontWeight: FontWeight.w600,
             color: selected
                 ? Colors.white
@@ -381,14 +391,15 @@ class CourseWeekGrid extends StatelessWidget {
           final endIdx = blocks.lastIndexWhere((b) => b.end == course.endSlot);
           if (startIdx == -1 || endIdx == -1 || endIdx < startIdx) continue;
 
+          // 🔴 统一走 [Course.occursOn]：它是「某门课在第 N 周的星期 W 是否上课」
+          //    的**唯一真相源**（课表渲染 / 提醒 / 待办 / 小组件共用）。
+          //
+          //    之前这里自己解析 weekday 哨兵（0=每天 / -1=工作日），而课程表单
+          //    保存时会把哨兵改写成 1（pattern 却是 daily/workday）→
+          //    网格只画周一，而提醒按 7 天算 → 同一门课「表上 1 天、提醒 7 天」。
           final weekdays = <int>[];
-          final cwd = course.weekday;
-          if (cwd == 0) {
-            weekdays.addAll([1, 2, 3, 4, 5, 6, 7]);
-          } else if (cwd == -1) {
-            weekdays.addAll([1, 2, 3, 4, 5]);
-          } else {
-            weekdays.add(cwd);
+          for (var wd = 1; wd <= 7; wd++) {
+            if (course.occursOn(wd, selectedWeek)) weekdays.add(wd);
           }
           for (final wd in weekdays) {
             byWeekday
@@ -434,7 +445,7 @@ class CourseWeekGrid extends StatelessWidget {
           }
         }
 
-        // v1.1.0：贯穿竖线（对齐在线版）—— 每天一条从上到下的完整竖线 + 时间列右边界。
+        // v1.1.0：贯穿竖线—— 每天一条从上到下的完整竖线 + 时间列右边界。
         // 此前只有「单元格右边线」，被横线打断成一段段，两版观感不一致（用户反馈）。
         // v1.3.0：粗细与深浅改由连续滑杆控制（与横线同一颜色）。
         final gridLines = <Widget>[];
@@ -449,33 +460,22 @@ class CourseWeekGrid extends StatelessWidget {
           }
         }
 
-        // v1.1.0：课表背景图（与在线版一致）——图片铺满整表 + 底色薄膜透出，
+        // v1.1.0：课表背景图——图片铺满整表 + 底色薄膜透出，
         // 薄膜既让背景图能看见，又保证时间列文字 / 空格依然可读。
-        final bgPath = CourseStorage.backgroundImageCache;
-        final bgFile = bgPath.isEmpty ? null : File(bgPath);
-        final hasBg = bgFile != null && bgFile.existsSync();
+        // 🔴 背景已统一提升到**页面层**（course_table_home_page 的 Stack 底层）：
+        // 网格这里必须透明，否则会和页面层叠两层 → 色差 + 滚动错位。
+        final hasFullBg = CourseStorage.backgroundImageCache.isNotEmpty ||
+            CourseStorage.backgroundColorCache != null;
 
         return Container(
-          color: surfaceColor,
+          color: hasFullBg ? Colors.transparent : surfaceColor,
           child: Stack(
-            // v1.1.1 关键修复（对齐在线版）：必须 StackFit.expand。
+            // v1.1.1 关键修复：必须 StackFit.expand。
             // 默认 StackFit.loose 时 Stack 尺寸按非定位子组件（Column）塌陷，
             // 导致「背景图只显示一列」+「贯穿竖线完全看不见」两个症状。
             fit: StackFit.expand,
             children: [
-              if (hasBg) ...[
-                // v1.1.1 修复「背景图错位到最右边一列」：Stack 里非 Positioned 的子组件
-                // 会按自身尺寸参与布局，图片按原始分辨率摆 -> 偏移。必须 Positioned.fill 铺满。
-                Positioned.fill(
-                  child:
-                      Image.file(bgFile, fit: BoxFit.cover, gaplessPlayback: true),
-                ),
-                ColoredBox(
-                  // v1.1.1 薄膜加浓（0.55 -> 0.72）：真机上看背景图时时间/日期文字被图案
-                  // 干扰到几乎看不清 —— 盖住底图的同时要保证文字可读。
-                  color: surfaceColor.withOpacity(isDark ? 0.78 : 0.72),
-                ),
-              ],
+
               Column(
                 children: [
                   for (int i = 0; i < blocks.length; i++) ...[
@@ -491,7 +491,7 @@ class CourseWeekGrid extends StatelessWidget {
                           block: blocks[i],
                           todayWeekday: todayWeekday,
                           isDark: isDark,
-                          transparent: hasBg,
+                          transparent: hasFullBg,
                           onOpenAdd: onOpenAdd,
                           timeColWidth: timeColW,
                         ),
@@ -502,7 +502,7 @@ class CourseWeekGrid extends StatelessWidget {
                           block: blocks[i],
                           todayWeekday: todayWeekday,
                           isDark: isDark,
-                          transparent: hasBg,
+                          transparent: hasFullBg,
                           onOpenAdd: onOpenAdd,
                           timeColWidth: timeColW,
                         ),
@@ -517,8 +517,8 @@ class CourseWeekGrid extends StatelessWidget {
                   ],
                 ],
               ),
-              // v1.1.1 逐字对齐在线版顺序：**gridLines 在 overlays 之前**
-              // （在线版 _WeekGrid 就是这个顺序，我之前写反了）。
+              // v1.1.1 逐字顺序：**gridLines 在 overlays 之前**
+              // （_WeekGrid 就是这个顺序，我之前写反了）。
               ...gridLines,
               ...overlays,
             ],
@@ -562,14 +562,14 @@ class CourseCardWidget extends StatelessWidget {
     final dashed = CourseStorage.blockBorderDashedCache;
     final dashDensity = CourseStorage.blockDashDensityCache; // 越大越密
     final borderColor =
-        isDark ? Colors.white.withOpacity(0.25) : Colors.black.withOpacity(0.30);
+        isDark ? Colors.white.withValues(alpha: 0.25) : Colors.black.withValues(alpha: 0.30);
 
     // v1.6.9：非本周课程 = **淡灰**（不再是「向背景色混合」）；
     // 保留各课原色的明暗差异，滑杆控制整体灰的深浅。文字色按最终底色重算。
     var surface = dimmed
         ? otherWeekGrayFor(bg, CourseStorage.otherWeeksDimCache, isDark)
         : bg;
-    if (opacity < 1.0) surface = surface.withOpacity(opacity);
+    if (opacity < 1.0) surface = surface.withValues(alpha: opacity);
     final fg = textOnColor(surface);
 
     Widget card = Container(
@@ -593,8 +593,8 @@ class CourseCardWidget extends StatelessWidget {
           painter: dimmed
               ? _DiagonalHatchPainter(
                   color: isDark
-                      ? Colors.white.withOpacity(0.10)
-                      : Colors.black.withOpacity(0.07),
+                      ? Colors.white.withValues(alpha: 0.10)
+                      : Colors.black.withValues(alpha: 0.07),
                   spacing: 7,
                   strokeWidth: 1,
                 )
@@ -605,49 +605,141 @@ class CourseCardWidget extends StatelessWidget {
                 right: pad,
                 top: pad,
                 bottom: pad > 1 ? pad - 1 : pad),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                Text(
-                  course.name,
-                  style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                      color: fg,
-                      height: 1.25),
-                  maxLines: 3,
-                  overflow: TextOverflow.clip,
-                  softWrap: true,
-                ),
-                // 教室放在教师之前，且**地点不允许省略**（字号不变、房号不删）：
-                // 给到 3 行、用 clip 换行显示，多出来的垂直空间从教师那里让。
-                // 教师是唯一可以被省略的一项（放不下就尾部打省略号）。
-                if (course.classroom.isNotEmpty &&
-                    CourseStorage.showClassroomOnCardCache)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 1.5),
-                    child: Text(
-                      '@${course.classroom}',
-                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                      maxLines: 3,
-                      overflow: TextOverflow.clip,
-                      softWrap: true,
-                    ),
+            // 按**可用高度**决定显示几行：放不下就整条不显示，
+            // 而不是画出去被 ClipRRect 硬切（截图里教师名只剩半行 —— 2026-10-26）。
+            child: LayoutBuilder(
+              builder: (ctx, box) {
+                final availH =
+                    box.maxHeight.isFinite ? box.maxHeight : 240.0;
+                final scale = CourseStorage.cardFontScaleCache;
+                final nameLineH = 11.5 * scale * 1.25;
+                final subLineH = 10.5 * scale * 1.2;
+                const gap = 1.5;
+                final overflow = switch (CourseStorage.cardOverflowCache) {
+                  'clip' => TextOverflow.clip,
+                  'fade' => TextOverflow.fade,
+                  _ => TextOverflow.ellipsis,
+                };
+
+                final order = CourseStorage.cardFieldOrderCache;
+                final showName = CourseStorage.showNameOnCardCache;
+                final showTeacher = course.teacher.isNotEmpty &&
+                    CourseStorage.showTeacherOnCardCache;
+                final showClassroom = course.classroom.isNotEmpty &&
+                    CourseStorage.showClassroomOnCardCache;
+                final rendered = <String>[
+                  for (final key in order)
+                    if ((key == 'name' && showName) ||
+                        (key == 'teacher' && showTeacher) ||
+                        (key == 'classroom' && showClassroom))
+                      key,
+                ];
+                if (rendered.isEmpty) rendered.add('name');
+
+                var nameLines = showName ? CourseStorage.cardMaxLinesCache : 0;
+                if (nameLines < 1 && rendered.contains('name')) nameLines = 1;
+                var teacherLines = showTeacher ? 1 : 0;
+
+                // 教室不设固定行数上限：按文本实际换行行数显示。
+                // 空间不足时优先压课程名和教师，尽量把教室完整放完。
+                final classroomText = '@${course.classroom}';
+                final classroomWidth =
+                    box.maxWidth.isFinite ? box.maxWidth : 180.0;
+                final classroomPainter = TextPainter(
+                  text: TextSpan(
+                    text: classroomText,
+                    style: TextStyle(
+                        fontSize: AppTheme.fontCaption * scale,
+                        color: fg,
+                        height: 1.2),
                   ),
-                if (course.teacher.isNotEmpty &&
-                    CourseStorage.showTeacherOnCardCache)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 1.5),
-                    child: Text(
+                  maxLines: null,
+                  textDirection: TextDirection.ltr,
+                )..layout(maxWidth: classroomWidth);
+                var classroomLines = showClassroom
+                    ? (classroomPainter.size.height / subLineH).ceil()
+                    : 0;
+                if (showClassroom && classroomLines < 1) classroomLines = 1;
+
+                double lineH(String key) =>
+                    key == 'name' ? nameLineH : subLineH;
+                int linesOf(String key) => switch (key) {
+                      'name' => nameLines,
+                      'classroom' => classroomLines,
+                      _ => teacherLines,
+                    };
+
+                double usedHeight() {
+                  var total = 0.0;
+                  var first = true;
+                  for (final key in rendered) {
+                    final lines = linesOf(key);
+                    if (lines <= 0) continue;
+                    if (!first) total += gap;
+                    total += lines * lineH(key);
+                    first = false;
+                  }
+                  return total;
+                }
+
+                // 收缩优先级：**先砍教师/教室，最后才动课程名**。
+                // 之前课程名先被砍，导致「课程名最大行数」设置形同虚设（永远 1~2 行）。
+                while (usedHeight() > availH) {
+                  if (teacherLines > 0) {
+                    teacherLines = 0;
+                  } else if (classroomLines > 1) {
+                    classroomLines--;
+                  } else if (nameLines > 1) {
+                    nameLines--;
+                  } else {
+                    break;
+                  }
+                }
+
+                final children = <Widget>[];
+                for (final key in rendered) {
+                  final lines = linesOf(key);
+                  if (lines <= 0) continue;
+                  if (children.isNotEmpty) {
+                    children.add(const SizedBox(height: gap));
+                  }
+                  if (key == 'name') {
+                    children.add(Text(
+                      course.name,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall * scale,
+                          fontWeight: FontWeight.w700,
+                          color: fg,
+                          height: 1.25),
+                      maxLines: lines,
+                      overflow: overflow,
+                    ));
+                  } else if (key == 'classroom') {
+                    children.add(Text(
+                      classroomText,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption * scale, color: fg, height: 1.2),
+                      // 行数按实际文本换行计算，不设固定 2 行上限。
+                      maxLines: lines,
+                      overflow: overflow,
+                    ));
+                  } else {
+                    children.add(Text(
                       course.teacher,
-                      style: TextStyle(fontSize: 10.5, color: fg, height: 1.2),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                    ),
-                  ),
-              ],
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption * scale, color: fg, height: 1.2),
+                      maxLines: lines,
+                      overflow: overflow,
+                    ));
+                  }
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: children,
+                );
+              },
             ),
           ),
         ),
@@ -853,9 +945,9 @@ class _ConflictCellState extends State<ConflictCell>
               builder: (_, __) => LinearProgressIndicator(
                 value: _tick.value,
                 minHeight: 3,
-                backgroundColor: Colors.white.withOpacity(0.25),
+                backgroundColor: Colors.white.withValues(alpha: 0.25),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                    Colors.white.withOpacity(0.95)),
+                    Colors.white.withValues(alpha: 0.95)),
               ),
             ),
           ),
@@ -878,7 +970,7 @@ class _ConflictCellState extends State<ConflictCell>
                       shape: BoxShape.circle,
                       color: i == _i
                           ? Colors.white
-                          : Colors.white.withOpacity(0.45),
+                          : Colors.white.withValues(alpha: 0.45),
                     ),
                   ),
               ],

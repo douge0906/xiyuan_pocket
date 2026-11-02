@@ -182,9 +182,11 @@ class CasClient {
     if (j != null && j['ticket'] is String) st = j['ticket'] as String;
     if (st.isEmpty) return false;
 
-    // 跟随重定向建立会话（手机端 80/443 都通，不像云服务器只有 443）
+    // service 本身可能带 query（WebVPN 的 `login?cas_login=true`），
+    // 此时必须用 `&` 追加，否则会拼出两个 `?`、ticket 丢失。
+    final sep = service.contains('?') ? '&' : '?';
     await session.get(
-      '$service?ticket=$st',
+      '$service${sep}ticket=${Uri.encodeComponent(st)}',
       headers: {'Referer': '$casBase/'},
     );
     return true;

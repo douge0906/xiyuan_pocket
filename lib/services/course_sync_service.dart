@@ -120,7 +120,7 @@ class CourseSyncService {
 
       // 「导入一份新课表」→ 新建一份，原课表原样保留，并自动切过去。
       // 注意是**导入成功这一刻**才建表 —— 用户中途取消就什么都不产生，
-      // 不需要再写「回滚空表 + 切回原来那份」那套逻辑（在线版同理）。
+      // 不需要再写「回滚空表 + 切回原来那份」那套逻辑（同理）。
       final asNew = asNewTableName;
       final List<Course> merged;
       var conflicts = const <CourseConflict>[];
@@ -153,8 +153,16 @@ class CourseSyncService {
         final res = await notifier.mergeServerInto(targetId, parsed);
         merged = res.merged;
         conflicts = res.conflicts;
-        final targetName =
-            (await CourseStorage.loadTables()).firstWhere((t) => t.id == targetId).name;
+        // ⚠️ 合并期间用户可能删掉目标表（loadTables 先取 targetId、这里再查名字），
+        //    裸 firstWhere 会抛 StateError 被外层 catch 兜成「同步失败」。
+        //    合并其实已经成功落盘，所以这里退让到列表首项（而非首项都没有才报错）。
+        final tables = await CourseStorage.loadTables();
+        final targetName = tables.isEmpty
+            ? '当前课表'
+            : tables
+                .firstWhere((t) => t.id == targetId,
+                    orElse: () => tables.first)
+                .name;
         final activeId = await CourseStorage.activeTableId();
         if (activeId != targetId) {
           // 目标不是当前看的那份 → 明确告诉用户写了哪份，避免"我明明在看这份"

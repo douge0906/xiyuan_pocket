@@ -35,12 +35,16 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final visibleCount = mainServices.length - _hidden.length;
+    // _hidden 里可能残留已从 mainServices 移除的旧 id（历史数据），
+    // 直接相减会让「当前显示 N / M」偏小；按实际存在的 id 交集算。
+    final ids = mainServices.map((e) => e.id).toSet();
+    final hiddenCount = _hidden.where(ids.contains).length;
+    final visibleCount = mainServices.length - hiddenCount;
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('服务管理',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
@@ -48,7 +52,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
           Text(
             '关闭开关后，该服务会从服务页隐藏（功能与数据都保留，随时可再打开）。',
             style: TextStyle(
-                fontSize: 12.5, height: 1.5, color: context.textTertiary),
+                fontSize: AppTheme.fontSmall, height: 1.5, color: context.textTertiary),
           ),
           const SizedBox(height: 10),
           userCard(
@@ -68,7 +72,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
           Text(
             '当前显示 $visibleCount / ${mainServices.length} 个服务',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: context.textTertiary),
+            style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
           ),
         ],
       ),
@@ -90,7 +94,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                 height: 34,
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor
-                      .withOpacity(context.isDark ? 0.20 : 0.10),
+                      .withValues(alpha: context.isDark ? 0.20 : 0.10),
                   borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Icon(tool.icon, size: 19, color: AppTheme.primaryColor),
@@ -104,7 +108,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                     Text(
                       tool.name,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: AppTheme.fontBody,
                         // 已隐藏的行名称变灰，与「显示中」一眼区分
                         color: shown
                             ? context.textPrimary
@@ -115,9 +119,9 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      shown ? tool.description : '已隐藏',
+                      shown ? '显示中' : '已隐藏',
                       style: TextStyle(
-                          fontSize: 11.5, color: context.textTertiary),
+                          fontSize: AppTheme.fontSmall, color: context.textTertiary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

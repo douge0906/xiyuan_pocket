@@ -110,9 +110,18 @@ class _CourseFormPageState extends State<_CourseFormPage> {
     // 「c != null && … ? c.weekType : …」之后 c 一定非空（写成 widget.course
     // 的话每次访问都是 getter 调用，推断失效，会报 unchecked_use_of_nullable_value）。
     final c = widget.course;
-    weekday = widget.presetWeekday ??
-        ((c != null && c.weekday >= 1 && c.weekday <= 7) ? c.weekday : 1);
     pattern = c?.pattern ?? CoursePattern.fixed;
+    // 🔴 weekday 的取值：
+    //    · fixed（固定星期）→ 取 1..7 的真实星期；
+    //    · daily / workday → 保持哨兵（0 / -1），由 pattern 决定渲染哪些天。
+    //
+    //    之前这里统一回落成 1 → 「每天」的课程被改写成「周一」，
+    //    而 pattern 仍是 daily → 课表只画周一、提醒却按 7 天算。
+    final rawWeekday = c?.weekday ?? 1;
+    weekday = widget.presetWeekday ??
+        ((pattern == CoursePattern.fixed && rawWeekday >= 1 && rawWeekday <= 7)
+            ? rawWeekday
+            : 1);
     weekType = c?.weekType ?? CourseWeekType.every;
     startSlot = widget.presetStartSlot ?? c?.startSlot ?? 1;
     endSlot = widget.presetEndSlot ?? c?.endSlot ?? 2;
@@ -145,7 +154,7 @@ class _CourseFormPageState extends State<_CourseFormPage> {
         title: Text(
           widget.course == null ? '添加课程' : '编辑课程',
           style: TextStyle(
-              fontSize: 17,
+              fontSize: AppTheme.fontHeading,
               fontWeight: FontWeight.bold,
               color: isDark ? Colors.white : AppTheme.textPrimaryLight),
         ),
@@ -169,7 +178,7 @@ class _CourseFormPageState extends State<_CourseFormPage> {
               Text(
                 widget.course == null ? '添加课程' : '编辑课程',
                 style: TextStyle(
-                    fontSize: 18,
+                    fontSize: AppTheme.fontHeading,
                     fontWeight: FontWeight.bold,
                     color: isDark ? Colors.white : AppTheme.textPrimaryLight), // 顶层函数无 context
               ),
@@ -206,7 +215,7 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                   children: [
                     Text('从第几节开始',
                         style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: AppTheme.fontSmall,
                             color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
                     const SizedBox(height: 6),
                     Wrap(
@@ -228,7 +237,7 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                     const SizedBox(height: 8),
                     Text('到第几节结束',
                         style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: AppTheme.fontSmall,
                             color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
                     const SizedBox(height: 6),
                     Wrap(
@@ -266,7 +275,7 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                         padding: const EdgeInsets.only(bottom: 10),
                         child: Text('选择「单周」或「双周」时，默认覆盖 1-16 周，无需再选具体周数。',
                             style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: AppTheme.fontSmall,
                                 color: isDark
                                     ? Colors.grey.shade500
                                     : const Color(0xFF9CA3AF))),
@@ -301,11 +310,11 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                                 onPressed: () => setState(() => selectedWeeks = {
                                       for (int i = 1; i <= kMaxCourseWeeks; i++) i
                                     }),
-                                child: const Text('全选', style: TextStyle(fontSize: 12.5)),
+                                child: const Text('全选', style: TextStyle(fontSize: AppTheme.fontSmall)),
                               ),
                               TextButton(
                                 onPressed: () => setState(() => selectedWeeks.clear()),
-                                child: const Text('清空', style: TextStyle(fontSize: 12.5)),
+                                child: const Text('清空', style: TextStyle(fontSize: AppTheme.fontSmall)),
                               ),
                             ],
                           ),
@@ -405,7 +414,11 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                           name: name,
                           teacher: teacherCtl.text.trim(),
                           classroom: roomCtl.text.trim(),
-                          weekday: weekday,
+                          // daily / workday 保留哨兵（0 / -1），
+                          // 由 pattern 决定渲染；fixed 才用具体星期。
+                          weekday: pattern == CoursePattern.fixed
+                              ? weekday
+                              : (pattern == CoursePattern.daily ? 0 : -1),
                           startSlot: startSlot,
                           endSlot: endSlot,
                           weeks: weeksText,
@@ -445,109 +458,127 @@ void showCourseDetailSheet(
   required void Function(Course course) onEdit,
 }) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
-  showModalBottomSheet(
+  showDialog<void>(
     context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (ctx) => Container(
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+    builder: (ctx) => Dialog(
+      backgroundColor: context.cardColor,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+            color: isDark ? Colors.white12 : const Color(0xFFE8E8EE)),
       ),
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 16,
-        bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 560),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 标题行 + 右上角关闭
+              Row(
+                children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      // v1.6.9：详情卡里的小色块同样跟随色彩方案
+                      color: courseColorFor(course.colorValue,
+                          CourseStorage.schemeCache),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      course.name,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontTitle,
+                          fontWeight: FontWeight.bold,
+                          color: context.textPrimary),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    icon: Icon(Icons.close_rounded,
+                        size: 20,
+                        color: isDark
+                            ? Colors.grey.shade500
+                            : const Color(0xFF9CA3AF)),
+                    tooltip: '关闭',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Container(
-                  width: 14,
-                  height: 14,
-                  decoration: BoxDecoration(
-                    // v1.6.9：详情卡里的小色块同样跟随色彩方案
-                    color: courseColorFor(course.colorValue,
-                        CourseStorage.schemeCache),
-                    borderRadius: BorderRadius.circular(3),
+              const Divider(height: 1),
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (course.teacher.isNotEmpty)
+                        _detailRow(Icons.person_outline_rounded, '教师',
+                            course.teacher, isDark),
+                      if (course.classroom.isNotEmpty)
+                        _detailRow(Icons.place_outlined, '地点',
+                            course.classroom, isDark),
+                      _detailRow(Icons.schedule_rounded, '节次',
+                          '第${course.startSlot}-${course.endSlot}节', isDark),
+                      _detailRow(
+                          Icons.date_range_outlined,
+                          '周次',
+                          course.weeks.isEmpty ? '全部' : course.weeks,
+                          isDark),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    course.name,
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: context.textPrimary),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (course.teacher.isNotEmpty)
-              _detailRow(Icons.person_outline_rounded, '教师', course.teacher, isDark),
-            if (course.classroom.isNotEmpty)
-              _detailRow(Icons.place_outlined, '地点', course.classroom, isDark),
-            _detailRow(Icons.schedule_rounded, '节次',
-                '第${course.startSlot}-${course.endSlot}节', isDark),
-            _detailRow(Icons.date_range_outlined, '周次',
-                course.weeks.isEmpty ? '全部' : course.weeks, isDark),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      onDelete(course);
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        onDelete(course);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusMd)),
+                      ),
+                      child: const Text('删除'),
                     ),
-                    child: const Text('删除'),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      onEdit(course);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        onEdit(course);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusMd)),
+                      ),
+                      child: const Text('编辑'),
                     ),
-                    child: const Text('编辑'),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     ),
@@ -587,14 +618,14 @@ Widget _detailRow(IconData icon, String label, String value, bool isDark) => Pad
           const SizedBox(width: 10),
           Text(label,
               style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTheme.fontBody,
                   color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               value,
               style: TextStyle(
-                  fontSize: 14,
+                  fontSize: AppTheme.fontBody,
                   color: isDark ? Colors.white : AppTheme.textPrimaryLight), // 顶层函数无 context
             ),
           ),
@@ -622,7 +653,7 @@ Widget _expandSection(
         title: Text(
           title,
           style: TextStyle(
-              fontSize: 14,
+              fontSize: AppTheme.fontBody,
               fontWeight: FontWeight.w600,
               color: isDark ? Colors.grey.shade300 : const Color(0xFF374151)),
         ),

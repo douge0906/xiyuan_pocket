@@ -12,7 +12,7 @@ import 'service_settings_page.dart';
 ///
 /// ⚠️ 这里仅保留**客户端能独立完成**的服务（服务清单见 service_catalog.dart）：
 ///    成绩查询 / 考试安排（需先登录统一认证）、无锡学院校历、我的教材、校园地图。
-///    食堂速览、试卷库、自动推送、建议反馈都依赖服务端，已随开源版移除。
+///    食堂速览、试卷库、自动推送、建议反馈都依赖服务端，已移除。
 ///
 /// v1.9.0：右上角新增**服务管理**入口 —— 可逐项开关服务的显示 / 隐藏，
 ///         设置即时保存，返回本页立即生效。
@@ -77,7 +77,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                       child: Text(
                         '服务',
                         style: TextStyle(
-                          fontSize: 20,
+                          fontSize: AppTheme.fontDisplay,
                           fontWeight: FontWeight.bold,
                           color: context.textPrimary,
                         ),
@@ -102,7 +102,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                   // 第 0 项：一卡通 / 电费余额（由「我的」页移到这里，查看更顺手）
                   if (index == 0) {
                     return const Padding(
-                      padding: EdgeInsets.only(bottom: 20),
+                      padding: EdgeInsets.only(bottom: 14),
                       child: BalanceCardsSection(),
                     );
                   }
@@ -110,7 +110,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                   if (tools.isEmpty) return _emptyState();
                   final tool = tools[index - 1];
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: ServiceTile(
                       tool: tool,
                       onTap: () => _onTap(context, tool),
@@ -134,10 +134,10 @@ class _ToolboxPageState extends State<ToolboxPage> {
               size: 40, color: context.textTertiary),
           const SizedBox(height: 12),
           Text('所有服务已隐藏',
-              style: TextStyle(fontSize: 15, color: context.textSecondary)),
+              style: TextStyle(fontSize: AppTheme.fontTitle, color: context.textSecondary)),
           const SizedBox(height: 6),
           Text('点右上角设置图标可重新开启',
-              style: TextStyle(fontSize: 12.5, color: context.textTertiary)),
+              style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
           const SizedBox(height: 16),
           TextButton.icon(
             onPressed: _openServiceSettings,

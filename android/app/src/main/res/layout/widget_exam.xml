@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 考试倒计时 · 2×2：天数在左，地点完整展示 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/info_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:background="@drawable/widget_card_bg_light">
+
+    <TextView
+        android:id="@+id/info_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="考试倒计时"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#667085" />
+
+    <TextView
+        android:id="@+id/info_headline"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="暂无考试安排"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/info_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/info_meta"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="bottom"
+        android:text=""
+        android:textSize="10.5sp"
+        android:lineSpacingExtra="1dp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textColor="#667085" />
+</LinearLayout>

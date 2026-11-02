@@ -7,6 +7,8 @@ import 'cas_client.dart';
 import 'card_balance.dart';
 import 'course_fetcher.dart';
 import 'jwgl_client.dart';
+import 'study_client.dart';
+import '../../models/study_models.dart';
 
 /// 教务会话缓存（本地版：把「登录一次」的成果存下来，避免每次查询都过验证码）。
 ///
@@ -212,7 +214,17 @@ class LocalCampusService {
     return null;
   }
 
-  /// 查某学期课表（v2.0.0 开源版新增：客户端直连教务系统）。
+  /// 查「我的学业」学业档案（v1.10.0 新增：客户端直连教务「学生学业情况查询」）。
+  ///
+  /// 教务是否返回培养方案树取决于**学校有没有给这一届配培养方案**：
+  /// 有 → 10 个板块 135 门课；没有 → 只能拿本学期课表按类别分组。
+  /// 两种情况都返回 [StudyArchive]，由界面按 `mode` 决定怎么展示。
+  static Future<StudyArchive> fetchStudy(
+          String username, String password, String xnm, String xqm) =>
+      _withRelogin(username, password,
+          (s) => StudyClient.fetch(s, fallbackXnm: xnm, fallbackXqm: xqm));
+
+  /// 查某学期课表（v2.0.0 新增：客户端直连教务系统）。
   /// 返回结构，界面层无需改动。
   static Future<Map<String, dynamic>> fetchSchedule(
           String username, String password, String xnm, String xqm) =>
@@ -232,7 +244,7 @@ class LocalCampusService {
       _withRelogin(username, password,
           (s) => CourseFetcher.fetchClassCourses(s, xnm, xqm, bhId));
 
-  /// 查一卡通余额（v2.0.0 开源版新增：客户端直连融合门户）。
+  /// 查一卡通余额（v2.0.0 新增：客户端直连融合门户）。
   ///
   /// ⚠️ 门户与教务是**两个子系统**，cookie 不通用 —— 所以这里独立建会话，
   ///   不复用 [_session]。门户会话**不做持久化缓存**（门户侧签发较敏感，

@@ -14,10 +14,17 @@ class CampusResponse {
   final String body;
   final String url; // 最终 URL（跟随重定向后）
 
+  /// 本次响应的 `Location`（未跟随重定向时有值）。
+  ///
+  /// 平台票这类参数常常只出现在**中间那一跳**的 URL 里，最终落点已经没有它了，
+  /// 所以要能逐跳看到 Location。
+  final String? location;
+
   const CampusResponse({
     required this.statusCode,
     required this.body,
     required this.url,
+    this.location,
   });
 
   bool get ok => statusCode >= 200 && statusCode < 300;
@@ -34,6 +41,15 @@ class CampusSession {
   final HttpClient _client;
   final Map<String, String> cookies = {};
 
+  /// 每一跳实际发出的 URL 改写（WebVPN 用）。
+  ///
+  /// 为什么必须放在**会话层**而不是调用方：校外走网关时，CAS 换票后平台会 302 到
+  /// `http://10.3.100.110/plat/?ticket=…`（相对/绝对内网地址），这一跳如果不改写就
+  /// 直接连内网、必然超时 —— 平台票也就拿不到。放在这里能覆盖「起始 URL + 每一跳」。
+  ///
+  /// 约定：实现必须**幂等**（已改写过的 URL 再传进来要原样返回），因为每跳都会调用。
+  final String Function(String url)? urlRewrite;
+
   /// **单跳**超时：每一跳（连接 / 发送 / 读响应体）各自计时，互不累加。
   /// ⚠️ 2026-10-20 审查：注释原名不副实 —— 重定向链最坏 8 跳 × 25s ≈ 200s，
   ///    不是"总超时"（已知债务，见审查报告）。另：`HttpClient` 只提供连接超时，
@@ -42,6 +58,7 @@ class CampusSession {
 
   CampusSession({
     this.timeout = const Duration(seconds: 25),
+    this.urlRewrite,
   }) : _client = HttpClient() {
     _client.connectionTimeout = timeout;
     _client.userAgent = defaultUserAgent;
@@ -118,8 +135,25 @@ class CampusSession {
     // ⚠️ 必须**手动**跟重定向：dart:io 自动跟随时，中间 302 响应里下发的
     //    Set-Cookie（CAS/教务的会话就藏在这一步）会拿不到。
     var currentUrl = url;
-    for (var hop = 0; hop < 8; hop++) {
-      final uri = Uri.parse(currentUrl);
+    // `rawUrl` 始终保存**未包装**的原始地址，`target` 才是实际请求地址。
+    // 两者必须分开：相对 Location（如 `/plat/?ticket=…`）只能相对原始地址解析，
+    // 若相对包装后的地址解析会吃掉 `/http/<hex>` 前缀、退化成网关根路径
+    // （2026-10-25 自查发现 —— VPN 换票链正是断在这一跳）。
+    var rawUrl = url;
+    // 跳数上限 12：参考实现（cas.rs sso_follow）用 10 跳，WebVPN 登录链
+    // （login → token-login → 门户）比普通 SSO 更长，留足余量。
+    for (var hop = 0; hop < 12; hop++) {
+      // 每跳都过一遍改写（WebVPN 幂等包装）；CampusResponse.url 也是改写后的
+      // 最终地址，调用方从它取 query 参数（如平台票）不受影响。
+      final target = urlRewrite?.call(rawUrl) ?? rawUrl;
+      currentUrl = target;
+      var uri = Uri.parse(target);
+      // 参考实现（Wxxy-CampusHub/cas.rs sso_follow）实测：cwxu 域名的 http 明文
+      // 会被服务端直接断连，302 链里遇到要**升到 https**（只升不降，避免来回跳）。
+      if (uri.scheme == 'http' && uri.host.endsWith('.cwxu.edu.cn')) {
+        uri = uri.replace(scheme: 'https');
+        currentUrl = uri.toString();
+      }
       final req = await _client
           .openUrl(hop == 0 ? method : 'GET', uri)
           .timeout(timeout);
@@ -150,7 +184,9 @@ class CampusSession {
           res.statusCode >= 300 && res.statusCode < 400 && location != null;
       if (isRedirect && followRedirects) {
         await res.drain<void>().timeout(timeout); // 消费响应体，避免占住连接
-        currentUrl = uri.resolve(location).toString();
+        // 关键：相对**原始**地址解析，再由下一跳的 rewrite 统一包装
+        rawUrl = nextHop(rawUrl, location);
+        currentUrl = rawUrl;
         continue;
       }
 
@@ -160,10 +196,17 @@ class CampusSession {
         statusCode: res.statusCode,
         body: text,
         url: currentUrl,
+        location: location,
       );
     }
     return CampusResponse(statusCode: 310, body: '', url: currentUrl);
   }
+
+  /// 计算下一跳地址：相对 Location 相对**原始（未包装）**地址解析。
+  ///
+  /// 抽成纯函数是为了单测 —— VPN 模式下这一步算错会吃掉 `/http/<hex>` 前缀。
+  static String nextHop(String rawUrl, String location) =>
+      Uri.parse(rawUrl).resolve(location).toString();
 
   static String _encodeForm(Map<String, String> form) => form.entries
       .map((e) =>

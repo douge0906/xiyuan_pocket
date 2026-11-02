@@ -183,7 +183,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('「$className」 ${courses.length} 门课',
-            style: const TextStyle(fontSize: 16)),
+            style: const TextStyle(fontSize: AppTheme.fontTitle)),
         content: SizedBox(
           width: 340,
           child: SingleChildScrollView(
@@ -195,7 +195,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                     padding: const EdgeInsets.only(top: 8, bottom: 4),
                     child: Text(dayNames[d],
                         style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: AppTheme.fontSmall,
                             fontWeight: FontWeight.w700,
                             color: AppTheme.primaryColor)),
                   ),
@@ -222,7 +222,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                               '第${c.startSlot}-${c.endSlot}节 · ${c.classroom.isEmpty ? "未排" : c.classroom}'
                               '${c.weeks.isEmpty ? "" : " · ${c.weeks}"}',
                               style: TextStyle(
-                                  fontSize: 12.5,
+                                  fontSize: AppTheme.fontSmall,
                                   height: 1.4,
                                   color: _dark
                                       ? Colors.grey.shade300
@@ -260,7 +260,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
     final line = _dark ? Colors.grey.shade700 : const Color(0xFFE5E7EB);
     return Scaffold(
       backgroundColor: _dark ? const Color(0xFF171717) : const Color(0xFFF7F8FA),
-      appBar: AppBar(title: const Text('选择班级', style: TextStyle(fontSize: 17))),
+      appBar: AppBar(title: const Text('选择班级', style: TextStyle(fontSize: AppTheme.fontHeading))),
       body: Column(
         children: [
           // 搜索框 + 过滤
@@ -271,10 +271,10 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
               TextField(
                 controller: _searchCtl,
                 onChanged: (_) => _applyFilter(),
-                style: TextStyle(fontSize: 14.5, color: _dark ? Colors.white : context.textPrimary),
+                style: TextStyle(fontSize: AppTheme.fontBody, color: _dark ? Colors.white : context.textPrimary),
                 decoration: InputDecoration(
                   hintText: '搜班名 / 专业 / 学院，例如：25安工',
-                  hintStyle: TextStyle(fontSize: 13.5, color: subColor),
+                  hintStyle: TextStyle(fontSize: AppTheme.fontBody, color: subColor),
                   isDense: true,
                   prefixIcon: Icon(Icons.search_rounded, size: 20, color: subColor),
                   suffixIcon: _searchCtl.text.isEmpty
@@ -340,23 +340,23 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
             value: null,
             child: Text('全部',
                 style: TextStyle(
-                    fontSize: 13.5,
+                    fontSize: AppTheme.fontBody,
                     color: active ? AppTheme.primaryColor : null))),
         for (final o in options)
           PopupMenuItem<String?>(
               value: o,
               child: Text(label == '年级' ? '$o 级' : o,
-                  style: const TextStyle(fontSize: 13.5))),
+                  style: const TextStyle(fontSize: AppTheme.fontBody))),
       ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
           color: active
-              ? AppTheme.primaryColor.withOpacity(0.08)
+              ? AppTheme.primaryColor.withValues(alpha: 0.08)
               : (_dark ? const Color(0xFF2A2A2A) : Colors.white),
           border: Border.all(
               color:
-                  active ? AppTheme.primaryColor : subColor.withOpacity(0.35)),
+                  active ? AppTheme.primaryColor : subColor.withValues(alpha: 0.35)),
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -365,7 +365,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                      fontSize: 12.5,
+                      fontSize: AppTheme.fontSmall,
                       color: active
                           ? AppTheme.primaryColor
                           : subColor))),
@@ -385,7 +385,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
           const CircularProgressIndicator(strokeWidth: 2.5),
           const SizedBox(height: 14),
           Text('正在加载班级列表…',
-              style: TextStyle(fontSize: 13, color: subColor)),
+              style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor)),
         ]));
     }
     if (_error != null) {
@@ -397,10 +397,10 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
         Icon(Icons.search_off_rounded, size: 42, color: subColor),
         const SizedBox(height: 12),
         Text('没有匹配的班级',
-            style: TextStyle(fontSize: 13.5, color: subColor)),
+            style: TextStyle(fontSize: AppTheme.fontBody, color: subColor)),
         const SizedBox(height: 6),
         Text('换个关键字，或清掉年级/学院过滤试试',
-            style: TextStyle(fontSize: 12, color: subColor.withOpacity(0.8))),
+            style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor.withValues(alpha: 0.8))),
       ]));
     }
     return RefreshIndicator(
@@ -416,7 +416,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Center(
                     child: Text('共 ${_shown.length} 个班（数据来自教务，仅供参考）',
-                        style: TextStyle(fontSize: 12, color: subColor))));
+                        style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor))));
           }
           final c = _shown[i];
           final bhId = (c['bh_id'] ?? '').toString();
@@ -440,7 +440,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 14.5,
+                                fontSize: AppTheme.fontBody,
                                 fontWeight: FontWeight.w600,
                                 color: _dark
                                     ? Colors.white
@@ -450,7 +450,7 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                           '${(c["zymc"] ?? "").toString()} · ${(c["jgmc"] ?? "").toString()}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12, color: subColor),
+                          style: TextStyle(fontSize: AppTheme.fontSmall, color: subColor),
                         ),
                       ]),
                 ),
@@ -465,12 +465,12 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withOpacity(0.08),
+                      color: AppTheme.primaryColor.withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     ),
                     child: Text('${c["xkrs"] ?? "?"} 人',
                         style: TextStyle(
-                            fontSize: 11,
+                            fontSize: AppTheme.fontCaption,
                             fontWeight: FontWeight.w600,
                             color: AppTheme.primaryColor)),
                   ),

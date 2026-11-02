@@ -17,7 +17,25 @@ class TodoCalendarPage extends StatefulWidget {
 
   static Future<void> open(BuildContext context) {
     return Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const TodoCalendarPage()),
+      PageRouteBuilder<void>(
+        transitionDuration: const Duration(milliseconds: 320),
+        reverseTransitionDuration: const Duration(milliseconds: 260),
+        pageBuilder: (_, __, ___) => const TodoCalendarPage(),
+        transitionsBuilder: (context, animation, secondary, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          );
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1, 0),
+              end: Offset.zero,
+            ).animate(curved),
+            child: FadeTransition(opacity: curved, child: child),
+          );
+        },
+      ),
     );
   }
 
@@ -129,8 +147,16 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
   List<Todo> _todosOf(DateTime day) {
     final list = _all.where((t) => t.occursOn(day)).toList()
       ..sort((a, b) {
-        final ad = a.dueAt ?? a.date;
-        final bd = b.dueAt ?? b.date;
+        // 🔴 时间口径与首页统一：`reminderTime ?? dueAt`。
+        //
+        // 原来这里用 `dueAt ?? date`，首页用 `reminderTime ?? dueAt` ——
+        // 同一份数据两个页面排序结果不同，同一条待办在日历和首页的
+        // 相对位置对不上，用户会以为数据乱了。
+        //
+        // 重复待办的 date 只是**起始日**，排序时用 dueAt/reminderTime
+        // （当天具体时刻）才符合「这一天的时间线」直觉。
+        final ad = a.reminderTime ?? a.dueAt ?? a.date;
+        final bd = b.reminderTime ?? b.dueAt ?? b.date;
         return ad.compareTo(bd);
       });
     return list;
@@ -183,7 +209,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
     final courseNames = _courseNamesOf(_selected);
 
     return Scaffold(
-      backgroundColor: _isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FC),
+      backgroundColor: _isDark ? const Color(0xFF121212) : Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -192,14 +218,14 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
         title: Text(
           '待办日历',
           style: TextStyle(
-              fontSize: 16, fontWeight: FontWeight.bold, color: _text),
+              fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold, color: _text),
         ),
         iconTheme: IconThemeData(color: _text),
         actions: [
           TextButton(
             onPressed: _goToday,
             child: Text('今天',
-                style: TextStyle(fontSize: 13, color: AppTheme.primaryColor)),
+                style: TextStyle(fontSize: AppTheme.fontSmall, color: AppTheme.primaryColor)),
           ),
         ],
       ),
@@ -231,7 +257,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                               child: Text(
                                 '${_month.year} 年 ${_month.month} 月',
                                 style: TextStyle(
-                                    fontSize: 14,
+                                    fontSize: AppTheme.fontBody,
                                     fontWeight: FontWeight.w600,
                                     color: _text),
                               ),
@@ -253,7 +279,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                               child: Center(
                                 child: Text(w,
                                     style: TextStyle(
-                                        fontSize: 11, color: _faint)),
+                                        fontSize: AppTheme.fontCaption, color: _faint)),
                               ),
                             ),
                         ],
@@ -292,14 +318,14 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                             '${_selected.month} 月 ${_selected.day} 日 · '
                             '周${_weekCn[_selected.weekday - 1]}',
                             style: TextStyle(
-                                fontSize: 14,
+                                fontSize: AppTheme.fontBody,
                                 fontWeight: FontWeight.w600,
                                 color: _text),
                           ),
                           const Spacer(),
                           Text(
                             '${dayTodos.length} 条待办 · ${courseNames.length} 节课',
-                            style: TextStyle(fontSize: 12, color: _faint),
+                            style: TextStyle(fontSize: AppTheme.fontSmall, color: _faint),
                           ),
                         ],
                       ),
@@ -310,7 +336,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: 12,
+                              fontSize: AppTheme.fontSmall,
                               height: 1.5,
                               color: const Color(0xFF3B82F6)),
                         ),
@@ -320,7 +346,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           child: Text('这一天没有待办',
-                              style: TextStyle(fontSize: 13, color: _faint)),
+                              style: TextStyle(fontSize: AppTheme.fontSmall, color: _faint)),
                         )
                       else
                         for (final t in dayTodos) _todoLine(t),
@@ -343,7 +369,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
         ),
         const SizedBox(width: 4),
         Text(label,
-            style: TextStyle(fontSize: 10.5, color: _faint)),
+            style: TextStyle(fontSize: AppTheme.fontCaption, color: _faint)),
       ],
     );
   }
@@ -385,7 +411,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
               Text(
                 '${day.day}',
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: AppTheme.fontSmall,
                   height: 1.1,
                   fontWeight:
                       isToday || selected ? FontWeight.w600 : FontWeight.w400,
@@ -417,9 +443,12 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
 
   Widget _todoLine(Todo t) {
     final done = t.isDoneOn(_selected);
-    final time = t.dueAt != null
-        ? '${t.dueAt!.hour.toString().padLeft(2, '0')}:'
-            '${t.dueAt!.minute.toString().padLeft(2, '0')}'
+    // 与 _todosOf 的排序口径保持一致（reminderTime ?? dueAt）。
+    // 课程待办只写 reminderTime 不写 dueAt，只看 dueAt 会全部显示成「全天」。
+    final t0 = t.reminderTime ?? t.dueAt;
+    final time = t0 != null
+        ? '${t0.hour.toString().padLeft(2, '0')}:'
+            '${t0.minute.toString().padLeft(2, '0')}'
         : '全天';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
@@ -450,7 +479,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: AppTheme.fontBody,
                       color: done ? _faint : _text,
                       decoration: done ? TextDecoration.lineThrough : null,
                     ),
@@ -464,7 +493,7 @@ class _TodoCalendarPageState extends State<TodoCalendarPage> {
             ),
           ),
           const SizedBox(width: 8),
-          Text(time, style: TextStyle(fontSize: 11.5, color: _faint)),
+          Text(time, style: TextStyle(fontSize: AppTheme.fontSmall, color: _faint)),
         ],
       ),
     );

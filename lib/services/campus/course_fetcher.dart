@@ -1,7 +1,7 @@
 import 'campus_session.dart';
 import 'jwgl_client.dart' show CampusException;
 
-/// 课表查询（开源版 · 客户端直连）。
+/// 课表查询（· 客户端直连）。
 ///
 /// 抓取流程：
 ///   · 先打开课表页（拿 csrftoken，同时确保会话有效）
@@ -88,7 +88,7 @@ class CourseFetcher {
             return {
               'xnm': xnm,
               'xqm': xqm,
-              'semester': '$xnm-${int.parse(xnm) + 1} 第${semesterLabel(xqm)}学期',
+              'semester': '${_academicYear(xnm)} 第${semesterLabel(xqm)}学期',
               'courses': parsed,
               'count': parsed.length,
             };
@@ -343,7 +343,7 @@ class CourseFetcher {
         k: p(k),
     };
     if (payload['xnmc']!.isEmpty) {
-      payload['xnmc'] = '$xnm-${int.parse(xnm) + 1}';
+      payload['xnmc'] = _academicYear(xnm);
     }
     if (payload['xqmmc']!.isEmpty) {
       payload['xqmmc'] = semesterLabel(xqm);
@@ -412,4 +412,13 @@ String pickLongestPlace(Map<String, dynamic> m) {
     if (v.length > best.length) best = v;
   }
   return best;
+}
+
+/// 学年名称：「2025」→「2025-2026」。
+///
+/// 用 tryParse 而不是裸 int.parse：xnm 来自 UI 透传，一旦传进来
+/// 「2025-2026」或空串，裸 parse 会抛 FormatException 打断整条抓取链路。
+String _academicYear(String xnm) {
+  final y = int.tryParse(xnm);
+  return y == null ? xnm : '$xnm-${y + 1}';
 }

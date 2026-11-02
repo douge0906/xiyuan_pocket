@@ -8,6 +8,7 @@ import 'message_channel_service.dart';
 import 'message_source.dart';
 import 'sources/cached_source.dart';
 import 'sources/campus_source.dart';
+import 'sources/control_announcement_source.dart';
 import 'sources/jwc_source.dart';
 import 'storage_service.dart';
 
@@ -238,6 +239,9 @@ class MessageRepository extends ChangeNotifier {
     final ids = subscribedIds ?? await MessageChannelService.loadSubscribed();
     _sources.clear();
     if (ids.contains(kJwcChannelId)) _addSource(_jwc);
+    if (ids.contains(kControlAnnouncementChannelId)) {
+      _addSource(ControlAnnouncementSource());
+    }
     for (final ch in MessageChannelService.campusChannels) {
       if (!ids.contains(ch.id)) continue;
       _addSource(CampusSource(columnId: ch.id, columnName: ch.name));

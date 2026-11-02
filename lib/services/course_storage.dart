@@ -7,6 +7,8 @@ import '../models/course_table.dart';
 import 'storage_service.dart';
 import 'widget_sync_service.dart';
 
+part 'course_presets.dart';
+
 /// 课程表本地存储：用 SharedPreferences 持久化课程列表（自主添加 + 教务导入）
 class CourseStorage {
   /// ⚠️ 下面这几个键是**老结构**（一份课表的时代）。多课表改造后它们只用于
@@ -34,7 +36,7 @@ class CourseStorage {
   /// Windows 上精度是动态的（0.5ms ~ 15.6ms），同一毫秒内连建两份课表就会
   /// 拿到同一个 id。id 一撞：「切到哪一份」分不清，`deleteTable` 还会把
   /// 两份一起当目标删掉、然后 `next.first` 抛 `Bad state: No element`。
-  /// （在线版那边已经实际复现过一次，不是理论风险。）
+  /// （实际复现过，不是理论风险。）
   static String _newTableId() =>
       't_${DateTime.now().millisecondsSinceEpoch}_${_tableSeq++}';
 
@@ -151,14 +153,41 @@ class CourseStorage {
   ///
   /// v2.4.0 抗损坏：逐条解析——单条脏数据只跳过该条，不再整份丢弃。
   static Future<List<Course>> loadCourses() async {
-    final all = await _loadAll();
-    final t = all.tables.firstWhere((x) => x.id == all.activeId);
+    final snap = await loadActiveSnapshot();
+    final t = snap.active;
     final migrated = _migrateLegacyColors(t.courses);
     if (migrated.length != t.courses.length ||
         !_sameColors(migrated, t.courses)) {
       await saveCourses(migrated);
     }
     return migrated;
+  }
+
+  /// **同源快照**：当前课表的课程 + 全部课表 + 开学日，一次读出。
+  ///
+  /// 🔴 为什么需要：[loadCourses] 与 [activeTable] 各自独立读一次存储，
+  ///    两次读之间若 activeId 变了 → 课程来自 A 表、而表名/ID 来自 B 表
+  ///    （顶栏写着 B 表名，格子画的是 A 表课程）。这里一次读出，杜绝撕裂。
+  static Future<({
+      List<Course> courses,
+      List<CourseTable> tables,
+      CourseTable active,
+      DateTime? semesterStart,
+    })> loadActiveSnapshot() async {
+    final all = await _loadAll();
+    final active = all.tables.firstWhere(
+      (x) => x.id == all.activeId,
+      orElse: () => all.tables.first,
+    );
+    // 开学日取自**当前激活那份课表**（每份课表各有一份），并对齐到周一 ——
+    // 与 [loadSemesterStart] 的口径完全一致。
+    final d = active.semesterStart;
+    return (
+      courses: active.courses,
+      tables: all.tables,
+      active: active,
+      semesterStart: d == null ? null : mondayOf(DateTime(d.year, d.month, d.day)),
+    );
   }
 
   static bool _sameColors(List<Course> a, List<Course> b) {
@@ -548,7 +577,13 @@ class CourseStorage {
   }
 
   /// 回退到本周一（教学周以周一为界）
-  static DateTime mondayOf(DateTime d) => d.subtract(Duration(days: d.weekday - 1));
+  ///
+  /// 🔴 先把入参归一到当天零点再回退：调用方的 `DateTime.now()` 带时分秒，
+  ///    不归零的话算出来的「周一」也是 20:45 这种时刻，之后 `add(Duration(days: n))`
+  ///    一旦跨夏令时就会漂到前一天，`inDays` 也会截断。
+  static DateTime mondayOf(DateTime d) =>
+      DateTime(d.year, d.month, d.day)
+          .subtract(Duration(days: d.weekday - 1));
 
   /// 根据当前日期估算开学日期：第1学期（秋）**9/7**，第2学期（春）约 2/24，均对齐到周一。
   ///
@@ -585,7 +620,11 @@ class CourseStorage {
 
   /// 计算教学周（第 1 周从开学日期所在周一开始）
   static int teachingWeek(DateTime now, DateTime start) {
-    final diff = now.difference(start).inDays;
+    // 两边都归一到当天零点再算：Duration.inDays 是截断取整，
+    // 带时分秒的 now 与零点 start 相减会少算一天（跨零点后周次不跳）。
+    final diff = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(start.year, start.month, start.day))
+        .inDays;
     if (diff < 0) return 1;
     return diff ~/ 7 + 1;
   }
@@ -709,10 +748,34 @@ class CourseStorage {
   static double timeColWidthCache = 48;
 
   /// 日期栏（周次 + 一周日期那行）高度（px）。
-  static double dateRowHeightCache = 56;
+  /// 背景相关设置变化时自增 —— app 外层要据此重算导航栏透明态。
+  ///
+  /// 为什么需要：`backgroundColorCache` 是**异步加载**的，App 首次 build 时还是
+  /// null，导航栏会先渲染成不透明；等缓存加载完又没人通知它重建，
+  /// 于是出现「进课表不透明、切走再回来才透明」（2026-10-26）。
+  static final ValueNotifier<int> bgRevision = ValueNotifier<int>(0);
+
+  static double dateRowHeightCache = 48;
 
   /// 课表背景图路径的内存缓存（空串 = 无背景图）。理由同上。
   static String backgroundImageCache = '';
+
+  /// 背景色是否走**同色系渐变**（上浅下深）。
+  ///
+  /// 纯色背景容易显得平、像一块色纸；渐变让上沿发白、往下逐渐饱和，
+  /// 观感接近「白蓝 → 淡蓝」（2026-10-26 用户提议）。
+  static bool bgGradientCache = true;
+
+  /// 渐变强度（0~1）：上沿混多少白。1 = 上沿几乎白，0 = 无渐变。
+  static double bgGradientStrengthCache = 0.78;
+
+  /// 背景图**蒙层浓度**（0~1）：越大越遮图 → 整张表更"深"。
+  /// 用户要「有人想深一点」，所以做成连续可调（2026-10-26）。
+  static double backgroundDimCache = 0.72;
+
+  /// 课表**背景色**（ARGB，null = 未设置）。与背景图**二选一**，
+  /// 设置页里选色会清图、选图会清色（2026-10-26 用户要求）。
+  static int? backgroundColorCache;
 
   // ---------------- 课表外观设置（2026-10-13 v1.3.0：全滑杆）----------------
   //
@@ -744,6 +807,18 @@ class CourseStorage {
   /// 课程卡内是否显示任课老师 / 教室。
   static bool showTeacherOnCardCache = true;
   static bool showClassroomOnCardCache = true;
+  static bool showNameOnCardCache = true;
+
+  /// 今天列高亮（2026-10-29）。
+  static bool highlightTodayCache = true;
+
+  /// 课程卡字号倍率（0.85~1.3）、课程名最大行数（1~3）、省略方式。
+  static double cardFontScaleCache = 1.0;
+  static int cardMaxLinesCache = 2;
+  static String cardOverflowCache = 'ellipsis';
+
+  /// 卡片字段顺序：name / teacher / classroom。
+  static List<String> cardFieldOrderCache = const ['name', 'classroom', 'teacher'];
 
   /// 隐藏左侧节次时间列 / 隐藏日期栏里的「月/日」。
   static bool hideSectionTimeCache = false;
@@ -766,7 +841,7 @@ class CourseStorage {
         // v1.6.4：课表布局（仿徐工）—— 0 = 课节高度自动（均分）
         'rowHeight': 0,
         'timeColWidth': 48,
-        'dateRowHeight': 56,
+        'dateRowHeight': 48,
         'backgroundImage': '',
         'autoUpdateOnLaunch': false,
         // 2026-10-13 新增（默认 = 改之前的观感，老用户升级无感）
@@ -782,6 +857,12 @@ class CourseStorage {
         'blockDashDensity': 1.0,
         'showTeacherOnCard': true,
         'showClassroomOnCard': true,
+        'showNameOnCard': true,
+        'highlightToday': true,
+        'cardFontScale': 1.0,
+        'cardMaxLines': 2,
+        'cardOverflow': 'ellipsis',
+        'cardFieldOrder': <String>['name', 'classroom', 'teacher'],
         'hideSectionTime': false,
         'hideDateRow': false,
         // 2026-10-16：**每种色彩方案各自存一套外观值**（切换时互不干扰，
@@ -858,6 +939,17 @@ class CourseStorage {
         merged['blockBorderWidth'] = b == 0 ? 0.0 : 0.8;
         merged['blockBorderDashed'] = b == 2;
       }
+      // 2026-10-30：默认内容顺序改为「课程名 / 教室 / 教师」。
+      // 旧默认值等于 name→teacher→classroom 的用户一次性迁移。
+      if (merged['_cardOrderV2'] != true) {
+        final rawOrder = merged['cardFieldOrder'];
+        if (rawOrder is List &&
+            rawOrder.join(',') == 'name,teacher,classroom') {
+          merged['cardFieldOrder'] = ['name', 'classroom', 'teacher'];
+        }
+        merged['_cardOrderV2'] = true;
+        await saveDisplaySettings(merged);
+      }
       return merged;
     } catch (_) {
       return base; // 损坏则回落默认值，不影响课表可用
@@ -877,8 +969,23 @@ class CourseStorage {
     schemeCache = CourseColorScheme.parse(s['scheme']);
     rowHeightCache = d(s['rowHeight'], 0).clamp(0, 120);
     timeColWidthCache = d(s['timeColWidth'], 48).clamp(28, 72);
-    dateRowHeightCache = d(s['dateRowHeight'], 56).clamp(36, 88);
+    dateRowHeightCache = d(s['dateRowHeight'], 48).clamp(36, 88);
+    // 56 是 2026-10-26 之前的默认值，用户反馈偏高，统一降到 48
+    if (dateRowHeightCache == 56) dateRowHeightCache = 48;
+    final prevImg = backgroundImageCache;
+    final prevColor = backgroundColorCache;
     backgroundImageCache = (s['backgroundImage'] ?? '').toString();
+    final bgc = s['backgroundColor'];
+    backgroundColorCache = bgc is num ? bgc.toInt() : null;
+    backgroundDimCache = d(s['backgroundDim'], 0.72).clamp(0.0, 0.95);
+    // 默认开启（用户反馈纯色太平，渐变观感更好）
+    bgGradientCache = s['bgGradient'] != false;
+    bgGradientStrengthCache =
+        d(s['bgGradientStrength'], 0.78).clamp(0.0, 1.0);
+    // 只在背景真的变了才通知：否则每次拖滑杆都会重建外层，直接卡
+    if (prevImg != backgroundImageCache || prevColor != backgroundColorCache) {
+      bgRevision.value++;
+    }
     gridLineWidthCache = d(s['gridLineWidth'], 1.0);
     gridLineDepthCache = d(s['gridLineDepth'], 0.5);
     blockRadiusCache = d(s['blockRadius'], 6);
@@ -890,6 +997,23 @@ class CourseStorage {
     blockDashDensityCache = d(s['blockDashDensity'], 1.0);
     showTeacherOnCardCache = s['showTeacherOnCard'] != false;
     showClassroomOnCardCache = s['showClassroomOnCard'] != false;
+    showNameOnCardCache = s['showNameOnCard'] != false;
+    highlightTodayCache = s['highlightToday'] != false;
+    cardFontScaleCache =
+        (double.tryParse('${s['cardFontScale']}') ?? 1.0).clamp(0.85, 1.3);
+    cardMaxLinesCache =
+        (int.tryParse('${s['cardMaxLines']}') ?? 2).clamp(1, 3);
+    final overflow = (s['cardOverflow'] ?? 'ellipsis').toString();
+    cardOverflowCache =
+        ['ellipsis', 'clip', 'fade'].contains(overflow) ? overflow : 'ellipsis';
+    final rawOrder = s['cardFieldOrder'];
+    if (rawOrder is List) {
+      final order = rawOrder
+          .map((e) => e.toString())
+          .where((e) => ['name', 'teacher', 'classroom'].contains(e))
+          .toList();
+      if (order.length == 3) cardFieldOrderCache = order;
+    }
     hideSectionTimeCache = s['hideSectionTime'] == true;
     hideDateRowCache = s['hideDateRow'] == true;
     autoUpdateOnLaunchCache = s['autoUpdateOnLaunch'] != false;
@@ -899,122 +1023,74 @@ class CourseStorage {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kDisplaySettings, jsonEncode(s));
   }
-}
 
-/// 「色彩方案」的**整套外观预设**（2026-10-16）。
-///
-/// 用户要求：方案不能只管配色 —— **圆角 / 内边距 / 块间距 / 边框 / 课节高度 /
-/// 网格线 / 非本周淡化 也要跟着方案一起变**，具体数值照参考截图来。
-/// 切换方案 = 一键套用这一整套搭配；套完下面的滑杆仍然可以继续微调。
-///
-/// 数值来源（两张 867×1920 参考截图，按 2.41 密度折 dp）：
-///  · 图1 → 方案二：块宽 101px、圆角 ≈20px（≈8.3dp）、块间距 ≈3dp(margin 1.5)、
-///    1 节课高 152px（≈63dp）、无边框；
-///  · 图2 → 方案三：块宽 110px、圆角 ≈5px（≈2dp）、块间距 ≈1.2dp(margin 0.6)、
-///    1 节课高 167px（≈69dp）、细边框。
-class SchemePreset {
-  const SchemePreset({
-    required this.blockRadius,
-    required this.blockPad,
-    required this.blockMargin,
-    required this.blockBorderWidth,
-    required this.rowHeight,
-    required this.showGridLines,
-    required this.gridLineWidth,
-    required this.gridLineDepth,
-    required this.otherWeeksDim,
-  });
+  // ---------------- 自定义外观方案（2026-10-29）----------------
 
-  final double blockRadius;
-  final double blockPad;
-  final double blockMargin;
-  final double blockBorderWidth;
+  static const String _kAppearancePresets = 'course_appearance_presets_v1';
 
-  /// 课节高度：0 = 自动均分（沿用改造前行为）。
-  final double rowHeight;
-  final bool showGridLines;
-  final double gridLineWidth;
-  final double gridLineDepth;
-  final double otherWeeksDim;
-
-  /// 本预设覆盖的显示设置键 —— 也是「自定义优先」的判定范围。
-  static const Set<String> keys = <String>{
-    'blockRadius',
-    'blockPad',
-    'blockMargin',
-    'blockBorderWidth',
-    'rowHeight',
+  /// 可随外观方案保存/导入导出的键；不含本机背景图路径。
+  static const List<String> appearanceKeys = [
+    'scheme',
     'showGridLines',
     'gridLineWidth',
     'gridLineDepth',
+    'showOtherWeeks',
     'otherWeeksDim',
-  };
+    'highlightToday',
+    'rowHeight',
+    'timeColWidth',
+    'dateRowHeight',
+    'hideSectionTime',
+    'hideDateRow',
+    'blockRadius',
+    'blockPad',
+    'blockMargin',
+    'blockOpacity',
+    'blockBorderWidth',
+    'blockBorderDashed',
+    'blockDashDensity',
+    'backgroundColor',
+    'bgGradient',
+    'bgGradientStrength',
+    'backgroundDim',
+    'showNameOnCard',
+    'showTeacherOnCard',
+    'showClassroomOnCard',
+    'cardFontScale',
+    'cardMaxLines',
+    'cardOverflow',
+    'cardFieldOrder',
+  ];
 
-  /// 展开成 display settings 的补丁（多 key 一起写）。
-  Map<String, dynamic> toDisplayPatch() => <String, dynamic>{
-        'blockRadius': blockRadius,
-        'blockPad': blockPad,
-        'blockMargin': blockMargin,
-        'blockBorderWidth': blockBorderWidth,
-        'rowHeight': rowHeight,
-        'showGridLines': showGridLines,
-        'gridLineWidth': gridLineWidth,
-        'gridLineDepth': gridLineDepth,
-        'otherWeeksDim': otherWeeksDim,
-      };
+  static Map<String, dynamic> appearanceOfDisplay(Map<String, dynamic> d) {
+    return <String, dynamic>{
+      for (final k in appearanceKeys)
+        if (d.containsKey(k)) k: d[k],
+    };
+  }
 
-  /// 从一份 display settings 里**摘出本预设覆盖的那几个键的当前值**。
-  ///
-  /// 用途：切换方案时，先把「当前方案自己那套值」原样存下来（见
-  /// [CourseStorage.switchScheme]）。
-  static Map<String, dynamic> appearanceOf(Map<String, dynamic> display) =>
-      <String, dynamic>{
-        for (final k in keys)
-          if (display.containsKey(k)) k: display[k],
-      };
-
-  /// 取某方案的外观预设。
-  static SchemePreset of(CourseColorScheme s) {
-    switch (s) {
-      case CourseColorScheme.standard:
-        // 方案一 = 改造前的中性观感，值就是出厂默认（谁手调过也不会被它带跑）
-        return const SchemePreset(
-          blockRadius: 6,
-          blockPad: 3.0,
-          blockMargin: 1.8,
-          blockBorderWidth: 0.8,
-          rowHeight: 0,
-          showGridLines: true,
-          gridLineWidth: 1.0,
-          gridLineDepth: 0.5,
-          otherWeeksDim: 0.75,
-        );
-      case CourseColorScheme.soft:
-        // 方案二（复刻图 1）：圆角大、块间距略宽、无边框、课节 63
-        return const SchemePreset(
-          blockRadius: 8,
-          blockPad: 4.5,
-          blockMargin: 1.5,
-          blockBorderWidth: 0,
-          rowHeight: 63,
-          showGridLines: true,
-          gridLineWidth: 1.0,
-          gridLineDepth: 0.3,
-          otherWeeksDim: 0.78,
-        );
-      case CourseColorScheme.vivid:
-        // 方案三（复刻图 2）：圆角很小、块几乎贴满、细边框、课节 69
-        return const SchemePreset(
-          blockRadius: 2,
-          blockPad: 4.0,
-          blockMargin: 0.6,
-          blockBorderWidth: 0.8,
-          rowHeight: 69,
-          showGridLines: true,
-          gridLineWidth: 1.0,
-          gridLineDepth: 0.35,
-          otherWeeksDim: 0.75,
-        );
+  static Future<Map<String, Map<String, dynamic>>> loadAppearancePresets() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kAppearancePresets);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      final result = <String, Map<String, dynamic>>{};
+      decoded.forEach((key, value) {
+        if (value is Map) {
+          result[key.toString()] = Map<String, dynamic>.from(value);
+        }
+      });
+      return result;
+    } catch (_) {
+      return {};
     }
+  }
+
+  static Future<void> saveAppearancePresets(
+      Map<String, Map<String, dynamic>> presets) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kAppearancePresets, jsonEncode(presets));
   }
 }

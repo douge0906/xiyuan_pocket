@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dorm_service.dart';
 import 'home_prefs.dart';
 import 'nav_prefs.dart';
 
@@ -41,6 +42,11 @@ class DataWipe {
     } catch (_) {}
     try {
       await NavPrefs.reset();
+    } catch (_) {}
+
+    // 电费/一卡通的持久会话（含 WebVPN cookie）也要断，否则退出登录后旧会话仍可用
+    try {
+      DormService.clearToken();
     } catch (_) {}
 
     return removed;

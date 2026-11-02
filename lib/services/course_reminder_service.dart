@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'course_storage.dart';
@@ -11,8 +12,11 @@ import 'notification_service.dart';
 /// 到点由**系统**唤起发通知栏通知——App 进程被杀、不在后台都能响，无需服务器推送。
 ///
 /// - 排程时机：App 启动、课表数据变更（保存/导入/删除）、开机（BootReceiver）；
-/// - 通知 id 段：100000..100139（dayIndex*20 + startSlot），与待办 id 段隔离；
-/// - 提前量固定 10 分钟（页面 UI 如需可配置再扩展）；
+/// - 通知 id 段：`_idBase + dayIndex*_dayStride + startSlot` = 100000..100132
+///   （7 天 × 每天 20 个槽位，实占到第 12 节课；取消时按 0..140 全段扫，覆盖更宽）；
+///   ⚠️ 待办用的是 `Todo.notifyId`（FNV-1a 折 31 位），理论上可能落进本段 ——
+///   概率约 141/2³¹，实际未见；真要彻底隔离得给待办 id 加固定高位偏移；
+/// - 提前量：默认 10 分钟，可在设置页配置（`_kLeadMinutes`，v2.3.0 起）；
 /// - 所有异常静默吞掉，绝不影响 App 主体。
 class CourseReminderService {
   static const String _kEnabled = 'course_reminder_enabled';
@@ -21,6 +25,13 @@ class CourseReminderService {
   static const int _days = 7; // 预排未来 7 天
   static const String _kLeadMinutes = 'course_reminder_lead_minutes'; // v2.3.0 可配置
   static const String _kHangCountdown = 'course_reminder_hang_countdown'; // v2.3.7
+
+  /// 安卓通知岛（Android 16 实时更新 / 流体云）开关。
+  ///
+  /// 🔴 与「倒计时」不同：通知岛要求通知**常驻**（ongoing）+ **系统倒计时**，
+  ///    而「不悬挂」模式通知 5 秒就撤下 → 永远进不了胶囊。
+  ///    这里单开一个开关，两条通道互不干扰。
+  static const String _kLiveUpdate = 'course_reminder_live_update';
   static const int _shortDismissSeconds = 5; // 「不悬挂」模式下通知展示时长
   static const String _kStats = 'course_reminder_stats'; // v2.3.8 排程统计（页面展示用）
 
@@ -57,6 +68,21 @@ class CourseReminderService {
     return prefs.getBool(_kHangCountdown) ?? false;
   }
 
+  /// 是否启用安卓通知岛（实时更新 / 流体云）。**默认开启**。
+  ///
+  /// 仅在系统为 Android 16+ 且用户授予了「实时更新」权限时才有效；
+  /// 低版本系统会自动忽略（原生侧按 SDK_INT 判断）。
+  static Future<bool> liveUpdateEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kLiveUpdate) ?? true;
+  }
+
+  static Future<void> setLiveUpdate(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kLiveUpdate, value);
+    await rescheduleAll(); // 模式变化 → 全量重排
+  }
+
   static Future<void> setHangCountdown(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kHangCountdown, value);
@@ -79,14 +105,18 @@ class CourseReminderService {
   static Future<int> rescheduleAll() async {
     try {
       if (!await isEnabled()) return 0;
-      await _cancelAll();
-
+      // 🔴 先读课程、确认数据可用，再清空历史排程。
+      //    原顺序是「先 _cancelAll() 再 loadCourses()」——loadCourses 抛异常时
+      //    用户手机上全部上课提醒已被清掉，而异常被下面 catch 吞掉，
+      //    结果是一条不响、设置页还显示「已排程 0 条」，完全无法自查。
       final courses = await CourseStorage.loadCourses();
+      await _cancelAll();
       if (courses.isEmpty) return 0;
 
       final now = DateTime.now();
       final lead = await leadMinutes();
       final hang = await hangCountdown();
+      final liveUpdate = await liveUpdateEnabled();
       final semesterStart = await CourseStorage.loadSemesterStart() ??
           CourseStorage.defaultSemesterStart(now);
       final slotStart = await _loadSlotStartMap();
@@ -133,7 +163,7 @@ class CourseReminderService {
           final slotRange = c.endSlot > c.startSlot
               ? '第${c.startSlot}-${c.endSlot}节'
               : '第${c.startSlot}节';
-          await NotificationService.schedule(
+          final ok = await NotificationService.schedule(
             id: id,
             title: '距上课 $lead 分钟 · ${c.name}',
             body: '$hhmm · ${room.isEmpty ? "地点未排" : room}',
@@ -144,17 +174,27 @@ class CourseReminderService {
             scheduledTime: remindAt,
             payload: 'course_reminder',
             course: true,
-            // 悬挂模式：常驻 + 实时倒计时到上课；非悬挂模式：5 秒后自动撤下
-            countdownTarget: hang ? classStart : null,
-            ongoing: hang,
-            autoDismissSeconds: hang ? null : _shortDismissSeconds,
+            // 悬挂模式：常驻 + 实时倒计时到上课；非悬挂模式：5 秒后自动撤下。
+            //
+            // 🔴 通知岛（实时更新）要求「常驻 + 系统倒计时」同时成立，
+            //    所以开启通知岛时**必须**走 ongoing + countdownTarget，
+            //    且不能设 autoDismissSeconds（否则 5 秒就被撤下 → 不常驻）。
+            countdownTarget: (hang || liveUpdate) ? classStart : null,
+            ongoing: hang || liveUpdate,
+            autoDismissSeconds:
+                (hang || liveUpdate) ? null : _shortDismissSeconds,
+            liveUpdate: liveUpdate,
           );
-          scheduled++;
+          // 🔴 只有真的排上了才计数：schedule 在通知初始化失败 / 三级降级
+          //    全崩时会静默放弃，一律 +1 会让设置页的「已排程 N 条」虚高。
+          if (ok) scheduled++;
         }
       }
       await _saveStats(scheduled, nextAt, nextCourse);
       return scheduled;
-    } catch (_) {
+    } catch (e) {
+      // 提醒失败不能拖垮 App，但也绝不能一声不响地消失。
+      debugPrint('[CourseReminder] rescheduleAll 失败: $e');
       return 0;
     }
   }

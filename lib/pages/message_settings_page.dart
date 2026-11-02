@@ -7,6 +7,7 @@ import '../services/message_repository.dart';
 import '../services/message_source.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_card.dart';
 
 /// 消息设置（独立页面）。
 ///
@@ -129,7 +130,7 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('消息设置',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
@@ -169,13 +170,13 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                 Text(
                   '样式改动立即生效；调大条数会重新抓取一次（可能需要一小会儿）。',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: context.textTertiary),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
                 ),
                 const SizedBox(height: 6),
                 Text(
                   '关闭「自动更新」不会清掉已经存下的内容。',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: context.textTertiary),
+                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
                 ),
               ],
             ),
@@ -183,13 +184,8 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
   }
 
   /// 白色圆角卡容器（与其他设置页一致：1px 灰线 + 圆角 20 + 轻阴影）
-  Widget _card(List<Widget> children) => Container(
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          border: Border.all(color: context.borderColor),
-          boxShadow: AppTheme.cardShadow,
-        ),
+  Widget _card(List<Widget> children) => AppCard(
+        radius: AppTheme.radiusLg,
         clipBehavior: Clip.antiAlias,
         child: Column(children: children),
       );
@@ -217,20 +213,20 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                 children: [
                   Text(title,
                       style: TextStyle(
-                          fontSize: 14,
+                          fontSize: AppTheme.fontBody,
                           fontWeight: FontWeight.w500,
                           color: context.textPrimary)),
                   const SizedBox(height: 2),
                   Text(subtitle,
                       style: TextStyle(
-                          fontSize: 12, color: context.textTertiary)),
+                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                 ],
               ),
             ),
             const SizedBox(width: 8),
             Text(value,
                 style: TextStyle(
-                    fontSize: 13,
+                    fontSize: AppTheme.fontSmall,
                     fontWeight: FontWeight.w500,
                     color: context.textSecondary)),
             Icon(Icons.chevron_right_rounded,
@@ -265,13 +261,13 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                 children: [
                   Text(title,
                       style: TextStyle(
-                          fontSize: 14,
+                          fontSize: AppTheme.fontBody,
                           fontWeight: FontWeight.w500,
                           color: context.textPrimary)),
                   const SizedBox(height: 2),
                   Text(subtitle,
                       style: TextStyle(
-                          fontSize: 12, color: context.textTertiary)),
+                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                 ],
               ),
             ),
@@ -304,9 +300,8 @@ class _DialogShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Dialog(
-      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      backgroundColor: context.cardColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
       child: ConstrainedBox(
@@ -322,7 +317,7 @@ class _DialogShell extends StatelessWidget {
                   Expanded(
                     child: Text(title,
                         style: TextStyle(
-                            fontSize: 16,
+                            fontSize: AppTheme.fontTitle,
                             fontWeight: FontWeight.bold,
                             color: context.textPrimary)),
                   ),
@@ -341,7 +336,7 @@ class _DialogShell extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(desc!,
                     style: TextStyle(
-                        fontSize: 12.5, height: 1.4, color: Colors.grey.shade500)),
+                        fontSize: AppTheme.fontSmall, height: 1.4, color: Colors.grey.shade500)),
               ],
               const SizedBox(height: 12),
               child,
@@ -417,13 +412,13 @@ class _StyleDialog extends StatelessWidget {
                 children: [
                   Text(title,
                       style: TextStyle(
-                          fontSize: 14,
+                          fontSize: AppTheme.fontBody,
                           fontWeight: on ? FontWeight.w600 : FontWeight.normal,
                           color: context.textPrimary)),
                   const SizedBox(height: 2),
                   Text(subtitle,
                       style:
-                          TextStyle(fontSize: 12, color: context.textTertiary)),
+                          TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                 ],
               ),
             ),
@@ -512,7 +507,7 @@ class _SyncCountDialogState extends State<_SyncCountDialog> {
             onChanged: (_) {
               if (_error != null) setState(() => _error = null);
             },
-            style: TextStyle(fontSize: 14, color: context.textPrimary),
+            style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary),
             decoration: InputDecoration(
               isDense: true,
               labelText: '自定义条数',
@@ -565,7 +560,7 @@ class _SyncCountDialogState extends State<_SyncCountDialog> {
         child: Text(
           '$n 条',
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: AppTheme.fontSmall,
             fontWeight: on ? FontWeight.w600 : FontWeight.w500,
             color: on ? Colors.white : Colors.grey.shade700,
           ),

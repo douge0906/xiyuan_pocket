@@ -5,9 +5,10 @@
     android:minHeight="110dp"
     android:targetCellWidth="2"
     android:targetCellHeight="2"
-    android:updatePeriodMillis="3600000"
+    android:updatePeriodMillis="1800000"
     android:initialLayout="@layout/widget_medium"
     android:resizeMode="none"
     android:widgetCategory="home_screen"
-    android:previewLayout="@layout/widget_medium"
+    android:previewImage="@drawable/widget_preview_medium"
+    android:previewLayout="@layout/widget_medium_preview"
     android:description="@string/widget_desc_medium" />

@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 
 import '../models/course_table.dart';
@@ -20,17 +23,71 @@ class WidgetSettingsPage extends StatefulWidget {
   State<WidgetSettingsPage> createState() => _WidgetSettingsPageState();
 }
 
-class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
+class _WidgetSettingsPageState extends State<WidgetSettingsPage>
+    with WidgetsBindingObserver {
   List<CourseTable> _tables = const [];
   String _tableId = WidgetPrefs.defTableId;
   String _theme = WidgetPrefs.defTheme;
   String _accent = WidgetPrefs.defAccent;
   double _fontScale = WidgetPrefs.defFontScale;
-  bool _showTeacher = true;
-  bool _showClassroom = true;
-  bool _showTime = true;
-  bool _showWeek = true;
-  bool _countdown = true;
+  String _smallMode = 'time';
+  String _selectedSize = 'small';
+
+  /// 精确闹钟权限被拒（Android 12+ 且未授予）→ 显示「去开启」入口。
+  bool _exactDenied = false;
+  static const _alarmCh =
+      MethodChannel('wxxy/widget_alarm');
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 从系统设置返回：重新查权限状态（用户可能刚开了）
+    if (state == AppLifecycleState.resumed) _checkExactAlarm();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 权限入口行：只在 Android 12+ 且未授予时显示。
+  Widget _exactAlarmRow(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+      child: Row(
+        children: [
+          Icon(Icons.schedule_rounded,
+              size: 17, color: AppTheme.primaryColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('倒计时每分钟刷新需要「闹钟」权限',
+                style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textSecondary)),
+          ),
+          TextButton(
+            onPressed: _requestExactAlarm,
+            child: const Text('去开启', style: TextStyle(fontSize: AppTheme.fontSmall)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _checkExactAlarm() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final ok = await _alarmCh.invokeMethod<bool>('canScheduleExact');
+      if (!mounted) return;
+      setState(() => _exactDenied = !(ok ?? true));
+    } catch (_) {
+      // 通道不存在 / 非 Android 12+：不显示入口
+    }
+  }
+
+  Future<void> _requestExactAlarm() async {
+    try {
+      await _alarmCh.invokeMethod<bool>('requestExact');
+    } catch (_) {}
+  }
   // v1.6.7：中号 / 大号**各自独立**的显示开关（此前共用同一组：中号关掉老师，
   // 大号跟着变 —— 用户反馈的 bug）。小号继续用上面那组全局值。
   bool _showTeacherMedium = true;
@@ -42,11 +99,12 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
   bool _loading = true;
 
   /// 「显示内容」的分组展开状态（v1.6.4）：默认只展开小号（1×2）。
-  final Set<String> _expandedSizes = {'small'};
 
   @override
   void initState() {
     super.initState();
+    _checkExactAlarm();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
@@ -65,11 +123,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
     final theme = await WidgetPrefs.theme();
     final accent = await WidgetPrefs.accent();
     final scale = await WidgetPrefs.fontScale();
-    final t = await WidgetPrefs.showTeacher();
-    final c = await WidgetPrefs.showClassroom();
-    final tm = await WidgetPrefs.showTime();
-    final w = await WidgetPrefs.showWeek();
-    final cd = await WidgetPrefs.countdown();
+    final sm = await WidgetPrefs.smallMode();
     // v1.6.7：中号 / 大号各自一套显示开关
     final tmT = await WidgetPrefs.showTeacherMedium();
     final cm = await WidgetPrefs.showClassroomMedium();
@@ -82,11 +136,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
       _theme = theme;
       _accent = accent;
       _fontScale = scale;
-      _showTeacher = t;
-      _showClassroom = c;
-      _showTime = tm;
-      _showWeek = w;
-      _countdown = cd;
+      _smallMode = sm;
       _showTeacherMedium = tmT;
       _showClassroomMedium = cm;
       _showTimeMedium = tim;
@@ -112,7 +162,6 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
@@ -124,31 +173,28 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
               children: [
-                // 顶部：怎么添加 + 手动刷新（原来是上滑弹窗里的内容，
-                // 2026-10-12 改成独立页面后一并搬进来，不再用弹窗）
                 _card(
                   isDark,
                   children: [
-                    _rowTitle(context, '怎么添加'),
-                    const SizedBox(height: 10),
-                    _step(context, '1', '长按手机桌面空白处'),
-                    _step(context, '2', '点「小组件」，找到「掌上锡院」'),
-                    _step(context, '3', '选一个尺寸，拖到桌面上'),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton(
-                        onPressed: _refreshNow,
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
-                          side: BorderSide(color: context.borderColor),
+                    Row(
+                      children: [
+                        _rowTitle(context, '同步数据'),
+                        const Spacer(),
+                        OutlinedButton(
+                          onPressed: _refreshNow,
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 9),
+                            shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(AppTheme.radiusSm)),
+                            side: BorderSide(color: context.borderColor),
+                          ),
+                          child: Text('立即刷新',
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontSmall, color: context.textPrimary)),
                         ),
-                        child: Text('立即刷新数据',
-                            style: TextStyle(
-                                fontSize: 14, color: context.textPrimary)),
-                      ),
+                      ],
                     ),
                   ],
                 ),
@@ -195,10 +241,9 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                         const Spacer(),
                         Text('${(_fontScale * 100).round()}%',
                             style: TextStyle(
-                                fontSize: 13, color: context.textTertiary)),
+                                fontSize: AppTheme.fontSmall, color: context.textTertiary)),
                       ],
                     ),
-                    // v1.6.4：三档按钮 → 连续滑杆（80%~120%）
                     Slider(
                       value: _fontScale.clamp(0.8, 1.2),
                       min: 0.8,
@@ -206,7 +251,6 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                       divisions: 8,
                       activeColor: AppTheme.primaryColor,
                       inactiveColor: context.borderColor,
-                      // 拖动中只改内存（实时预览），松手才落盘
                       onChanged: (v) => setState(() => _fontScale = v),
                       onChangeEnd: (v) => _apply(
                           () => _fontScale = v,
@@ -218,80 +262,58 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                 _card(
                   isDark,
                   children: [
-                    _rowTitle(context, '显示内容'),
-                    const SizedBox(height: 6),
-                    // v1.6.4：按三种小组件尺寸分组（折叠式），组内列该尺寸实际
-                    // 会显示的项；小号默认展开。原独立的「还有多久」开关并入小号组。
-                    _sizeGroup(
-                      id: 'small',
-                      label: '小号（1×2）',
-                      children: [
-                        _switchRow(context, '任课老师', _showTeacher,
-                            (v) => _apply(() => _showTeacher = v,
-                                () => WidgetPrefs.setShowTeacher(v))),
-                        // v1.6.8：「上课时间」与「还有多久（倒计时）」**互斥** ——
-                        // 小号第二行只放得下一个，点开一个就自动关掉另一个。
-                        _switchRow(context, '上课时间', _showTime,
-                            (v) => _apply(() {
-                                  _showTime = v;
-                                  if (v) _countdown = false;
-                                }, () async {
-                                  await WidgetPrefs.setShowTime(v);
-                                  if (v) await WidgetPrefs.setCountdown(false);
-                                })),
-                        _switchRow(context, '教室', _showClassroom,
-                            (v) => _apply(() => _showClassroom = v,
-                                () => WidgetPrefs.setShowClassroom(v))),
-                        _switchRow(context, '还有多久（倒计时）', _countdown,
-                            (v) => _apply(() {
-                                  _countdown = v;
-                                  if (v) _showTime = false;
-                                }, () async {
-                                  await WidgetPrefs.setCountdown(v);
-                                  if (v) await WidgetPrefs.setShowTime(false);
-                                })),
-                        // 周次只在小号第二行（兜底）用得上 —— 中号/大号已按需求去掉
-                        _switchRow(context, '教学周次', _showWeek,
-                            (v) => _apply(() => _showWeek = v,
-                                () => WidgetPrefs.setShowWeek(v))),
+                    _rowTitle(context, '型号选项'),
+                    const SizedBox(height: 10),
+                    _segmented(
+                      context,
+                      options: const [
+                        ('small', '小号 1×2'),
+                        ('medium', '中号 2×2'),
+                        ('large', '大号 4×2'),
                       ],
+                      value: _selectedSize,
+                      onChanged: (v) => setState(() => _selectedSize = v),
                     ),
-                    _sizeGroup(
-                      id: 'medium',
-                      label: '中号（2×2）',
-                      children: [
-                        _switchRow(context, '任课老师', _showTeacherMedium,
-                            (v) => _apply(() => _showTeacherMedium = v,
-                                () => WidgetPrefs.setShowTeacherMedium(v))),
-                        _switchRow(context, '上课时间', _showTimeMedium,
-                            (v) => _apply(() => _showTimeMedium = v,
-                                () => WidgetPrefs.setShowTimeMedium(v))),
-                        _switchRow(context, '教室', _showClassroomMedium,
-                            (v) => _apply(() => _showClassroomMedium = v,
-                                () => WidgetPrefs.setShowClassroomMedium(v))),
-                      ],
-                    ),
-                    _sizeGroup(
-                      id: 'large',
-                      label: '大号（4×4）',
-                      children: [
-                        _switchRow(context, '任课老师', _showTeacherLarge,
-                            (v) => _apply(() => _showTeacherLarge = v,
-                                () => WidgetPrefs.setShowTeacherLarge(v))),
-                        _switchRow(context, '上课时间', _showTimeLarge,
-                            (v) => _apply(() => _showTimeLarge = v,
-                                () => WidgetPrefs.setShowTimeLarge(v))),
-                        _switchRow(context, '教室', _showClassroomLarge,
-                            (v) => _apply(() => _showClassroomLarge = v,
-                                () => WidgetPrefs.setShowClassroomLarge(v))),
-                      ],
-                    ),
+                    const SizedBox(height: 14),
+                    if (_selectedSize == 'small') ...[
+                      _rowTitle(context, '小号第二行'),
+                      const SizedBox(height: 8),
+                      _segmented(
+                        context,
+                        options: const [
+                          ('time', '上课时间'),
+                          ('countdown', '还有多久'),
+                        ],
+                        value: _smallMode,
+                        onChanged: (v) => _apply(
+                          () => _smallMode = v,
+                          () => WidgetPrefs.setSmallMode(v),
+                        ),
+                      ),
+                      if (_exactDenied && _smallMode == 'countdown')
+                        _exactAlarmRow(context),
+                    ] else if (_selectedSize == 'medium') ...[
+                      _switchRow(context, '任课老师', _showTeacherMedium,
+                          (v) => _apply(() => _showTeacherMedium = v,
+                              () => WidgetPrefs.setShowTeacherMedium(v))),
+                      _switchRow(context, '上课时间', _showTimeMedium,
+                          (v) => _apply(() => _showTimeMedium = v,
+                              () => WidgetPrefs.setShowTimeMedium(v))),
+                      _switchRow(context, '教室', _showClassroomMedium,
+                          (v) => _apply(() => _showClassroomMedium = v,
+                              () => WidgetPrefs.setShowClassroomMedium(v))),
+                    ] else ...[
+                      _switchRow(context, '任课老师', _showTeacherLarge,
+                          (v) => _apply(() => _showTeacherLarge = v,
+                              () => WidgetPrefs.setShowTeacherLarge(v))),
+                      _switchRow(context, '上课时间', _showTimeLarge,
+                          (v) => _apply(() => _showTimeLarge = v,
+                              () => WidgetPrefs.setShowTimeLarge(v))),
+                      _switchRow(context, '教室', _showClassroomLarge,
+                          (v) => _apply(() => _showClassroomLarge = v,
+                              () => WidgetPrefs.setShowClassroomLarge(v))),
+                    ],
                   ],
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  '提示：改完立刻生效，桌面上的小组件会自动刷新，不用重进 App。',
-                  style: TextStyle(fontSize: 12, color: sub, height: 1.6),
                 ),
               ],
             ),
@@ -309,39 +331,10 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
     );
   }
 
-  /// 序号圆点（添加步骤）。
-  Widget _step(BuildContext context, String n, String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 20,
-              height: 20,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-              ),
-              child: Text(n,
-                  style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.primaryColor)),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-                child: Text(text,
-                    style: TextStyle(
-                        fontSize: 13.5, color: context.textPrimary))),
-          ],
-        ),
-      );
-
   Widget _card(bool isDark, {required List<Widget> children}) => Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+          color: context.cardColor,
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           border: Border.all(color: context.borderColor),
         ),
@@ -353,12 +346,11 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
 
   Widget _rowTitle(BuildContext context, String text) => Text(text,
       style: TextStyle(
-          fontSize: 14,
+          fontSize: AppTheme.fontBody,
           fontWeight: FontWeight.w600,
           color: context.textPrimary));
 
   Widget _tablePicker(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return DropdownButtonFormField<String>(
       value: _tableId,
       isExpanded: true,
@@ -374,7 +366,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
           borderSide: BorderSide(color: context.borderColor),
         ),
       ),
-      style: TextStyle(fontSize: 14, color: context.textPrimary),
+      style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary),
       items: [
         DropdownMenuItem(value: '', child: Text('跟随当前课表${_activeName.isEmpty ? '' : '（$_activeName）'}')),
         for (final t in _tables)
@@ -382,7 +374,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
       ],
       onChanged: (v) => _apply(() => _tableId = v ?? '',
           () => WidgetPrefs.setTableId(v ?? '')),
-      dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      dropdownColor: context.cardColor,
     );
   }
 
@@ -417,7 +409,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                 child: Text(
                   o.$2,
                   style: TextStyle(
-                    fontSize: 13.5,
+                    fontSize: AppTheme.fontBody,
                     fontWeight:
                         value == o.$1 ? FontWeight.w600 : FontWeight.w400,
                     color: context.textPrimary,
@@ -467,50 +459,6 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
     );
   }
 
-  /// 「显示内容」的尺寸分组（v1.6.4，折叠式）：点标题行展开/收起，
-  /// 小号组默认展开（[_expandedSizes] 初值就是 {'small'}）。
-  Widget _sizeGroup({
-    required String id,
-    required String label,
-    required List<Widget> children,
-  }) {
-    final open = _expandedSizes.contains(id);
-    return Column(
-      children: [
-        InkWell(
-          onTap: () => setState(() {
-            if (open) {
-              _expandedSizes.remove(id);
-            } else {
-              _expandedSizes.add(id);
-            }
-          }),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(label,
-                      style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w600,
-                          color: context.textPrimary)),
-                ),
-                AnimatedRotation(
-                  turns: open ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  child: Icon(Icons.keyboard_arrow_down_rounded,
-                      size: 20, color: context.textTertiary),
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (open) ...children,
-      ],
-    );
-  }
-
   Widget _switchRow(BuildContext context, String title, bool value,          ValueChanged<bool> onChanged) =>
       SizedBox(
         height: 48,
@@ -518,7 +466,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
           children: [
             Expanded(
               child: Text(title,
-                  style: TextStyle(fontSize: 14, color: context.textPrimary)),
+                  style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary)),
             ),
             Switch(value: value, onChanged: onChanged),
           ],

@@ -1,7 +1,7 @@
 name: xiyuan_pocket
 description: "掌上锡院 —— 无锡学院校园生活助手"
 publish_to: 'none'
-version: 1.0.7+21
+version: 1.0.8+22
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -20,6 +20,10 @@ dependencies:
   permission_handler: ^11.3.1
   url_launcher: ^6.3.0
   dio: ^5.4.0
+  # 课表方案导出/导入：分享文件 + 选择文件
+  file_picker: ^8.1.0
+  share_plus: ^10.0.0
+  flutter_pdfview: ^1.3.2
   # 运行时读取真实版本号（值来自下面 flutter 段的 version，编译进 APK）——
   # 标准做法，避免"手写副本与 pubspec 不一致"（原 lib/version.dart 已删）。
   #
@@ -33,7 +37,7 @@ dependencies:
   package_info_plus: ^8.0.0
   # 验证码识别（本地 CAS 登录需要）：解码图片后做模板匹配。
   image: ^4.5.0
-  # 课表背景图（v1.1.0，与在线版对齐）：选图 + 拷贝到文档目录持久化
+  # 课表背景图：选图 + 拷贝到文档目录持久化
   # （image_picker 返回的是临时路径，直接存会「过几天就丢」）
   image_picker: ^1.1.2
   path_provider: ^2.1.5
@@ -46,6 +50,22 @@ dependencies:
   #    一个 androidx.glance:glance-appwidget:1.0.0，是兼容版本里最轻的。
   # 存储契约：SharedPreferences("HomeWidgetPreferences")，key 原样使用。
   home_widget: 0.7.0
+  # 语音输入（长按首页「＋」→ 语言球 → 系统语音识别）。
+  #
+  # ⚠️ 用**本地 fork**（third_party/speech_to_text），原因同
+  #    flutter_local_notifications：上游 7.4.0 的 android/build.gradle
+  #    用了 `compileSdk = flutter.compileSdkVersion`，
+  #    那是 Flutter 3.29+ 才有的属性；本项目 3.24.3 会构建失败。
+  #    fork 里已把 compileSdk / ndk 改成与主工程一致的硬编码值。
+  #
+  # 版本锁 7.4.0，勿升 7.5+：7.5.0 起要求 Dart ^3.12 / Flutter >=3.44。
+  speech_to_text:
+    path: third_party/speech_to_text
+  # WebVPN：深澜网关的 host 用 AES-128-CFB 加密（纯 Dart 实现，无平台代码）。
+  # 锁 3.9.1 = 本机 pub 缓存里已有的版本，避免慢网下从零拉依赖卡死；
+  # 4.x 未验证，升级前先在 `dart run` 单测里跑一遍 golden 向量。
+  pointycastle: 3.9.1
+  webview_flutter: 4.4.2
 
 dev_dependencies:
   flutter_test:
@@ -61,4 +81,7 @@ flutter:
     - assets/seed/app_seed.json
     # 校园地图（内置图片，1920×1004，见 pages/tools/campus_map_page.dart）
     - assets/images/campus_map.jpg
+    # 法务文本（隐私政策 / 用户协议）
+    - assets/legal/privacy_policy.md
+    - assets/legal/user_agreement.md
 
