@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:home_widget/home_widget.dart';
 import '../models/course_model.dart';
 import '../models/course_table.dart';
+import 'countdown_store.dart';
 import 'course_storage.dart';
 import 'exam_storage.dart';
 import 'storage_service.dart';
 import 'widget_prefs.dart';
+import 'widget_sync_status.dart';
 
 /// 桌面小组件（今日课表）Flutter 侧同步服务。
 ///
@@ -19,13 +22,14 @@ import 'widget_prefs.dart';
 ///   Dart: HomeWidget.updateWidget(qualifiedAndroidName: ...) → 广播 APPWIDGET_UPDATE
 ///   原生: WidgetDataStore.read() 读同一份存储 → TodayWidgetRenderer 渲染
 /// 小组件组件类型（用户页入口状态用）。
-enum WidgetComponent { schedule, exam, card }
+enum WidgetComponent { schedule, exam, card, countdown }
 
 class WidgetSyncService {
   /// 共享存储 key（与原生 `WidgetDataStore.KEY` 必须一致）。
   static const String _storageKey = 'widget_today_courses';
   static const String _examKey = 'widget_exam_data';
   static const String _cardKey = 'widget_card_data';
+  static const String _countdownKey = 'widget_countdown_data';
 
   /// iOS（WidgetKit）小组件 kind，供将来 iOS 侧使用；Android 忽略。
   static const String _iOSWidgetName = 'TodayWidget';
@@ -43,6 +47,10 @@ class WidgetSyncService {
       'icu.wxxydouge.wxxy_pocket.widget.ExamWidgetProvider';
   static const String _cardProvider =
       'icu.wxxydouge.wxxy_pocket.widget.CardWidgetProvider';
+  static const String _countdownProvider =
+      'icu.wxxydouge.wxxy_pocket.widget.CountdownWidgetProvider';
+  static const String _countdown2Provider =
+      'icu.wxxydouge.wxxy_pocket.widget.CountdownWidget2Provider';
 
   /// 默认上课时间块（与课程表主页一致：12 节，节次 → 开始/结束时刻）。
   /// 自定义时间块存在时优先用自定义。
@@ -98,9 +106,18 @@ class WidgetSyncService {
       table ??= await CourseStorage.activeTable();
 
       final courses = table.courses;
-      final start = table.semesterStart ??
+      // 🔴 2026-11-04 修（子智能体 c940b976 报告 P1-1）：
+      //    这里以前直接用 `table.semesterStart`，而它是表里**原样存的值**，
+      //    没对齐到周一。全仓其它入口（loadSemesterStart / loadActiveSnapshot
+      //    / saveSemesterStart）都会 `mondayOf` 对齐，课表页因此拿到周一。
+      //    两条能写出非周一的路径：课表方案导入（course_transfer_service）
+      //    与老数据迁移。开学日差 1 天，周末附近的教学周就会差整整一周 →
+      //    单双周课错位、小组件与课表页显示不一致。
+      final rawStart = table.semesterStart ??
           await CourseStorage.loadSemesterStart() ??
           CourseStorage.defaultSemesterStart(DateTime.now());
+      final start = CourseStorage.mondayOf(
+          DateTime(rawStart.year, rawStart.month, rawStart.day));
       final now = DateTime.now();
       final week = CourseStorage.teachingWeek(now, start);
       final slotTimes = await _timeText();
@@ -122,8 +139,16 @@ class WidgetSyncService {
         'semesterWeek': week,
         'weekday': todayWeekday,
         'hasSchedule': todayCourses.isNotEmpty,
+        // 教学周起点：原生侧跨零点重算「今天有哪些课」时要靠它推周次。
+        // 下发的是**已对齐周一**的值（见上面 mondayOf），原生侧不再二次对齐。
+        'semesterStart': _ymd(start),
         // 个性化设置：原生侧按这些字段决定主题 / 字号 / 显示哪些内容
-        'prefs': await WidgetPrefs.toJson(),
+        // 2026-11-05：课表组件也有独立外观；
+        // `...` 展开在前，per-kind 的生效值覆盖同名字段。
+        'prefs': <String, dynamic>{
+          ...await WidgetPrefs.toJson(),
+          ...await WidgetPrefs.appearanceFor('schedule'),
+        },
         'courses': todayCourses
             .map((c) => {
                   'name': c.name,
@@ -142,6 +167,13 @@ class WidgetSyncService {
                   'endMinute': _slotMinute(c.endSlot, slotTimes, isStart: false),
                 })
             .toList(),
+        // 🔴 2026-11-04 修「跨零点后小组件取不到数据」：
+        //    以前只下发「今天」的课，过了零点这份数据就废了，而重算只能靠
+        //    Dart —— 全仓没有任何后台入口能跑 Dart（没注册 WorkManager /
+        //    backgroundCallback）。于是早上第一次看桌面，小号组件永远停在
+        //    「点击刷新今日课表」，直到用户打开一次 App。
+        //    现在把**整学期**一并下发，由 Kotlin 在发现数据过期时就地重算。
+        'allCourses': _allCourseDefs(courses, slotTimes),
       });
 
       // ① 写入共享存储（HomeWidgetPreferences / key 原样），原生侧直接读取
@@ -155,15 +187,61 @@ class WidgetSyncService {
           iOSName: _iOSWidgetName,
         );
       }
-    } catch (_) {
-      // 静默失败：小组件保持上次状态，不影响 App 使用
+      // ③ 记成功快照（2026-11-03）：只写不读没有意义 —— 自检卡要能证明
+      //    「Dart 跑到了这一步」，否则原生侧 rawLength=0 时无从判断是
+      //    「没调用」还是「调用了但抛异常」。
+      await WidgetSyncStatus.recordSuccess(
+        week: week,
+        courseCount: todayCourses.length,
+        tableName: table.name,
+      );
+    } catch (e, st) {
+      // 静默失败：小组件保持上次状态，不影响 App 使用。
+      // 但**必须留下证据**（2026-11-03）：此前这里是纯 `catch (_) {}`，
+      // 于是「同步抛异常」与「今天没课」在界面上完全一样。
+      await WidgetSyncStatus.recordFailure(e, st);
+    } finally {
+      // ②-b 同进程直调渲染（2026-11-04）。
+      //
+      // 上面那三次 `updateWidget` 只是 `sendBroadcast(ACTION_APPWIDGET_UPDATE)`，
+      // 广播投递不到（ROM 拦隐式广播 / 组件被系统归档 / owner 正在恢复）时
+      // `onUpdate` 根本不来，桌面上就永远是 `initialLayout` 的 XML 占位文字：
+      // **既没有数据，也没有 onUpdate 里 setOnClickPendingIntent 打上去的点击
+      // 响应** —— 这正是「点又点不了、又不显示数据，但 App 内自检正常」的形状。
+      // 这条通道直接从 MethodChannel 调渲染器，绕开广播。
+      //
+      // 🔴 2026-11-04 晚：**这一步从 try 体里挪到了 finally**。
+      //    原来它排在 `saveWidgetData` + 三次 `updateWidget` 之后，属于同一条
+      //    线性链 —— 前面任何一步抛异常就直接跳进 catch，渲染这一步根本不会
+      //    执行，桌面于是停在 XML 默认文字上。而 `saveWidgetData` 若已成功，
+      //    数据其实是写进去了的，自检页会显示「数据正常」，进一步误导
+      //    （用户原话：「app 内部组件自检又正常外部却无效」）。
+      //    放进 finally 之后：无论存取/广播哪一步炸，渲染都会跑一次。
+      await renderNow();
     }
   }
 
   /// 同步信息型组件（考试倒计时 / 校园卡余额）。
   /// 都不在小组件里联网，只展示本地缓存；App 启动或数据更新时推一次。
   static Future<void> syncInfoWidgets() async {
-    await Future.wait([syncExamWidget(), syncCardWidget()]);
+    // 2026-11-04 晚：`Future.wait` 只要有**任何一个**抛异常就整体抛，
+    // 原来排在它后面的 `renderNow()` 会被直接跳过 —— 三个信息组件于是
+    // 一起停在 XML 默认文字上。这里逐个子任务兜底，让 `renderNow` 无条件跑到。
+    // （`syncExamWidget` 等自身已有 try，但 `syncCountdownWidget` 里的
+    //  `CountdownStore.ensureLoaded()` 会抛，不能只靠内部 catch。）
+    for (final task in <Future<void> Function()>[
+      syncExamWidget,
+      syncCardWidget,
+      syncCountdownWidget,
+    ]) {
+      try {
+        await task();
+      } catch (e, st) {
+        await WidgetSyncStatus.recordFailure(e, st);
+      }
+    }
+    // 同 syncTodayCourses 的理由：广播不可靠，补一次同进程直调。
+    await renderNow();
   }
 
   static Future<void> syncExamWidget() async {
@@ -184,7 +262,9 @@ class WidgetSyncService {
         'startTime': exam?.startTime ?? '',
         'classroom': exam?.classroom ?? '',
         'meta': meta,
-        'prefs': await WidgetPrefs.toJson(),
+        // 2026-11-05（用户 m24495 #1）：每种组件各自的外观，
+        // 不再共用全局那套（改考试不再连累课表）。
+        'prefs': await WidgetPrefs.appearanceFor('exam'),
       });
       await HomeWidget.saveWidgetData<String>(_examKey, json);
       await HomeWidget.updateWidget(qualifiedAndroidName: _examProvider);
@@ -201,7 +281,9 @@ class WidgetSyncService {
         'hasBalance': cache != null,
         'balance': cache?.balance ?? 0,
         'updatedText': updated,
-        'prefs': await WidgetPrefs.toJson(),
+        // 2026-11-05（用户 m24495 #1）：每种组件各自的外观，
+        // 不再共用全局那套（改考试不再连累课表）。
+        'prefs': await WidgetPrefs.appearanceFor('card'),
       });
       await HomeWidget.saveWidgetData<String>(_cardKey, json);
       await HomeWidget.updateWidget(qualifiedAndroidName: _cardProvider);
@@ -210,27 +292,182 @@ class WidgetSyncService {
     }
   }
 
-  /// 查询桌面上已添加的组件类型（课表 / 考试 / 校园卡）。
+  /// 倒数日小组件（2026-11-04 新增，需求 #6）。
+  ///
+  /// 下发的结构与课表组件不同：这里没有「今天的课」这种会过期的概念，
+  /// 每条只有绝对日期，原生侧每次渲染时**自己**算「还有几天」。
+  /// 所以跨零点不需要任何重算逻辑 —— `date` 不变，`daysLeft` 由原生现算，
+  /// 这也是为什么这个组件天生不存在「隔天失效」的问题。
+  static Future<void> syncCountdownWidget() async {
+    try {
+      // 🔴 必须先把仓库读出来：`forWidget` 读的是内存里的 `_items`，
+      //    而冷启动时 `main()` 就已经调了 `syncInfoWidgets()` ——
+      //    那一刻 CountdownStore 还没 load 过，列表恒为空，
+      //    桌面就会显示「还没有倒数日」。这里自己 ensureLoaded 保证
+      //    无论谁调、什么时候调，下发出去的都是真实数据。
+      await CountdownStore.instance.ensureLoaded();
+      final now = DateTime.now();
+      final items = CountdownStore.instance.forWidget(now);
+      final list = <Map<String, dynamic>>[
+        for (final e in items)
+          <String, dynamic>{
+            'title': e.title,
+            'emoji': e.emoji,
+            'date':
+                '${e.date.year.toString().padLeft(4, '0')}-${e.date.month.toString().padLeft(2, '0')}-${e.date.day.toString().padLeft(2, '0')}',
+            'daysLeft': e.daysFrom(now),
+            'note': e.note,
+          },
+      ];
+      // 2026-11-05（用户 m24495 #3「两者都要」）：多实例绑定。
+      // 除了默认的「最近 3 条」（items），额外下发**全部**条目（itemsAll，
+      // 带稳定 id）。原生侧按 `cd_binding_<appWidgetId>` 里存的 id 列表挑选，
+      // 这样桌面上可以放好几个倒数日组件，每个显示不同的条目。
+      // items 保持不动：没有绑定记录的老组件行为完全不变。
+      final allItems = <Map<String, dynamic>>[
+        for (final e in CountdownStore.instance.items)
+          <String, dynamic>{
+            'id': e.id,
+            'title': e.title,
+            'emoji': e.emoji,
+            'date':
+                '${e.date.year.toString().padLeft(4, '0')}-${e.date.month.toString().padLeft(2, '0')}-${e.date.day.toString().padLeft(2, '0')}',
+            'daysLeft': e.daysFrom(now),
+            'note': e.note,
+          },
+      ];
+      // 2026-11-05（用户 m26008 #1）：桌面两个系统组件各自绑定固定条目，
+      // 无 pin 绑定时原生按 slot 取 slot0/slot1，不再依赖「先新增再添加」。
+      Map<String, dynamic> slotMap(int slot) {
+        final id = CountdownStore.slotId(slot);
+        for (final m in allItems) {
+          if (m['id'] == id) return m;
+        }
+        return <String, dynamic>{};
+      }
+      final json = jsonEncode({
+        'items': list,
+        'itemsAll': allItems,
+        'total': CountdownStore.instance.items.length,
+        'updatedDate': _ymd(now),
+        // 2026-11-05（用户 m24495 #1）：每种组件各自的外观，
+        // 不再共用全局那套（改考试不再连累课表）。
+        'prefs': await WidgetPrefs.appearanceFor('countdown'),
+        'slot0': slotMap(0),
+        'slot1': slotMap(1),
+      });
+      await HomeWidget.saveWidgetData<String>(_countdownKey, json);
+      // 两个倒数日组件都要收刷新，不能只广播第一个。
+      await HomeWidget.updateWidget(qualifiedAndroidName: _countdownProvider);
+      await HomeWidget.updateWidget(qualifiedAndroidName: _countdown2Provider);
+    } catch (_) {
+      // 静默：倒数日组件失败不影响主流程
+    }
+  }
+
+  // ---------- 倒数日多实例绑定（2026-11-05，用户 m24495 #3「两者都要」）----------
+
+  /// 绑定记录的存储前缀：`cd_binding_<appWidgetId>` → `["id1","id2"]`。
+  /// 放在 home_widget 共享存储里，原生侧不需要再开一份文件。
+  static String _bindKey(int appWidgetId) => 'cd_binding_$appWidgetId';
+
+  /// 读某个组件实例绑定的倒数日 id 列表（空 = 跟随默认「最近 3 条」）。
+  static Future<List<String>> countdownBinding(int appWidgetId) async {
+    final raw = await HomeWidget.getWidgetData<String>(_bindKey(appWidgetId));
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final v = jsonDecode(raw);
+      if (v is List) return v.map((e) => '$e').toList();
+    } catch (_) {}
+    return const [];
+  }
+
+  /// 设置绑定并立即重渲染（空列表 = 解除绑定，回到默认）。
+  static Future<void> setCountdownBinding(
+      int appWidgetId, List<String> ids) async {
+    await HomeWidget.saveWidgetData<String>(
+        _bindKey(appWidgetId), jsonEncode(ids));
+    await renderNow();
+  }
+
+  /// 从 App 里直接往桌面添加一个倒数日组件，并把选中的条目绑上去。
+  ///
+  /// 走的是 Android 8.0+ 的 `requestPinAppWidget`（系统弹确认框），
+  /// 不需要用户长按桌面找组件。`minSdk 21`，低版本返回 false，
+  /// 上层据此提示「请长按桌面手动添加」。
+  ///
+  /// 返回值：true = 系统已接受请求（不代表用户最终点了「添加」）。
+  static Future<bool> pinCountdownWidget(List<String> ids, {int slot = 0}) async {
+    try {
+      final ok = await _statusChannel.invokeMethod<bool>('pinCountdown',
+          <String, dynamic>{'ids': ids, 'slot': slot});
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 查询桌面上已添加的组件类型（课表 / 考试 / 校园卡 / 倒数日）。
+  ///
+  /// 🔴 **绝不能改用 `HomeWidget.getInstalledWidgets()`**（2026-11-03 修复）。
+  ///
+  /// home_widget 0.7.0 的 `HomeWidgetPlugin.getInstalledWidgets()` 里，
+  /// 对 `AppWidgetManager.getAppWidgetInfo(widgetId)` 的返回值**不判空**就传给
+  /// 非空形参 `widgetInfoToMap(widgetId, widgetInfo)`，而该 API 文档允许返回
+  /// null（组件正被移除、Launcher 重建的瞬间）。一旦为 null 就抛 NPE，
+  /// 且抛在平台线程的 MethodChannel handler 里 —— Dart 侧 `try/catch` 拦不住，
+  /// 进程直接崩。
+  ///
+  /// 症状完美对应「添加桌面小组件后 App 打不开」：桌面上没有组件时循环体
+  /// 一次都不进，永远不崩；一旦添加过，每次启动的页面预热
+  /// （[App._prewarmPages] → `user_page._load()`）都会走到这里。
+  ///
+  /// 现在改走自建通道 `wxxy/widget_status`（`MainActivity.installedWidgetKinds`），
+  /// 直接查 `getAppWidgetIds().isNotEmpty()` —— 天然没有 null 风险。
   static Future<Set<WidgetComponent>> installedComponents() async {
     try {
-      final widgets = await HomeWidget.getInstalledWidgets();
+      final raw = await _statusChannel.invokeMapMethod<String, dynamic>('installed');
+      if (raw == null) return {};
       final result = <WidgetComponent>{};
-      for (final w in widgets) {
-        final cls = w.androidClassName;
-        if (cls == null || cls.isEmpty) continue;
-        if (cls.endsWith('SmallWidgetProvider') ||
-            cls.endsWith('MediumWidgetProvider') ||
-            cls.endsWith('LargeWidgetProvider')) {
-          result.add(WidgetComponent.schedule);
-        } else if (cls.endsWith('ExamWidgetProvider')) {
-          result.add(WidgetComponent.exam);
-        } else if (cls.endsWith('CardWidgetProvider')) {
-          result.add(WidgetComponent.card);
-        }
-      }
+      if (raw['schedule'] == true) result.add(WidgetComponent.schedule);
+      if (raw['exam'] == true) result.add(WidgetComponent.exam);
+      if (raw['card'] == true) result.add(WidgetComponent.card);
+      if (raw['countdown'] == true) result.add(WidgetComponent.countdown);
       return result;
     } catch (_) {
       return {};
+    }
+  }
+
+  static const MethodChannel _statusChannel = MethodChannel('wxxy/widget_status');
+
+  /// 同进程直调原生渲染器（2026-11-04）。
+  ///
+  /// 返回每个组件**真实更新到的桌面实例数**。全为 0 表示桌面上根本没有这些
+  /// 组件 —— 这时无论数据写得多正确、无论 onUpdate 有没有被调，桌面都不会变。
+  /// 这个数字是「App 内自检正常、桌面上却没反应」唯一能定责的证据，所以
+  /// 一并记进 [WidgetSyncStatus]。
+  static Future<Map<String, int>> renderNow() async {
+    try {
+      final raw = await _statusChannel.invokeMapMethod<String, Object?>('renderNow');
+      if (raw == null) return const {};
+      final counts = <String, int>{};
+      for (final key in const [
+        'scheduleSmall',
+        'scheduleMedium',
+        'scheduleLarge',
+        'exam',
+        'card',
+        'countdown',
+        'countdown2',
+      ]) {
+        final v = raw[key];
+        counts[key] = v is num ? v.toInt() : 0;
+      }
+      await WidgetSyncStatus.recordInstanceCounts(counts);
+      return counts;
+    } catch (_) {
+      return const {};
     }
   }
 
@@ -284,6 +521,46 @@ class WidgetSyncService {
     final h = (minuteOfDay ~/ 60).toString().padLeft(2, '0');
     final m = (minuteOfDay % 60).toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  /// 把整学期课程压成原生侧「就地重算」所需的扁平结构（2026-11-04 新增）。
+  ///
+  /// 只要三样东西就能判断「第 N 周、星期 X 有没有这门课」：
+  /// 星期几、周次文本、单双周类型；再加上 Pattern（固定/每天/工作日）。
+  /// 因此这里不做任何过滤，全量下发 —— 一学期 40 门课约 6 KB，
+  /// 塞进 SharedPreferences 完全无压力，换掉的是「过零点就失效」。
+  static List<Map<String, dynamic>> _allCourseDefs(
+      List<Course> courses, Map<int, String> slotTimes) {
+    return [
+      for (final c in courses)
+        {
+          'name': c.name,
+          'teacher': c.teacher,
+          'classroom': c.classroom,
+          'weekday': c.weekday,
+          'startSlot': c.startSlot,
+          'endSlot': c.endSlot,
+          'color': courseColorFor(c.colorValue, CourseStorage.schemeCache).toARGB32(),
+          'timeText': timeTextFor(c, slotTimes),
+          'startMinute': _slotMinute(c.startSlot, slotTimes, isStart: true),
+          'endMinute': _slotMinute(c.endSlot, slotTimes, isStart: false),
+          // ⚠️ 原样下发（不做 parseWeeks 归一化）：原生侧用同一套规则解析，
+          //    两边都过一遍 [normalizeWeeksText] 才能保证口径一致。
+          'weeks': c.weeks,
+          // 0 = 每双周都上 / 1 = 只单周 / 2 = 只双周
+          'weekType': switch (c.weekType) {
+            CourseWeekType.odd => 1,
+            CourseWeekType.even => 2,
+            CourseWeekType.every => 0,
+          },
+          // 0 = 固定星期 / 1 = 每天 / 2 = 工作日
+          'pattern': switch (c.pattern) {
+            CoursePattern.daily => 1,
+            CoursePattern.workday => 2,
+            CoursePattern.fixed => 0,
+          },
+        },
+    ];
   }
 
   /// 节次 → 分钟起止。优先用户自定义时间块；否则默认分钟表。

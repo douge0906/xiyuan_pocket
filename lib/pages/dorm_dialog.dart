@@ -92,7 +92,7 @@ class _DormDialogState extends State<_DormDialog> {
       backgroundColor: Colors.white,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         side: const BorderSide(color: _line),
       ),
       child: GestureDetector(
@@ -198,7 +198,7 @@ class _DormDialogState extends State<_DormDialog> {
                             child: Material(
                               color: Colors.white,
                               elevation: 3,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                               child: Container(
                                 width: box.maxWidth,
                                 // 只露三条，其余滚动
@@ -206,7 +206,7 @@ class _DormDialogState extends State<_DormDialog> {
                                     const BoxConstraints(maxHeight: 134),
                                 decoration: BoxDecoration(
                                   border: Border.all(color: _line),
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                                 ),
                                 child: ListView.builder(
                                   padding: EdgeInsets.zero,
@@ -313,7 +313,7 @@ class _DormDialogState extends State<_DormDialog> {
                     disabledForegroundColor: _sub,
                     minimumSize: const Size.fromHeight(44),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
                   ),
                   child: const Text('确定', style: TextStyle(fontSize: AppTheme.fontBody)),
                 ),

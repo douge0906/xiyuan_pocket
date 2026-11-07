@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../../models/academic_term.dart';
 import 'campus_session.dart';
 import 'cas_client.dart';
 
@@ -89,7 +90,22 @@ class JwglClient {
       if (seen.add(key)) unique.add(g);
     }
     if (unique.isEmpty) {
-      throw CampusException('未查询到成绩数据，请确认账号已选课或稍后重试');
+      // 🔴 不能抛错。另外三个查询（考试 / 教材 / 课表）的空结果都是
+      //    `success: true` + 「暂无…」，只有这里 throw → 成绩页会把
+      //    「本学期还没出成绩」渲染成红色错误卡片，还附带重试按钮。
+      //    真正失败（登录过期 / 非 JSON）已在上游抛 CampusException。
+      return <String, dynamic>{
+        'success': true,
+        'message': '暂无成绩数据',
+        'semesters': <Map<String, dynamic>>[],
+        'summary': <String, dynamic>{
+          'gpa': 0,
+          'totalCredits': 0,
+          'passedCredits': 0,
+          'courseCount': 0,
+        },
+        'student': <String, dynamic>{},
+      };
     }
     final result = _buildGradeResult(unique);
     // 任一学期请求失败时明确告知界面，避免把不完整结果当成完整结果。
@@ -157,22 +173,14 @@ class JwglClient {
     return out;
   }
 
-  /// 最近 n 个学年/学期码（含当前与前 2 个），用于兜底覆盖「全部学期」查询
+  /// 最近 n 个学年/学期码（含当前与前 2 个），用于兜底覆盖「全部学期」查询。
+  ///
+  /// 学期码唯一真源见 `models/academic_term.dart` —— 原来这里 `month >= 8` 的
+  /// 写法在 1 月会把寒假算成「第二学期」，多查一个不存在的学期。
   static List<List<String>> _recentTerms(int n) {
-    final now = DateTime.now();
-    var year = now.month >= 8 ? now.year : now.year - 1;
-    var qm = now.month >= 8 ? '3' : '12';
-    final out = <List<String>>[];
-    for (var i = 0; i < n; i++) {
-      out.add(['$year', qm]);
-      if (qm == '3') {
-        year -= 1;
-        qm = '12';
-      } else {
-        qm = '3';
-      }
-    }
-    return out;
+    return [
+      for (final t in recentAcademicTerms(n)) [t.xnm, t.xqm],
+    ];
   }
 
   /// 学年/学期去重键：优先中文名，空串时才用代码兜底。
@@ -265,7 +273,14 @@ class JwglClient {
         allXfjd += cxf * cjd;
       }
     }
-    final first = grades.isNotEmpty ? grades.first : const <String, dynamic>{};
+    final first = grades.isNotEmpty
+        ? (grades.firstWhere(
+            (g) =>
+                '${g['xm'] ?? ''}'.trim().isNotEmpty ||
+                '${g['xh'] ?? g['xh_id'] ?? ''}'.trim().isNotEmpty,
+            orElse: () => grades.first,
+          ))
+        : const <String, dynamic>{};
 
     return {
       'success': true,
@@ -393,6 +408,12 @@ class JwglClient {
           '$_base/jwglxt/$dir/$_bookPage?gnmkdm=$_bookGnmkdm&doType=query';
       try {
         final csrf = await _openPage(session, page);
+        // 🔴 每成功打开一个目录就把 lastError 清掉。
+        //    `_bookDirs` 有多个候选目录，正常情况下靠「空 → 继续试下一个」
+        //    跳过失效目录；但那些失效目录会各自留下 lastError，等到最后一个
+        //    目录也返回空时，`books.isEmpty && lastError != null` 成立 →
+        //    真正「本学期没有教材」被报成「网络异常，请检查网络后重试」。
+        lastError = null;
         final items = await _query(
           session,
           api,
@@ -583,8 +604,7 @@ class JwglClient {
     if (r.looksLikeLogin) {
       throw CampusException('登录已过期，请重新登录', needRelogin: true);
     }
-    final m = RegExp(r'id="csrftoken"[^>]*value="([^"]+)"').firstMatch(r.body);
-    return m?.group(1) ?? '';
+    return extractCsrfToken(r.body);
   }
 
   static Future<List<Map<String, dynamic>>> _query(
@@ -603,7 +623,12 @@ class JwglClient {
     }
     final j = CampusSession.tryJsonAny(r.body);
     if (j == null) {
-      if (emptyMeansEmpty) return const [];
+      // 🔴 `emptyMeansEmpty` 只该用于「形状合法的空结果」，不能用于
+      //    「压根不是 JSON」。原来这里直接 `return const []`，于是
+      //    登录页 HTML、维护页、`{"code":"-1"}` 都被当成「本学期没有数据」
+      //    —— 考试页与教材页因此长期示人「暂无考试 / 暂无教材」，
+      //    而真相是查询失败。
+      //    非 JSON 一律抛错，让上层显示「查询失败，请重试」。
       throw CampusException('教务返回了非预期内容（可能正在维护）');
     }
     // 形态一：{items:[...]}（成绩/课表/考试等多数模块）
@@ -632,6 +657,31 @@ class JwglClient {
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
+    }
+    // 到这里还剩三种情况，必须分开：
+    //   · Map 里出现了「我们知道怎么读」的容器键但值是空数组
+    //     → 真的是这一学期没有数据，可以放心返回空；
+    //   · Map 是**成功响应但没有容器键**（正方对「本学期无考试」常见返回
+    //     形如 {"code":"0","msg":"操作成功"}）
+    //     → 也是「没有数据」。🔴 这一条不能漏：漏了会把「暂无考试安排」
+    //       变成红卡报错，正好砸在本轮想修的那两个页面上；
+    //   · Map 里带失败码（典型 {"code":"-1","msg":"..."}）
+    //     → 查询失败，不是「没有数据」。原来靠 emptyMeansEmpty 返回空，
+    //       把失败包装成了「暂无」，用户永远看不到错误提示。
+    if (j is Map) {
+      const containerKeys = ['items', 'rows', 'data', 'list'];
+      if (containerKeys.any(j.containsKey)) return const [];
+      // 正方成功码：历史上出现过 '0' / 0 / '200' / 'success' 四种写法。
+      final code = j['code'] ?? j['status'];
+      final ok = code == null ||
+          code == 0 ||
+          code == '0' ||
+          code == 200 ||
+          code == '200' ||
+          '$code'.toLowerCase() == 'success';
+      if (ok && (j.containsKey('msg') || j.containsKey('message'))) {
+        return const [];
+      }
     }
     if (emptyMeansEmpty) return const [];
     throw CampusException('未能解析教务返回的数据');

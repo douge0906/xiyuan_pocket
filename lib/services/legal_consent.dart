@@ -5,7 +5,8 @@ import '../pages/legal_doc_page.dart';
 import '../theme/app_theme.dart';
 
 /// 法务文本中的项目联系邮箱。这里是项目邮箱，不包含个人身份信息。
-const String kLegalContactEmail = 'privacy@wxxydouge.icu';
+// … 2026-11-04（m19335 #7）：正式条款未定稿，邮箱先改占位空串，避免用户看到不存在的联系渠道。
+const String kLegalContactEmail = '';
 
 /// ICP 备案号。工信部要求 App 在「关于 / 设置」等可见位置展示备案号，
 /// 应用商店上架审核也会核对这一项。

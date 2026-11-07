@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import '../app.dart';
 import '../models/tool_model.dart';
 import '../widgets/service_tile.dart';
+import '../services/current_tab.dart';
+import '../services/dorm_service.dart';
 import '../services/tool_navigator.dart';
+import 'balance_detail_pages.dart';
 import '../services/service_catalog.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
@@ -31,17 +35,98 @@ class _ToolboxPageState extends State<ToolboxPage> {
   void initState() {
     super.initState();
     _loadHidden();
+    // 2026-11-04：桌面「倒数日」组件点击 → route() 置位 → 切到本页 → 这里消费。
+    // 必须挂在 CurrentTab 而不是 initState：App 启动会预热所有 Tab，
+    // 预热阶段就把页面推出来，用户还没看到服务页就被弹一脸。
+    _unsubEntered = CurrentTab.addListener(_onEntered);
   }
+
+  void Function()? _unsubEntered;
+
+  @override
+  void dispose() {
+    _unsubEntered?.call();
+    super.dispose();
+  }
+
+  /// 用户真正切到服务页 → 消费桌面组件的一次性信号。
+  ///
+  /// 2026-11-05（用户 m24495 #2/#3）：从只有「倒数日」扩成三类 ——
+  /// 倒数日 / 考试查询 / 一卡通详情。三条都用同一个 post-frame 通道，
+  /// 优先级按 exam > card > countdown（同一次点击只会置一个）。
+  void _onEntered(NavPageRef page) {
+    if (page != NavPageRef.service || !mounted) return;
+    final openExam = AppTabs.pendingOpenExam;
+    final openCard = AppTabs.pendingOpenCard;
+    final openCountdown = AppTabs.pendingOpenCountdown;
+    if (!openExam && !openCard && !openCountdown) return;
+    final slot = AppTabs.pendingCountdownSlot;
+    AppTabs.pendingOpenExam = false;
+    AppTabs.pendingOpenCard = false;
+    AppTabs.pendingOpenCountdown = false;
+    AppTabs.pendingCountdownSlot = -1;
+    // 延后一帧：此刻正是 Tab 切换那一帧，直接 push 会和 setState 打架
+    // （与课表页 _consumePendingSettings 同一处理）。
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (openExam) {
+        await ToolNavigator.open(context, 'exam_query');
+        return;
+      }
+      if (openCard) {
+        await _openCardDetail();
+        return;
+      }
+      await ToolNavigator.open(context, 'countdown', arguments: slot);
+    });
+  }
+
+  /// 桌面「校园卡」组件 → 卡片详情页。
+  ///
+  /// 余额从缓存读（组件显示的就是缓存值，两边必须一致）；
+  /// 缓存为空也照样进详情页 —— 页内自己有一次刷新，比弹「请先登录」有用。
+  Future<void> _openCardDetail() async {
+    // `DormService.loadCardCache()` 直接返回 `double?`（余额本身），
+    // 不是带 savedAt 的缓存对象 —— 带时间戳的那份在
+    // `StorageService.loadCardBalanceCache()`，组件显示的是它。
+    final balance = await DormService.loadCardCache();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CardBalancePage(balance: balance),
+      ),
+    );
+  }
+
+  /// 用户拖出来的服务顺序（2026-11-03）。空 = 从未排过，按 mainServices 原序。
+  List<String> _order = [];
 
   Future<void> _loadHidden() async {
     final hidden = await StorageService.loadHiddenServices();
+    final order = await StorageService.loadServiceOrder();
     if (!mounted) return;
-    setState(() => _hidden = hidden);
+    setState(() {
+      _hidden = hidden;
+      _order = order;
+    });
+  }
+
+  /// 按用户顺序排好的全量服务（与服务管理页同一套合并规则）。
+  List<ToolModel> get _sortedTools {
+    if (_order.isEmpty) return mainServices;
+    final byId = {for (final t in mainServices) t.id: t};
+    final merged = <ToolModel>[];
+    for (final id in _order) {
+      final t = byId.remove(id);
+      if (t != null) merged.add(t);
+    }
+    merged.addAll(mainServices.where((t) => byId.containsKey(t.id)));
+    return merged;
   }
 
   /// 可见服务（服务清单唯一数据源见 service_catalog.dart）。
   List<ToolModel> get _visibleTools =>
-      mainServices.where((t) => !_hidden.contains(t.id)).toList();
+      _sortedTools.where((t) => !_hidden.contains(t.id)).toList();
 
   /// 打开服务管理页；返回后重读配置（页内已即时保存，这里只需刷新列表）。
   Future<void> _openServiceSettings() async {
@@ -55,11 +140,14 @@ class _ToolboxPageState extends State<ToolboxPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final tools = _visibleTools;
     return Scaffold(
-      backgroundColor:
-          isDark ? AppTheme.scaffoldDark : const Color(0xFFF5F6F8),
+      // 🔴 2026-11-04 审查 P1：这里原来写死 `isDark ? scaffoldDark : 0xFFF5F6F8`。
+      //    用户在「外观 → 背景色」里选了米黄 / 淡蓝 / 石墨 / 冷灰之后，首页、
+      //    消息、课表、我的、以及全部设置子页都跟着变了，唯独「服务」页永远
+      //    是那块灰 —— 切 Tab 时是一道明显的色带，看起来像设置没生效。
+      //    `context.scaffoldColor` 会读 backgroundNotifier / backgroundDarkNotifier。
+      backgroundColor: context.scaffoldColor,
       body: SafeArea(
         child: Column(
           children: [

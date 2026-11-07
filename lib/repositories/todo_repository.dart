@@ -2,11 +2,32 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'
+    show DateTimeComponents;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/todo_database.dart';
 import '../models/todo.dart';
 import '../services/notification_service.dart';
+
+/// 一条待办要排的**一个**通知。
+///
+/// 为什么需要「一个待办 → 多条通知」：重复待办交给系统按周/按天自己推进，
+/// 而系统的一条重复通知只能表达「每周的某一个星期 X」。用户选「每周一三五」
+/// 时就必须拆成三条，各自绑定自己的星期。
+@immutable
+class TodoReminderPlan {
+  const TodoReminderPlan({required this.id, required this.when, this.match});
+
+  /// 通知 id（见 [TodoRepository.reminderIdsFor]）。
+  final int id;
+
+  /// 首次触发时刻；有 [match] 时系统会自己推到下一个匹配点。
+  final DateTime when;
+
+  /// 重复规则；null = 一次性。
+  final DateTimeComponents? match;
+}
 
 /// 待办业务仓库（唯一入口）。
 ///
@@ -19,6 +40,8 @@ import '../services/notification_service.dart';
 /// - 页面**不得**直接操作数据库或通知，一律经本仓库；
 /// - 通知 id 恒等于 [Todo.notifyId]（由 id 确定性推导），
 ///   因此 schedule / cancel 永远命中同一条通知。
+///   例外：重复待办按星期拆成多条时 id = `notifyId + 星期 * 1000`，
+///   见 [reminderIdsFor]。
 class TodoRepository {
   TodoRepository._();
   static final TodoRepository instance = TodoRepository._();
@@ -56,6 +79,31 @@ class TodoRepository {
   /// 上课提醒（id 段 100000..100140）一并清掉，导致待办重排后上课提醒静默消失。
   /// 现改为「只精确取消本仓库排过的 id」，与上课提醒彻底隔离。
   static const String _kScheduledIds = 'todo_scheduled_notify_ids';
+
+  /// 「开启待办提醒」全局开关（通知与提醒页）。
+  ///
+  /// 默认 true = 默认开启。开关只门控「是否真正把通知排进系统」，
+  /// 不改 [Todo.reminderTime]：关闭时新建的待办仍带提醒时刻，只是不响；
+  /// 重新打开后走一次 [rescheduleAll] 就能把已有待办全部补排回来。
+  static const String _kTodoReminderEnabled = 'todo_reminder_enabled';
+
+  static Future<bool> todoReminderEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_kTodoReminderEnabled) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<void> setTodoReminderEnabled(bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kTodoReminderEnabled, value);
+    } catch (_) {
+      // 偏好写入失败不应阻塞提醒排程
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // 身份键：id **不够用**，必须用 (id, 日期)
@@ -185,7 +233,7 @@ class TodoRepository {
     if (changed == 0) return 0;
     await _db.writeAll(list);
     for (final t in hit) {
-      await _cancelNotification(t.notifyId);
+      await _cancelAllFor(t);
     }
     return changed;
   });
@@ -194,7 +242,19 @@ class TodoRepository {
   /// 因 notifyId 由 id 推导、id 不随编辑改变，取消/重排命中同一 id，天然幂等。
   ///
   /// 返回 false = 库里没有匹配记录，调用方应当提示用户而不是假装成功。
-  Future<bool> update(Todo todo) => _exclusive(() async {
+  Future<bool> update(Todo input) => _exclusive(() async {
+    // 🔴 把「已完成的待办」改成每天 / 每周时，completed 必须一起清掉。
+    //
+    // 编辑走 base.copyWith 且刻意不传 completed（那是正确做法，避免把完成态
+    // 冲掉），于是「已完成 → 改成每日」会留下 completed: true 的重复待办：
+    //   · planReminders 第一行 `if (base == null || todo.completed) return []`
+    //     → 通知全部撤销；
+    //   · 而 isDoneOn 对重复待办改读 completedDates（空）→ 列表显示未完成。
+    // 用户得到一条「看起来没打勾、但永远不提醒」的待办，下拉刷新也不自愈。
+    // 放在仓库层而不是弹窗里：任何写入路径都必须过这一关。
+    final todo = (input.isRepeating && input.completed)
+        ? input.copyWith(completed: false, clearCompletedDay: true)
+        : input;
     final list = await _db.readAll();
     // ⚠️ 按 (id, 日期) 定位：只按 id 会命中**另一天**的同 id 行，
     //    把整行（含 date / completed）写到它头上。
@@ -214,7 +274,8 @@ class TodoRepository {
     list[idx] = todo;
     await _db.writeAll(list);
     // 改时间：先取消旧通知，再按新状态重建（不重复创建，同 id 覆盖）。
-    await _cancelNotification(todo.notifyId);
+    // 取消要用 _cancelAllFor：重复待办可能按星期拆成好几条。
+    await _cancelAllFor(todo);
     await _syncNotification(todo);
     return true;
   });
@@ -222,12 +283,21 @@ class TodoRepository {
   /// 按 **(id, 日期)** 精确更新：找不到就跳过，**不会**写到别的行上。
   ///
   /// 用于「自愈脏数据」这类按天定位的写入。
+  ///
+  /// 🔴 2026-11-04 审查 P1：原先这里**完全不碰通知**，而
+  ///    `course_todo_service.dart:393/533/541`（`repairFutureCompletedCourses`
+  ///    等自愈路径）正是用它把「被误标完成」的待办改回未完成。标记完成时
+  ///    `_syncNotification` 已经把提醒 cancel 掉了，这里恢复后不重排 →
+  ///    那条待办**永远不再响**，直到下一次 `rescheduleAll()`（可能几天后）。
+  ///    现与 [update] 保持一致：先撤干净再按新状态重排。
   Future<void> updateOn(Todo todo) => _exclusive(() async {
     final list = await _db.readAll();
     final idx = _indexOf(list, todo);
     if (idx < 0) return;
     list[idx] = todo;
     await _db.writeAll(list);
+    await _cancelAllFor(todo);
+    await _syncNotification(todo);
   });
 
   /// 删除待办：删库 + 取消通知。
@@ -238,8 +308,11 @@ class TodoRepository {
     final before = list.length;
     list.removeWhere((t) =>
         t.id == todo.id && _sameDay(t.date, todo.date));
+    // 没命中就别写盘：整表回写 N 条 JSON 只为了把一模一样的内容再存一遍
+    // （deleteOn 一直是这样判断的，这里补齐口径）。
+    if (list.length == before) return;
     await _db.writeAll(list);
-    if (list.length != before) await _cancelNotification(todo.notifyId);
+    await _cancelAllFor(todo);
   });
 
   /// 按 **id + 日期** 精确删除。
@@ -258,7 +331,7 @@ class TodoRepository {
         t.date.day == todo.date.day);
     if (list.length == before) return;
     await _db.writeAll(list);
-    await _cancelNotification(todo.notifyId);
+    await _cancelAllFor(todo);
   });
 
   /// 切换完成态：落库 + 完成则取消通知 / 未完成且提醒在将来则重排。
@@ -341,22 +414,29 @@ class TodoRepository {
   Future<({int scheduled, int failed})> rescheduleAll() => _exclusive(() async {
         final all = await _db.readAll();
         final tracked = await _loadScheduledIds();
-        final currentIds = all.map((t) => t.notifyId).toSet();
+        // current 必须展开到「按星期拆出来的那几条」，否则旧的星期通知会被
+        // 当成「别人的 id」留下来继续响。
+        final currentIds = <int>{
+          for (final t in all) ...reminderIdsFor(t),
+        };
         // 先清：上轮残留（tracked）+ 本轮将要重建（current），保证无重复、无幽灵。
         for (final id in {...tracked, ...currentIds}) {
           await NotificationService.cancel(id);
         }
         await _saveScheduledIds({});
-        // 再建：仅「未完成且提醒在将来」的会被真正排上。
+        // 再建：仅「未完成且还有下一次提醒」的会被真正排上。
         var scheduled = 0;
         var failed = 0;
+        final todoOn = await todoReminderEnabled();
         for (final t in all) {
           final ok = await _syncNotification(t);
-          if (!ok && nextReminderFor(t, DateTime.now()) != null) {
+          final wanted = todoOn && planReminders(t, DateTime.now()).isNotEmpty;
+          if (ok) {
+            if (wanted) scheduled++;
+          } else if (wanted) {
             // 本该有提醒却没排上 —— 这才是真正需要报警的情况。
             failed++;
           }
-          if (ok) scheduled++;
         }
         return (scheduled: scheduled, failed: failed);
       });
@@ -398,6 +478,133 @@ class TodoRepository {
     if (ids.remove(id)) await _saveScheduledIds(ids);
   }
 
+  /// 这条待办会用到的**全部**通知 id。
+  ///
+  /// 重复待办按星期拆成多条（系统一条重复通知只能表达「每周某一个星期 X」），
+  /// id = `notifyId + 星期 * 1000`。
+  ///
+  /// 📐 **2026-11-04 审查修正**：原为 `+ 星期 * 1_000_000`，注释还写
+  ///    「加最多 700 万既不会溢出 int」——**这是错的**。`notifyId` 上限是
+  ///    int32 的 2147483647，`base + 7*1e6` 可到 2154483647 > 2147483647，
+  ///    而插件 Java 侧 `NotificationDetails.java:132` 的 `id` 是 `Integer`，
+  ///    越界值会抛 `ClassCastException` 并被三级降级无声吞掉 → 按 base 均匀
+  ///    分布估算约 **2.6% 的每周待办**会缺一个星期的提醒。
+  ///    现改为 1000 步长（7 天只需 7000 个 id），并配合
+  ///    `Todo.stableNotifyId` 收窄到 0x4FFFFFFF，余量 8 亿。
+  ///
+  /// 📐 **2026-11-04 第二次审查 P1**：这里还在按**当前** `repeatType` 推断
+  ///    id 集，于是「每周 → 每天」之后有漏网：
+  ///    改之前 `reminderIdsFor` 返回 `[base+1000, base+3000, base+5000]`；
+  ///    改成 daily 之后只返回 `[base]`，而 [planReminders] 的 daily 分支也
+  ///    只产 `id: base` —— 取消循环 `for (id in ids) if (!keep.contains(id))`
+  ///    只遍历 `ids`（= 当前的 [reminderIdsFor]），旧的三个星期 id 根本不在
+  ///    集合里，永远进不了 `_cancelNotification`。用户改成「每天」后，
+  ///    周一/三/五那 3 条旧闹钟照样响。
+  ///    [rescheduleAll] 的 `currentIds` 同源，`tracked`（上次真正排成功的 id）
+  ///    也救不了历史上失败过的那几条。
+  ///
+  ///    修法：**不再推断，直接给满**。weekly 最多用 7 个槽（星期 1..7），
+  ///    所以固定返回 `base + {1..7} × 1000` 再加 base 本身。多 cancel 几个
+  ///    不存在的 id 是幂等的（插件 `cancel` 对不存在的 id 静默返回），
+  ///    代价可以忽略，换来的是「任何状态迁移之后的残留都能清干净」。
+  @visibleForTesting
+  List<int> reminderIdsFor(Todo todo) {
+    final base = todo.notifyId;
+    return <int>[base, for (var d = 1; d <= 7; d++) base + d * 1000];
+  }
+
+  /// 把一条待办换算成「要排几条通知、各自什么时候、是否交给系统重复」。
+  ///
+  /// 三条规矩：
+  /// 1. **非重复**走一次性绝对时刻（沿用 [nextReminderFor] 的口径）；
+  /// 2. **每天**用 `DateTimeComponents.time`，系统自己每天推进 —— App 不必活着；
+  /// 3. **每周**按每个星期各排一条 `dayOfWeekAndTime`。
+  ///
+  /// 唯一退回一次性的情形是**提醒跨了零点**（`dueAt − 提前量` 落到前一天）：
+  /// 系统的重复组件是按「本地墙钟时分」对齐的，表达不了这种跨日偏移。
+  @visibleForTesting
+  List<TodoReminderPlan> planReminders(Todo todo, DateTime now) {
+    final base = todo.reminderTime;
+    if (base == null || todo.completed) return const [];
+    if (!todo.isRepeating) {
+      final one = nextReminderFor(todo, now);
+      if (one == null) return const [];
+      return [TodoReminderPlan(id: todo.notifyId, when: one)];
+    }
+
+    final due = todo.dueAt;
+    final lead = due == null ? Duration.zero : due.difference(base);
+    final dueH = due?.hour ?? base.hour;
+    final dueM = due?.minute ?? base.minute;
+    // 用一个固定日期的正午做基准算「提醒的墙钟时刻」—— 若跨到前一天，day != 1。
+    final wall = DateTime(2000, 1, 2, dueH, dueM).subtract(lead);
+    if (wall.day != 2) {
+      final one = nextReminderFor(todo, now);
+      if (one == null) return const [];
+      return [TodoReminderPlan(id: todo.notifyId, when: one)];
+    }
+
+    if (todo.repeatType != 'daily') {
+      // weekly
+      final days = todo.repeatDays.toSet().toList()..sort();
+      if (days.isEmpty) {
+        // 「每周」却没勾任何星期 —— 脏数据，按一次性排，别再静默不排。
+        final one = nextReminderFor(todo, now);
+        if (one == null) return const [];
+        return [TodoReminderPlan(id: todo.notifyId, when: one)];
+      }
+      final today = DateTime(now.year, now.month, now.day);
+      final doneToday = todo.isDoneOn(today);
+      final out = <TodoReminderPlan>[];
+      for (final d in days) {
+        if (d < DateTime.monday || d > DateTime.sunday) continue;
+        var day = today;
+        for (var i = 0; i < 8 && day.weekday != d; i++) {
+          day = day.add(const Duration(days: 1));
+        }
+        final at = DateTime(day.year, day.month, day.day, wall.hour, wall.minute);
+        // 🔴 「今天这一周已经勾完成」时不能再用 dayOfWeekAndTime ——
+        //    系统的重复组件只保留时分与星期，日期被丢弃（Java 侧用 now 的年月日
+        //    加 when 的时分重建），所以今天 08:00 依然会响。
+        //    退化成一次性、推到下一周的同一时刻；App 下次启动/回前台
+        //    rescheduleAll 会把它重新升回重复计划。
+        final skipToday = doneToday && day == today;
+        final when = skipToday ? at.add(const Duration(days: 7)) : at;
+        out.add(TodoReminderPlan(
+          // 🔴 2026-11-04 审查 P1：这里原为 `* 1000000`，与
+          // [reminderIdsFor] 必须**逐字一致**，否则 cancel 的 id 与
+          // schedule 的 id 不是同一个 → 旧通知取消不掉（幽灵通知）。
+          id: todo.notifyId + d * 1000,
+          when: when,
+          match: skipToday ? null : DateTimeComponents.dayOfWeekAndTime,
+        ));
+      }
+      return out;
+    }
+
+    // daily
+    final one = nextReminderFor(todo, now);
+    if (one == null) return const [];
+    // 🔴 同上：今天已经勾完成，而 nextReminderFor 只是「跳过今天」返回明天，
+    //    用 DateTimeComponents.time 排下去系统仍然会在今天 wall 时刻响一次。
+    //    这种情况下改成一次性排程；App 下次启动/回前台会重建每日重复。
+    final doneToday = todo.isDoneOn(DateTime(now.year, now.month, now.day));
+    return [
+      TodoReminderPlan(
+        id: todo.notifyId,
+        when: one,
+        match: doneToday ? null : DateTimeComponents.time,
+      ),
+    ];
+  }
+
+  /// 取消这条待办可能占用的**全部**通知（含按星期拆出来的那几条）。
+  Future<void> _cancelAllFor(Todo todo) async {
+    for (final id in reminderIdsFor(todo)) {
+      await _cancelNotification(id);
+    }
+  }
+
   /// 依据待办当前状态，创建或取消其提醒通知（幂等）。
   /// - 未完成 + 有下一次提醒时刻 → 创建/覆盖通知；
   /// - 其余情况（已完成 / 无提醒 / 之后不再发生）→ 取消通知。
@@ -405,27 +612,51 @@ class TodoRepository {
   ///
   /// 2026-11-02：原来返回 `void`，`schedule()` 的 bool 被吞掉，
   /// 三级降级全失败时无人知晓 —— 见 [rescheduleAll] 的说明。
+  ///
+  /// 2026-11-04：改为按 [planReminders] 排，重复待办交给系统自己推进
+  /// （修「重复待办只响一次」）。
   Future<bool> _syncNotification(Todo todo) async {
-    final now = DateTime.now();
-    final reminder = nextReminderFor(todo, now);
-    final shouldNotify = !todo.completed && reminder != null;
-    if (shouldNotify) {
+    // 🔴 「开启待办提醒」关闭时：撤掉这条待办的全部已排通知，且不新增。
+    //    add / update / toggleComplete / rescheduleAll 全部经过这里，一处收口
+    //    即可保证全局开关对所有写入路径生效；reminderTime 仍保留在待办里，
+    //    重新开启后 rescheduleAll 会把它补排回来。
+    if (!await todoReminderEnabled()) {
+      for (final id in reminderIdsFor(todo)) {
+        await _cancelNotification(id);
+      }
+      return true; // 「已按开关撤下」是期望状态，不算失败
+    }
+    final plans = planReminders(todo, DateTime.now());
+    final ids = reminderIdsFor(todo);
+    if (plans.isEmpty) {
+      for (final id in ids) {
+        await _cancelNotification(id);
+      }
+      return true; // 「不需要提醒」本身就是期望状态，不算失败
+    }
+    // 计划里没有的 id（用户把「周一三五」改成「周二」）必须先撤掉，
+    // 否则旧的星期三通知会留在系统里继续响。
+    final keep = plans.map((p) => p.id).toSet();
+    for (final id in ids) {
+      if (!keep.contains(id)) await _cancelNotification(id);
+    }
+    var allOk = true;
+    for (final p in plans) {
       final ok = await NotificationService.schedule(
-        id: todo.notifyId,
+        id: p.id,
         title: '待办提醒：${todo.title}',
         body: todo.description ?? '到时间啦',
-        scheduledTime: reminder,
+        scheduledTime: p.when,
         payload: todo.id,
         // 🔴 优先级 → 通知渠道 → 振动强度（普通轻震 / 重要双震 / 紧急长震）。
         priority: todo.priority,
+        matchDateTimeComponents: p.match,
       );
-      final ids = await _loadScheduledIds();
-      if (ids.add(todo.notifyId)) await _saveScheduledIds(ids);
-      return ok;
-    } else {
-      await _cancelNotification(todo.notifyId);
-      return true; // 「不需要提醒」本身就是期望状态，不算失败
+      if (!ok) allOk = false;
+      final ids0 = await _loadScheduledIds();
+      if (ids0.add(p.id)) await _saveScheduledIds(ids0);
     }
+    return allOk;
   }
 
   /// 这条待办「下一次」应当响铃的时刻（null = 不需要排程）。

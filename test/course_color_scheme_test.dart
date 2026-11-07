@@ -14,10 +14,13 @@ void main() {
   double hue(Color c) => HSLColor.fromColor(c).hue;
 
   group('CourseColorScheme 命名（v1.7.1）', () {
-    test('三档直接叫方案一 / 方案二 / 方案三', () {
-      expect(CourseColorScheme.standard.label, '方案一');
-      expect(CourseColorScheme.soft.label, '方案二');
+    test('三档直接叫方案一 / 方案二 / 方案三（2026-11-04 起 soft 是方案一）', () {
+      // m20950 #2：「把现在的默认方案二放置到第一位，也就是方案一」
+      expect(CourseColorScheme.soft.label, '方案一');
+      expect(CourseColorScheme.standard.label, '方案二');
       expect(CourseColorScheme.vivid.label, '方案三');
+      // values 的顺序就是设置页色卡顺序 —— soft 必须在最前
+      expect(CourseColorScheme.values.first, CourseColorScheme.soft);
     });
 
     test('改名只动 label、不动存储值 —— 老用户已选的方案不会丢', () {
@@ -135,8 +138,13 @@ void main() {
 
     test('切换方案：每档各自保存自己那套手动调整，互不干扰', () {
       // 方案一下把圆角调成 20（= 方案一自己的手动值）
+      //
+      // 🔴 起始方案必须显式写死：2026-11-03 起出厂默认改成「方案二」了，
+      //   靠 defaultDisplaySettings() 的默认值会变成「在方案二里调 20」，
+      //   于是切到方案二时压根不算切换、20 原样留着，这条断言就假红。
       var d = <String, dynamic>{
         ...CourseStorage.defaultDisplaySettings(),
+        'scheme': 'standard',
         'blockRadius': 20.0,
       };
       // 切到方案二 → 用方案二的出厂预设（圆角 8），不是 20
@@ -175,12 +183,14 @@ void main() {
   });
 
   group('CourseColorScheme.parse', () {
-    test('能解析枚举名，未知值回落方案一', () {
+    test('能解析枚举名，未知值回落默认方案（soft）', () {
       expect(CourseColorScheme.parse('soft'), CourseColorScheme.soft);
       expect(CourseColorScheme.parse('vivid'), CourseColorScheme.vivid);
       expect(CourseColorScheme.parse('standard'), CourseColorScheme.standard);
-      expect(CourseColorScheme.parse(null), CourseColorScheme.standard);
-      expect(CourseColorScheme.parse('乱码'), CourseColorScheme.standard);
+      // 2026-11-04（m20950 #2）：默认方案由 standard 改为 soft，
+      // 兜底必须跟 `defaultDisplaySettings()` 的 'soft' 一致。
+      expect(CourseColorScheme.parse(null), CourseColorScheme.soft);
+      expect(CourseColorScheme.parse('乱码'), CourseColorScheme.soft);
     });
   });
 
@@ -295,7 +305,10 @@ void main() {
       final d = CourseStorage.defaultDisplaySettings();
       expect(d['cardFieldOrder'], ['name', 'classroom', 'teacher']);
       expect(d['cardFontScale'], 1.0);
-      expect(d['cardMaxLines'], 2);
+      // 2026-11-04（用户 m20455 #2）：默认课程名最大行数 2 → 3。
+      // 用户原话「课程名默认最大行数3」—— 两行时「高等数学（上）」这类
+      // 带括号后缀的课名正好被截断，多一行能完整显示。
+      expect(d['cardMaxLines'], 3);
       expect(d['cardOverflow'], 'ellipsis');
       expect(d['highlightToday'], true);
     });

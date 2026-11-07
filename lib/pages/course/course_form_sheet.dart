@@ -14,15 +14,13 @@ import 'course_import_dialogs.dart' show courseField;
 //
 // 抽取时确认的耦合点与处理：
 //   · _maxWeeks 是**页面共享常量**（选择周数、跳转周次都要用）→ 提升为
-//     本模块顶层公开常量 [kMaxCourseWeeks]，页面改用它，两处共用同一值；
+//     模型层的 [kMaxCourseWeeks]（`course_model.dart`），页面改用它；
+//     2026-11-04 又从本文件搬到模型层，因为冲突检测与周次下拉也要用。
 //   · 保存/删除仍归页面（要写 courseProvider + 重排提醒）→ 经回调回传；
 //   · courseField 复用了导入模块的字段组件，避免重复实现。
 //
 // ⚠️ 保持既有行为：weekType / pattern 在表单里继承课程原值，
 //    原实现就没有对应控件，本次不新增（不擅自加功能）。
-
-/// 一学期最大周数（原 course_table_home_page 的 `_maxWeeks`）。
-const int kMaxCourseWeeks = 25;
 
 /// 添加 / 编辑课程表单（底部弹出）。
 ///
@@ -287,7 +285,8 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                           Wrap(
                             spacing: 6,
                             runSpacing: 6,
-                            children: List.generate(kMaxCourseWeeks, (i) {
+                            children: List.generate(
+                                CourseStorage.weekCountCache, (i) {
                               final w = i + 1;
                               final on = selectedWeeks.contains(w);
                               return CourseNumberChip(
@@ -308,12 +307,25 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                             children: [
                               TextButton(
                                 onPressed: () => setState(() => selectedWeeks = {
-                                      for (int i = 1; i <= kMaxCourseWeeks; i++) i
+                                      for (int i = 1;
+                                          i <= CourseStorage.weekCountCache;
+                                          i++)
+                                        i
                                     }),
                                 child: const Text('全选', style: TextStyle(fontSize: AppTheme.fontSmall)),
                               ),
                               TextButton(
-                                onPressed: () => setState(() => selectedWeeks.clear()),
+                                // 🔴 2026-11-04 审查 P0：这里原来是
+                                //    `selectedWeeks.clear()`。清空之后保存，
+                                //    `formatWeeks({})` 返回空串 → `weeks = ''`
+                                //    → `parseWeeks('')` 返回 null → 而 null 在
+                                //    `isActiveOnWeek` 里的语义是「每周都上」。
+                                //    用户操作是「一周都不上」，落库却是「全部周都上」，
+                                //    而且没有任何提示 —— 这门课随后会出现在全部 25 周
+                                //    的课表、提醒、待办和桌面小组件里。
+                                //    改成「重置为第 1 周」：保留一个合法的非空选择，
+                                //    想改周次直接点 chip 即可。
+                                onPressed: () => setState(() => selectedWeeks = {1}),
                                 child: const Text('清空', style: TextStyle(fontSize: AppTheme.fontSmall)),
                               ),
                             ],
@@ -372,12 +384,21 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                   if (widget.course != null)
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () {
+                        // v2.4.0：与课程格长按删除保持一致，删除前二次确认，
+                        // 避免编辑页里误触「删除」即刻丢课。
+                        // 2026-11-04 审查 P2：**先问再关页**。原来顺序反了
+                        // （先 pop 再弹框），点「取消」时编辑页已经没了。
+                        // （widget.course 是 getter，空安全推断不跨它 —— 需 ! ）
+                        onPressed: () async {
+                          final course = widget.course;
+                          if (course == null) return;
+                          final ok = await askDeleteCourse(context, course);
+                          if (!ok) return;
+                          // 用 `context.mounted` 而不是 State.mounted：
+                          // 这里跨了 await，lint 只认与 BuildContext 绑定的那个。
+                          if (!context.mounted) return;
                           Navigator.of(context).pop();
-                          // v2.4.0：与课程格长按删除保持一致，删除前二次确认，
-                          // 避免编辑页里误触「删除」即刻丢课。
-                          // （widget.course 是 getter，空安全推断不跨它 —— 需 ! ）
-                          widget.onDelete(widget.course!);
+                          widget.onDelete(course);
                         },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.red,
@@ -407,6 +428,16 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                         } else if (weekType == CourseWeekType.even) {
                           weeksText = '1-16周(双)';
                         } else {
+                          // 🔴 2026-11-04 审查 P0：空集合会被 `formatWeeks`
+                          //    写成空串，而空串在 `parseWeeks` 里等于 null、
+                          //    在 `isActiveOnWeek` 里等于「每周都上」——
+                          //    与用户「清空」的意图正好相反。落盘前必须拦住，
+                          //    否则救不回来（界面上看不出哪门课是坏的）。
+                          if (selectedWeeks.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('请至少选择一周')));
+                            return;
+                          }
                           weeksText = formatWeeks(selectedWeeks);
                         }
                         final newCourse = Course(
@@ -464,7 +495,7 @@ void showCourseDetailSheet(
       backgroundColor: context.cardColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         side: BorderSide(
             color: isDark ? Colors.white12 : const Color(0xFFE8E8EE)),
       ),
@@ -585,17 +616,18 @@ void showCourseDetailSheet(
   );
 }
 
-/// 删除前二次确认（原 `_confirmDeleteCourse`；表单与详情卡共用）。
-Future<void> confirmDeleteCourse(
-  BuildContext context,
-  Course course, {
-  required void Function(Course course) onConfirmed,
-}) async {
+/// 只弹「删除课程？」确认框，返回用户的选择；不执行删除。
+///
+/// 2026-11-04 审查 P2：编辑页原来先 `Navigator.pop()` 再调 `onDelete`，
+/// 而 `onDelete` 里才弹确认框 —— 用户看到的是「页面先关掉、确认框才冒出来」，
+/// 点「取消」也回不去已经关掉的编辑页，等于问了个无效问题。
+/// 现在把「问」和「删」拆开，调用方先问、拿到 true 再决定要不要 pop。
+Future<bool> askDeleteCourse(BuildContext context, Course course) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('删除课程'),
-      content: const Text('确定要删除这门课程吗？'),
+      content: Text('确定要删除「${course.name}」吗？'),
       actions: [
         TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
         TextButton(
@@ -605,7 +637,16 @@ Future<void> confirmDeleteCourse(
       ],
     ),
   );
-  if (confirmed == true) onConfirmed(course);
+  return confirmed == true;
+}
+
+/// 删除前二次确认（原 `_confirmDeleteCourse`；详情卡等就地删除的场景用）。
+Future<void> confirmDeleteCourse(
+  BuildContext context,
+  Course course, {
+  required void Function(Course course) onConfirmed,
+}) async {
+  if (await askDeleteCourse(context, course)) onConfirmed(course);
 }
 
 /// 详情卡里的一行「图标 + 标签 + 值」。

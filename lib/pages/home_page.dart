@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'home/home_cards.dart';
 import '../widgets/home_week_strip.dart';
 import '../widgets/home_todo_list.dart';
@@ -10,6 +9,7 @@ import '../models/todo.dart';
 import '../repositories/todo_repository.dart';
 import '../providers/course_provider.dart';
 import '../services/course_todo_service.dart';
+import '../services/storage_service.dart';
 import '../services/app_locale.dart';
 import '../services/course_storage.dart';
 import '../services/exam_storage.dart';
@@ -18,13 +18,11 @@ import '../services/notification_service.dart';
 import '../services/campus_net_service.dart';
 import '../services/home_prefs.dart';
 import '../services/ui_prefs.dart';
+import '../services/haptics.dart';
 import '../theme/app_theme.dart';
 
+import '../app.dart';
 import 'add_todo_dialog.dart';
-import '../services/todo_natural_parser.dart';
-import '../services/voice_input_service.dart';
-import '../widgets/voice_ball.dart';
-import 'home_settings_page.dart';
 import 'todo_calendar_page.dart';
 
 class _DaySnapshot {
@@ -57,7 +55,13 @@ class HomePageState extends ConsumerState<HomePage>
   /// 「今天」的旧数据（今天早上的课已经被自动划掉 → 显示成完成态），
   /// 看起来就是「切到明天，早上没上的课却显示完成」。
   bool _loadingTodos = false;
+
+  /// [_load] 的请求世代号：同日并发时只让最后一次生效。
+  int _loadSeq = 0;
   List<Todo> _todos = [];
+
+  /// 待办排序方式：'time'（默认）/ 'priority'（2026-11-03 新增）。
+  String _sortMode = 'time';
   Timer? _courseEndTicker;
 
   /// 切日期时的数据加载防抖：拖动周次条时连续触发，先只更新选中日期，
@@ -85,9 +89,6 @@ class HomePageState extends ConsumerState<HomePage>
   Future<void>? _statsInflight;
   int _statsEpoch = 0;
 
-  /// 语音输入是否进行中（防止连点长按重复启动）。
-  bool _voiceBusy = false;
-
   int get _selectedWeek => _semesterStart == null
       ? ref.read(courseProvider).currentWeek
       : CourseStorage.teachingWeek(_selectedDate, _semesterStart!);
@@ -109,6 +110,12 @@ class HomePageState extends ConsumerState<HomePage>
       if (mounted && TickerMode.of(context)) _refreshCourseEndState();
     });
     _ensureStats();
+    // 排序方式要在首次 _load 之前读出来，否则首屏会先按时间排一遍再跳。
+    StorageService.loadTodoSortMode().then((m) {
+      if (!mounted || m == _sortMode) return;
+      setState(() => _sortMode = m);
+      _load(forDay: _selectedDate);
+    });
     _load();
     // 整周课程待办一次性预排（内部只读一次课表/待办），之后切任意一天都有数据。
     // 放到首帧之后：不要和首屏的当天加载抢同一把锁，否则首屏要多等 7 天。
@@ -137,8 +144,26 @@ class HomePageState extends ConsumerState<HomePage>
     final all = await TodoRepository.instance.getAll();
     final matches = all.where((t) => t.id == todoId);
     if (matches.isEmpty || !mounted) return;
-    final target = matches.first;
-    setState(() => _selectedDate = target.date);
+    // 🔴 重复待办库里只有一行、`date` = **创建起始日**（没有任何代码把 date
+    //    往前滚），所以「取 occursOn 命中的那条」等于取 `matches.first`：
+    //    今天 8:00 的每日待办通知点进去，跳到的还是几个月前的创建日，
+    //    页面上什么都没有 —— 上一版「优先跳到今天那条」的写法对重复待办
+    //    完全无效，因为库里就只有那一条。
+    //
+    // 正确做法：跳转日期取「提醒发生的这一天」。
+    //   · 只出现过一次（非重复）：它自己的 date 就是答案；
+    //   · 今天也会出现：跳到今天；
+    //   · 都不满足（比如点的是历史通知）：退回它自己的 date。
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = matches.firstWhere(
+      (t) => t.occursOn(now),
+      orElse: () => matches.first,
+    );
+    final jumpTo = target.isRepeating && target.occursOn(today)
+        ? today
+        : DateTime(target.date.year, target.date.month, target.date.day);
+    setState(() => _selectedDate = jumpTo);
     await _load();
     _loadOverview();
   }
@@ -300,8 +325,10 @@ class HomePageState extends ConsumerState<HomePage>
   }
 
   Future<void> _toggleTodo(Todo todo) async {
+    // 勾待办给一次更重的触感：这是一个「有结果」的动作，比普通点击值钱。
+    // 普通点击已由 TapHapticsScope 统一处理，这里显式补一次「强」。
     if (UiPrefs.haptics) {
-      HapticFeedback.selectionClick();
+      Haptics.fire(UiPrefs.hapticLevel > 2 ? 3 : 2);
     }
     // 重复待办的完成态存在 completedDates（按天），非重复才用 completed 布尔位。
     // 🔴 之前统一调 toggleComplete → 重复待办只翻了 completed 布尔位，
@@ -312,8 +339,11 @@ class HomePageState extends ConsumerState<HomePage>
     // 乐观 UI：立刻更新本地状态，不等存储写入
     setState(() {
       // ⚠️ 按 (id, 日期) 定位：同 id 不同日期时不能改到别的行。
-      final idx = _todos.indexWhere(
-          (t) => t.id == todo.id && _sameDay(t.date, day));
+      // 🔴 重复待办的 date 只是「起始日」，次日 _sameDay 不成立 → idx = -1
+      //    → 乐观更新空转，列表纹丝不动，而 toggleCompleteOn 已经落库成功、
+      //    _loadOverview 现算的计数也 +1，用户看到「勾选框不动但顶部的数字变了」。
+      //    与 _load 里 `all.where((t) => t.occursOn(target))` 必须同口径。
+      final idx = _todos.indexWhere((t) => t.id == todo.id && t.occursOn(day));
       if (idx >= 0) {
         final cur = _todos[idx];
         _todos[idx] = cur.isRepeating
@@ -372,6 +402,12 @@ class HomePageState extends ConsumerState<HomePage>
 
   Future<void> _load({DateTime? forDay}) async {
     final target = forDay ?? _selectedDate;
+    // 🔴 请求世代号：同日并发时只允许最后一次生效。
+    // 原来唯一守卫是「目标日 != 当前选中日」，同一天的并发请求全部放行、
+    // 后完成者覆盖先完成者 —— 两个可观察后果：
+    //   ① `_loadingTodos` 被先完成者复位 → 骨架提前消失，露出旧列表；
+    //   ② 删除与自动完成交错时，后写者可短暂让已删项复活。
+    final seq = ++_loadSeq;
     try {
       // 顺序不能颠倒：
       //   ① 迁移历史脏数据（清理同 id 撞号、回填完成归属日）
@@ -384,7 +420,9 @@ class HomePageState extends ConsumerState<HomePage>
       await CourseTodoService.syncCoursesForDate(target);
       await CourseTodoService.autoCompleteFinishedCourses();
       final all = await TodoRepository.instance.getAll();
-      if (!mounted || !_sameDay(target, _selectedDate)) return;
+      if (!mounted || seq != _loadSeq || !_sameDay(target, _selectedDate)) {
+        return;
+      }
       // 🔴 重复待办的 date 只是「起始日」，按它精确匹配会让重复待办
       //    次日就消失（日历页用 occursOn 是对的，两处口径必须一致）。
       final today = all.where((t) => t.occursOn(target)).toList();
@@ -395,7 +433,7 @@ class HomePageState extends ConsumerState<HomePage>
       });
     } finally {
       // 无论成功失败都要退出加载态，否则异常时骨架会一直挂着。
-      if (mounted && _sameDay(target, _selectedDate)) {
+      if (mounted && seq == _loadSeq && _sameDay(target, _selectedDate)) {
         setState(() => _loadingTodos = false);
       }
     }
@@ -403,6 +441,12 @@ class HomePageState extends ConsumerState<HomePage>
 
   /// 待办排序逻辑：未完成在前、已完成置底；同组内按提醒时间升序，
   /// 全天/无提醒时间的排在有时间的后面，让时间线自然呈现一天的先后顺序。
+  ///
+  /// 2026-11-03：增加「排序方式」切换（`_sortMode`）。两种：
+  ///   · `time`（默认）—— 原来的纯时间序，时间线感最强；
+  ///   · `priority` —— 先按优先级（紧急 → 重要 → 普通），同档内再按时间。
+  /// 为什么值得加：待办一多，「今天三件事先干哪件」是真实决策，
+  /// 而优先级在列表里只能靠左边那条色条看，排不到前面就等于白设。
   void _sortTodos(List<Todo> list) {
     list.sort((a, b) {
       // 完成不改变位置：只按时间排，完成项仍留在原来的位置。
@@ -411,10 +455,21 @@ class HomePageState extends ConsumerState<HomePage>
       //    原来只看 reminderTime → 新版弹窗新增的待办（时间在 dueAt）
       //    会被当成「全天」排到最后一组，与用户看到的时刻对不上。
       // 三级兜底到 date —— 永远非空，所以不用再判 null。
+      if (_sortMode == 'priority' && a.priority != b.priority) {
+        return b.priority.compareTo(a.priority); // 2 紧急 > 1 重要 > 0 普通
+      }
       final at = a.reminderTime ?? a.dueAt ?? a.date;
       final bt = b.reminderTime ?? b.dueAt ?? b.date;
       return at.compareTo(bt);
     });
+  }
+
+  /// 切换排序方式（写盘 + 重排当前列表）。
+  Future<void> _setSortMode(String mode) async {
+    if (_sortMode == mode) return;
+    setState(() => _sortMode = mode);
+    await StorageService.saveTodoSortMode(mode);
+    await _load(forDay: _selectedDate);
   }
 
   /// 删除待办：先从当前列表移除（避免 Dismissible 滑走后组件仍留在树中报错），
@@ -428,13 +483,16 @@ class HomePageState extends ConsumerState<HomePage>
     setState(() => _todos.removeWhere(
         (t) => t.id == todo.id && _sameDay(t.date, todo.date)));
     // 删库 + 取消通知由仓库一并完成
-    await TodoRepository.instance.delete(todo);
-    // 🔴 课程待办会被 syncCoursesForDate 从课表**重建**回来 ——
-    //    必须登记「用户主动删掉了这条」，否则删完立刻又出现
-    //    （2026-11-02 用户报告「课程待办删不掉」）。
+    //
+    // 🔴 顺序：先 suppress 再 delete。
+    //    原来反着来：delete 之后才登记抑制键，中间那段窗口里 30 秒 ticker
+    //    的 `_refreshCourseEndState` → `_load` → `syncCoursesForDate` 读到
+    //    旧抑制集合，会把刚删的课程待办重建回来；之后整个运行期它都在库里
+    //    （历史「课程待办删不掉」就是这个症状）。
     if (todo.id.startsWith('course_')) {
       await CourseTodoService.suppress(todo.id, todo.date);
     }
+    await TodoRepository.instance.delete(todo);
     _load(); // 从存储重新加载，确保持久化生效
     _loadOverview();
     if (!mounted) return;
@@ -447,11 +505,12 @@ class HomePageState extends ConsumerState<HomePage>
           action: SnackBarAction(
             label: '撤销',
             onPressed: () async {
-              await TodoRepository.instance.add(todo);
-              // 撤销必须解除抑制，否则下次同步会把它当成「用户不要了」。
+              // 撤销的顺序与删除相反：先解除抑制再入库。
+              // 反着来的话，中间窗口里同步会把它当成「用户不要了」跳过。
               if (todo.id.startsWith('course_')) {
                 await CourseTodoService.unsuppress(todo.id, todo.date);
               }
+              await TodoRepository.instance.add(todo);
               await _load();
               _loadOverview();
             },
@@ -473,7 +532,15 @@ class HomePageState extends ConsumerState<HomePage>
     //    只改 date 会让 id 与日期脱钩 → 这条永远不会被自动完成、
     //    那天的课程不会生成、用户的编辑还会被同步静默回滚。
     if (todo.id.startsWith('course_')) {
-      await CourseTodoService.moveCourseTodo(todo, updated);
+      // 🔴 moveCourseTodo 有 3 条 return false（非课程待办 / 新 id 撞号 /
+      //    异常），原来把返回值直接丢掉了：弹窗已经关闭、改动丢失，用户
+      //    看起来是「保存成功了」。非课程分支一直是接住并 toast 的，两条
+      //    分支口径必须一致。
+      final ok = await CourseTodoService.moveCourseTodo(todo, updated);
+      if (!ok && mounted) {
+        _toast('改期失败：那天已有同一节课的待办，请先删除旧的再改');
+        return;
+      }
     } else {
       // 找不到记录时不要静默当成功 —— 之前就是这样把改动吞掉的。
       final ok = await TodoRepository.instance.update(updated);
@@ -533,142 +600,6 @@ class HomePageState extends ConsumerState<HomePage>
           margin: const EdgeInsets.fromLTRB(20, 0, 20, 80),
         ),
       );
-  }
-
-  /// **长按「＋」→ 语音输入待办**（2026-10-31）。
-  ///
-  /// 流程：
-  ///   1. 屏幕中央弹出「语言球」，同时启动系统语音识别；
-  ///   2. 用户说话，球上实时显示识别中的文字；
-  ///   3. 识别结束 → 收起球 → 弹出**最终确认面板**（内容已按语音填好），
-  ///      用户可以逐项检查修改后再保存。
-  ///
-  /// 语音结果与手打输入共用同一套自然语言解析（见 [TodoNaturalParser]），
-  /// 所以「明天下午3点交作业」两种方式解析结果完全一致。
-  Future<void> _startVoiceInput() async {
-    if (_voiceBusy) return;
-    _voiceBusy = true;
-    final voice = VoiceInputService.instance;
-
-    // 🔴 先申请麦克风权限。
-    //
-    // `speech_to_text` 的 initialize **只检查** RECORD_AUDIO 权限，
-    // 不会替用户申请 → 没权限时它直接返回 false。
-    // 原来不申请权限就调 init()，于是被误报成「本机暂不支持语音识别」，
-    // 用户以为自己手机不支持，其实只是没给麦克风权限。
-    final micGranted = await voice.requestMicrophone();
-    if (!micGranted) {
-      _voiceBusy = false;
-      if (!mounted) return;
-      _toast('需要麦克风权限才能语音输入');
-      return;
-    }
-
-    // 再确认语音服务可用（设备有识别服务）。
-    if (!await voice.init()) {
-      _voiceBusy = false;
-      if (!mounted) return;
-      // 按真实原因给不同提示（两者的解决办法完全不同）。
-      switch (voice.failure) {
-        case InitFailure.noRecognizer:
-          _toast('本机没有可用的语音识别服务');
-        case InitFailure.permissionDenied:
-          _toast('需要麦克风权限才能语音输入');
-        case InitFailure.unknown:
-        case InitFailure.none:
-          _toast('语音识别启动失败，请改用手动输入');
-      }
-      return;
-    }
-    // 🔴 init() 是异步的，等它返回时页面可能已被销毁 → 后面用 context
-    //    会抛异常。这里补一道 mounted 检查，并提前把 navigator 取出来
-    //    （后续弹层 / 收起层都用它，不再依赖 context）。
-    if (!mounted) {
-      _voiceBusy = false;
-      return;
-    }
-    final navigator = Navigator.of(context, rootNavigator: true);
-
-    final controller = VoiceBallController();
-    String? recognized;
-    String? error;
-
-    // 弹球 + 开始听。
-    unawaited(VoiceBallOverlay.show(
-      context,
-      controller: controller,
-      onCancel: () async {
-        await voice.cancel();
-        if (mounted) navigator.pop();
-      },
-    ));
-
-    await voice.listen(
-      onPartial: controller.setText,
-      onLevel: controller.setLevel,
-      onFinal: (text) {
-        recognized = text;
-        controller.setText(text);
-      },
-      onDone: (err) {
-        error = err;
-      },
-    );
-
-    // 等识别真正结束。
-    //
-    // 🔴 2026-11-02：原来 `onDone` 在识别正常走完时**根本不触发**，
-    //    于是这里只能干等满 18 秒再弹「没听清」——用户体感是
-    //    「语音输入总是失败，而且慢得要命」。
-    //    现在 `VoiceInputService` 把 error / done 两条底层信号都接到
-    //    `onDone` 上，任何结局都会立刻把 `error` 或 `recognized` 置上，
-    //    这个循环通常一轮（120ms）就退出。
-    //    保留 deadline 只是兜底（例如插件既不报错也不发状态）。
-    final deadline = DateTime.now().add(const Duration(seconds: 20));
-    while (recognized == null &&
-        error == null &&
-        DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-    }
-    await voice.stop();
-
-    // 收起语言球。
-    if (mounted) {
-      navigator.pop();
-    }
-    _voiceBusy = false;
-    if (!mounted) return;
-
-    final text = recognized?.trim() ?? '';
-    if (text.isEmpty) {
-      _toast(error ?? '没听清，请再试一次');
-      return;
-    }
-
-    // 解析语音内容 → 预填进最终确认面板。
-    //
-    // ⚠️ 解析**只在这里做一次**：2026-11-02 去掉手动输入的一键识别后，
-    //    弹窗不再解析标题，所以时刻必须由这里显式交接（initialHour/
-    //    initialMinute）。原来靠「把 HH:mm 拼进标题」回传，现在拼进去
-    //    就再也解析不回来，会在标题里留脏数据。
-    final parsed = TodoNaturalParser.parse(text);
-    final title = parsed.clean.isEmpty ? text : parsed.clean;
-    final day = parsed.day ?? _selectedDate;
-
-    final todo = await AddTodoDialog.show(
-      context,
-      initialDate: day,
-      initialTitle: title,
-      initialHour: parsed.hour,
-      initialMinute: parsed.minute,
-    );
-    if (todo == null || !mounted) return;
-    await _ensureNotifyPermissionIfNeeded(todo);
-    await TodoRepository.instance.add(todo);
-    if (!mounted) return;
-    setState(() => _selectedDate = todo.date);
-    await _load(forDay: todo.date);
-    _loadOverview();
   }
 
   Future<void> showAddTodoSheet() async {
@@ -734,16 +665,21 @@ class HomePageState extends ConsumerState<HomePage>
     );
   }
 
-  /// 打开**设置页**（2026-10-17：右上角原「首页个性化」按钮改为设置页入口）。
+  /// 打开**设置页**（右上角齿轮）。
   ///
-  /// 「首页个性化」的入口已移到设置页里 —— 否则那个页面就再也进不去了。
-  /// 设置页需要的几个回调在这里就地实现（与用户页同一套动作）。
-  /// 首页右上角齿轮：进**首页独立设置页**，不再直接跳 App 设置页。
-  Future<void> _openSettings() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const HomeSettingsPage()),
-    );
-    if (mounted) setState(() {});
+  /// 🔴 2026-11-03：不再进「首页独立设置页」，改为**切到「我的」并打开**
+  /// 那一套唯一完整的设置页。原来有三套互不相通的设置入口：
+  ///   1. 用户页 → 设置（`SettingsPage`，完整）
+  ///   2. 首页齿轮 → `HomeSettingsPage`（82 行，只有一张「通知提醒」卡）
+  ///   3. 用户页「关于」里的「设置」（又是第 1 个）
+  /// 第 2 套是残页：注释写着「下面保留一个『账号与隐私』入口」，代码里
+  /// 根本没有。用户在首页点齿轮就掉进死胡同，找不到主题/隐私/退出登录。
+  ///
+  /// 走 [AppTabs.openSettings]：置位信号 + 切 Tab，「我的」页在可见时
+  /// 消费信号并打开设置（首页造不出那一页要的回调）。
+  /// `home_settings_page.dart` 已删除。
+  void _openSettings() {
+    AppTabs.openSettings();
   }
 
 
@@ -925,6 +861,30 @@ class HomePageState extends ConsumerState<HomePage>
                       style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.bold, color: context.textPrimary),
                     ),
                   ),
+                  // 排序切换（2026-11-03）：时间 ⇄ 优先级。
+                  // 列表里 priority 只能靠左侧色条看，排不到前面就等于白设。
+                  Material(
+                    color: Colors.transparent,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                      onTap: () => _setSortMode(
+                          _sortMode == 'time' ? 'priority' : 'time'),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Icon(
+                          _sortMode == 'time'
+                              ? Icons.schedule_rounded
+                              : Icons.sort_rounded,
+                          size: 22,
+                          color: _sortMode == 'time'
+                              ? context.textTertiary
+                              : AppTheme.primaryColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
                   Material(
                     color: Colors.transparent,
                     shape: const CircleBorder(),
@@ -932,8 +892,6 @@ class HomePageState extends ConsumerState<HomePage>
                       borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                       key: _kAddTodo, // v2.4.0 教程锚点
                       onTap: () => showAddTodoSheet(),
-                      // 长按 → 语音输入待办（2026-10-31）
-                      onLongPress: () => _startVoiceInput(),
                       child: Padding(
                         padding: const EdgeInsets.all(6),
                         child: Icon(Icons.add_rounded, size: 24, color: AppTheme.primaryColor),

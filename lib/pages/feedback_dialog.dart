@@ -63,9 +63,10 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       title: const Text('意见反馈'),
       content: SizedBox(
-        width: 360,
+        width: (MediaQuery.of(context).size.width - 80).clamp(0.0, 360.0).toDouble(),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

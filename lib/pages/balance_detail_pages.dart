@@ -65,18 +65,24 @@ class _CardBalancePageState extends State<CardBalancePage> {
 
   Future<void> _init() async {
     // 详情页也可能在切网后打开：先确认直连/网关路径，再拉流水。
-    await NetMode.ensureFresh();
+    final ensureFresh = DormService.debugEnsureNetworkFresh ?? NetMode.ensureFresh;
+    await ensureFresh();
     final cached = await DormService.loadTurnoverCache();
     if (cached != null && mounted) {
       setState(() {
         _items
           ..clear()
-          ..addAll(cached.items);
+          ..addAll(_dedupe(cached.items));
+        _page = cached.current;
         _pages = cached.pages;
         _loading = false;
       });
     }
-    await _fetch(refresh: cached == null);
+    // 有缓存就原地刷新，保留列表并更新页码；没有缓存才走首屏加载态。
+    // 缓存的 current 已在上面同步到 _page，避免随后请求下一页时再次追加首页。
+    // 有缓存时它包含此前已加载的多页记录，必须把第一页当「刷新」而非
+    // 普通请求处理；否则 refresh=false 且 page=1 会清空缓存并覆盖列表。
+    await _fetch(refresh: true);
   }
 
   /// 返回是否成功；只刷新列表，不负责「加载更多」的按钮态。
@@ -107,9 +113,9 @@ class _CardBalancePageState extends State<CardBalancePage> {
       if (refresh || _page == 1) {
         _items
           ..clear()
-          ..addAll(res.items);
+          ..addAll(_dedupe(res.items));
       } else {
-        _items.addAll(res.items);
+        _items.addAll(_dedupe(res.items, base: _items));
       }
     });
     await DormService.saveTurnoverCache(CardTurnoverPage(
@@ -120,6 +126,30 @@ class _CardBalancePageState extends State<CardBalancePage> {
     ));
     return true;
   }
+
+  /// 按「时间 + 摘要 + 地点 + 金额 + 收支方向」去重。
+  ///
+  /// 服务端分页参数用错时（`pageNum` 恒被忽略）每一页都是同样十条，
+  /// 追加后就出现「交易明细重复前十条」。修了参数也不能只靠它 ——
+  /// 两条真实流水在同一秒、同一台机器、同样金额是可能的，所以这里只
+  /// 在**同一批次内与已加载列表**去重，不改变真实数据的相对顺序。
+  static List<CardTxn> _dedupe(List<CardTxn> incoming, {List<CardTxn>? base}) {
+    final seen = <String>{};
+    for (final t in base ?? _emptyTxns) {
+      seen.add(_txnKey(t));
+    }
+    final out = <CardTxn>[];
+    for (final t in incoming) {
+      if (seen.add(_txnKey(t))) out.add(t);
+    }
+    return out;
+  }
+
+  static const List<CardTxn> _emptyTxns = <CardTxn>[];
+
+  static String _txnKey(CardTxn t) =>
+      '${t.time}|${t.title}|${t.place}|'
+      '${t.amountYuan.toStringAsFixed(2)}|${t.isIncome}';
 
   Future<void> _loadMore() async {
     if (_loadingMore || _page >= _pages) return;
@@ -796,8 +826,14 @@ class _ElectricityPageState extends State<ElectricityPage> {
   /// 老快照只存了元、没存度数（度数字段是后来才加的），靠它把历史记录也换算成度，
   /// 否则切到「度」时老记录会整片退回元、看起来像没生效。
   double? get _kwhPerYuan {
-    final b = widget.info?.balance;
-    final k = widget.info?.kwh;
+    // 🔴 2026-11-04 审查 P1：这里原来读 `widget.info`，而 `_manualUpdate()`
+    //    成功后会 `_info = fresh`（见本文件 `_manualUpdate` 的 setState）。
+    //    于是用户进页面 → 手动更新拿到新「剩余电量/余额」→ 切到「度」时，
+    //    历史记录仍按**进页面那一刻**的旧比率换算。学校电价调过
+    //    （`defaultUnitPrice = 0.54` 就是兜底值），旧比率算出的度数会整段
+    //    成比例偏差，且肉眼看不出是错的。必须跟 `_info` 走。
+    final b = _info?.balance;
+    final k = _info?.kwh;
     if (b == null || k == null || b <= 0 || k <= 0) return null;
     return k / b;
   }

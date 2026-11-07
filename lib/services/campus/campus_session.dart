@@ -2,6 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+// `CampusException` 定义在 jwgl_client.dart，而它自己也 import 本文件 ——
+// Dart 允许库级循环 import（两边的类都只在方法体里互相引用）。
+// 放在这里而不是把类搬过来：CampusException 是「教务系统」语义的异常，
+// 搬进这个纯 HTTP 会话文件反而让依赖方向更乱。
+import 'jwgl_client.dart';
+
 /// 极简 HTTP 会话（带 cookie jar）—— 客户端直连校园系统的基础设施。
 ///
 /// 为什么不用 `package:http`：它的 `headers` 是多值合并成 ", " 的字符串，
@@ -32,6 +38,29 @@ class CampusResponse {
   /// 是否被弹回登录页（判断会话是否失效）
   bool get looksLikeLogin => url.toLowerCase().contains('login');
 }
+
+/// 从业务页 HTML 里取 `csrftoken` —— **全项目唯一实现**。
+///
+/// 页面给的是 `<uuid>,<uuid去横线>` 这种两段式，业务接口只认**逗号前**那一段。
+/// 原先后端逻辑分散在 `course_fetcher` / `jwgl_client` / `study_client` 三处，
+/// 只有 `study_client` 做了 `split(',')`，另外两处原样返回 → 成绩 / 考试 / 教材 /
+/// 课表四类查询都会拿到带逗号的令牌。抽成一处，避免再分叉。
+String extractCsrfToken(String html) {
+  final m = RegExp(r'id="csrftoken"[^>]*value="([^"]+)"').firstMatch(html);
+  if (m == null) return '';
+  return m.group(1)!.split(',').first.trim();
+}
+
+/// **不做 http→https 升级**的主机白名单。
+///
+/// 目前只有实验课系统 `sygl.cwxu.edu.cn`：它 443 端口是关的（TCP 连接超时），
+/// 而 80 端口完全正常。`CampusSession` 默认会把 `*.cwxu.edu.cn` 的 http 升级成
+/// https（那是为教务/门户那种「明文会被断连」的站点加的），对 sygl 就是致命误伤。
+///
+/// 新增条目时要先实测 443 到底通不通，别凭印象加。
+const Set<String> httpsOnlyExclusions = <String>{
+  'sygl.cwxu.edu.cn',
+};
 
 class CampusSession {
   static const String defaultUserAgent =
@@ -116,11 +145,15 @@ class CampusSession {
           followRedirects: followRedirects,
           body: body);
     } on TimeoutException {
-      throw Exception('连接学校系统超时（${timeout.inSeconds} 秒），请检查网络后重试');
+      // 🔴 抛 CampusException 而不是裸 Exception：
+      //    上层（campus_store 的 `on CampusException`、页面的 `'$e'`）都按它
+      //    判断，裸 Exception 的 toString 会带上 `Exception: ` 前缀，
+      //    用户读到「读取实验课失败：Exception: 连接学校系统超时…」双重前缀。
+      throw CampusException('连接学校系统超时（${timeout.inSeconds} 秒），请检查网络后重试');
     } on HandshakeException {
-      throw Exception('与学校系统的安全连接失败，请确认网络环境后重试');
+      throw CampusException('与学校系统的安全连接失败，请确认网络环境后重试');
     } on SocketException catch (e) {
-      throw Exception('网络不可达：${e.message}');
+      throw CampusException('网络不可达：${e.message}');
     }
   }
 
@@ -150,7 +183,13 @@ class CampusSession {
       var uri = Uri.parse(target);
       // 参考实现（Wxxy-CampusHub/cas.rs sso_follow）实测：cwxu 域名的 http 明文
       // 会被服务端直接断连，302 链里遇到要**升到 https**（只升不降，避免来回跳）。
-      if (uri.scheme == 'http' && uri.host.endsWith('.cwxu.edu.cn')) {
+      //
+      // 🔴 但这条规则不是全局成立的：实验课系统 `sygl.cwxu.edu.cn` **只开了 80**，
+      // 443 直接连不通（实测 curl exit 28、TCP 连接超时），强行升级 = 整个功能
+      // 永远超时。所以按站点白名单排除，别为了统一好看把它一起升级。
+      if (uri.scheme == 'http' &&
+          uri.host.endsWith('.cwxu.edu.cn') &&
+          !httpsOnlyExclusions.contains(uri.host)) {
         uri = uri.replace(scheme: 'https');
         currentUrl = uri.toString();
       }
@@ -190,8 +229,15 @@ class CampusSession {
         continue;
       }
 
-      final text =
-          await res.transform(utf8.decoder).join().timeout(timeout);
+      // 🔴 不能硬解 utf8：站点有一部分页面/错误页是 gb2312，硬解会抛
+      //    `FormatException: Missing extension byte`，然后被各调用方的
+      //    `catch (_)` 吞掉，表象是「HTTP 状态 0 / 接口没数据」——
+      //    实验课 `UserCenter.asmx` 的 404 页就是这样把真因藏了两个月。
+      //    这里改成容错解码：合法 utf8 内容逐字节不变，坏字节不会炸。
+      final bytes = await res
+          .fold<List<int>>(<int>[], (a, b) => a..addAll(b))
+          .timeout(timeout);
+      final text = utf8.decode(bytes, allowMalformed: true);
       return CampusResponse(
         statusCode: res.statusCode,
         body: text,
@@ -219,6 +265,19 @@ class CampusSession {
     bool followRedirects = true,
   }) =>
       _send('GET', url, headers: headers, followRedirects: followRedirects);
+
+  /// 发送站点要求的原始 POST 正文。
+  ///
+  /// 实验课旧 ASMX 的正文是 `{kzJson:'…'}` 这种 JS 字面量，不是合法 JSON。
+  /// 用 [postJson] 会多包一层 JSON 字符串引号；本方法按原样发送。
+  Future<CampusResponse> postRaw(
+    String url,
+    String body, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) =>
+      _send('POST', url,
+          body: body, headers: headers, followRedirects: followRedirects);
 
   Future<CampusResponse> postForm(
     String url,

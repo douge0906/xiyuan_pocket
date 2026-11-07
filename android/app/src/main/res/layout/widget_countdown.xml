@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  倒数日 · 2×2（2026-11-05 重构）
+
+  单一卡片单一倒数日（用户 m24837）：一张卡只显示**一条**倒数日 ——
+  标题 + 日期 + 大数字天数。想同时盯多条日子，就在桌面加多个组件实例，
+  每个实例在 App 里各自绑定不同的倒数日（cd_binding_<id>）。
+
+  旧的「三行固定槽位」已废弃：那种排布在 2×2 里文字挤、扫读慢，
+  用户对整体体验的评价是「极差」。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/cd_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:background="@drawable/widget_card_bg_light">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/cd_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="倒数日"
+            android:textSize="11.5sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#667085" />
+
+        <TextView
+            android:id="@+id/cd_more"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="10sp"
+            android:singleLine="true"
+            android:textColor="#98A2B3" />
+    </LinearLayout>
+
+    <!-- 单条主体：上半留标题与日期，下半放大数字天数 -->
+    <TextView
+        android:id="@+id/cd_item_title"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="6dp"
+        android:gravity="bottom"
+        android:text=""
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/cd_item_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="top|start"
+        android:text="--"
+        android:textSize="30sp"
+        android:textStyle="bold"
+        android:singleLine="true"
+        android:textColor="#1F2937" />
+
+    <TextView
+        android:id="@+id/cd_item_sub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text=""
+        android:textSize="10sp"
+        android:singleLine="true"
+        android:ellipsize="end"
+        android:textColor="#667085" />
+</LinearLayout>

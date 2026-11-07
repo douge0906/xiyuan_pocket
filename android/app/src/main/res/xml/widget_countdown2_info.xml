@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  倒数日组件 2（2026-11-05 新增）。
+  与组件 1 使用同一布局、同一数据键，但绑定键按 appWidgetId 独立，
+  所以两个组件能分别显示不同的倒数日。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_countdown"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:previewLayout="@layout/widget_countdown_preview"
+    android:description="@string/widget_desc_countdown" />

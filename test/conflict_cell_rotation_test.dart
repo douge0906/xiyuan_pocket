@@ -29,6 +29,7 @@ void main() {
             child: ConflictCell(
               courses: [_c('第一门课', 1, 2), _c('第二门课', 1, 2)],
               selectedWeek: 1,
+              onOpenDetailOf: (c) {},
               onResolve: () {},
             ),
           ),

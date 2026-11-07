@@ -8,6 +8,7 @@ import 'card_balance.dart';
 import 'course_fetcher.dart';
 import 'jwgl_client.dart';
 import 'study_client.dart';
+import 'sygl_client.dart';
 import '../../models/study_models.dart';
 
 /// 教务会话缓存（本地版：把「登录一次」的成果存下来，避免每次查询都过验证码）。
@@ -243,6 +244,36 @@ class LocalCampusService {
           String password, String xnm, String xqm, String bhId) =>
       _withRelogin(username, password,
           (s) => CourseFetcher.fetchClassCourses(s, xnm, xqm, bhId));
+
+  /// 查实验课（v1.0.9 新增：客户端直连实验管理系统 sygl.cwxu.edu.cn）。
+  ///
+  /// ⚠️ 与教务/门户一样是**独立子系统**：CAS 票据换的是 sygl 自己的
+  ///   `ASP.NET_SessionId`，不能与 [fetchSchedule] 共用会话 —— 共用会有两个副作用：
+  ///   ① 教务的 cookie 被一起发到 sygl；② sygl 判失效时 `_withRelogin` 会调
+  ///   `CampusStore.clearSession()`，把**教务**的缓存会话一起清掉，下次查成绩白重登。
+  ///   所以这里像 [fetchCardBalance] 一样自建会话，不走 [_withRelogin]。
+  /// ⚠️ sygl **只开 80 端口**，必须走 http（`CampusSession` 里有白名单放行）。
+  static Future<SyglLabFetchResult> fetchLabs(
+      String username, String password) async {
+    Future<SyglLabFetchResult> once() async {
+      final s = CampusSession();
+      try {
+        final err = await SyglClient.login(s, username, password);
+        if (err != null) throw CampusException(err);
+        return await SyglClient.fetchLabs(s);
+      } finally {
+        s.close();
+      }
+    }
+
+    try {
+      return await once();
+    } on CampusException catch (e) {
+      if (!e.needRelogin) rethrow;
+      // 只重试一次：票据可能刚过期，重登一次通常就好。
+      return once();
+    }
+  }
 
   /// 查一卡通余额（v2.0.0 新增：客户端直连融合门户）。
   ///

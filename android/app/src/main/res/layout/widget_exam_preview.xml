@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件选择器预览 · 考试倒计时（静态示范） -->
+<!-- 小组件选择器预览 · 考试倒计时 2×2（静态示范）
+     ⚠️ 必须与 widget_exam.xml + InfoWidgetRenderer.build 保持一致：
+     内边距 10dp、标题 12sp（主题色）、考试名 14sp 粗体、天数 30sp 粗体、
+     底部信息 10.5sp + lineSpacingExtra 1dp。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -11,7 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="考试倒计时"
-        android:textSize="11sp"
+        android:textSize="12sp"
         android:textStyle="bold"
         android:singleLine="true"
         android:textColor="#667085" />
@@ -21,7 +24,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:text="高等数学期末"
-        android:textSize="13sp"
+        android:textSize="14sp"
         android:textStyle="bold"
         android:maxLines="2"
         android:ellipsize="end"
@@ -31,7 +34,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="2 天"
-        android:textSize="26sp"
+        android:textSize="30sp"
         android:textStyle="bold"
         android:singleLine="true"
         android:textColor="#1F2937" />

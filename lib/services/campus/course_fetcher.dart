@@ -96,6 +96,13 @@ class CourseFetcher {
         }
         lastError = j ?? r.body.substring(0, r.body.length > 200 ? 200 : r.body.length);
       } catch (e) {
+        // 🔴 登录过期必须往上抛，不能吞。
+        //    本方法在 get('') 得到 looksLikeLogin 时抛
+        //    `CampusException(needRelogin: true)`，其它三个查询都有
+        //    `if (e is CampusException && e.needRelogin) rethrow;`，只有这里漏了
+        //    —— 会话失效时被记进 lastError，最后统一抛「未能解析课程表数据」，
+        //    上层拿到的是普通错误，不会走重新登录，用户只会反复看到同一句提示。
+        if (e is CampusException && e.needRelogin) rethrow;
         lastError = e;
       }
     }
@@ -111,8 +118,7 @@ class CourseFetcher {
     if (r.looksLikeLogin) {
       throw CampusException('登录已过期，请重新登录', needRelogin: true);
     }
-    final m = RegExp(r'id="csrftoken"[^>]*value="([^"]+)"').firstMatch(r.body);
-    return m?.group(1) ?? '';
+    return extractCsrfToken(r.body);
   }
 
   /// 解析正方课表 JSON（对应 Python `_try_parse_zhengfang_schedule`）。

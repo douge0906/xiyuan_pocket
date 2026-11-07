@@ -124,7 +124,12 @@ class CourseNotifier extends Notifier<CourseState> {
 
   Future<DateTime> setSemesterStart(DateTime date) async {
     final aligned = CourseStorage.mondayOf(date);
-    await CourseStorage.saveSemesterStart(aligned);
+    // 2026-11-04 审查 P1：这里必须传 byUser: true。
+    // 用户在界面上明确选了第 1 周，结果 saveSemesterStart 默认 byUser=false
+    // 会把 semesterStartSource 从 srcUser 冲回 srcAuto → 下次进课表页又被
+    // 弹「请确认第 1 周」，等于用户白选了。
+    // 重排提醒不在这里做：已收进 CourseStorage.saveSemesterStart 这个出口。
+    await CourseStorage.saveSemesterStart(aligned, byUser: true);
     state = state.copyWith(semesterStart: aligned, loading: false);
     return aligned;
   }

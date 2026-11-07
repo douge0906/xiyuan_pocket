@@ -58,6 +58,12 @@ class _HomeTodoListState extends State<HomeTodoList>
   bool _showAllDoneArt = false;
   DateTime? _pendingDate;
 
+  /// 切换动画期间收到过数据更新 → 结束后要补一次 `_applyDiff`。
+  ///
+  /// 🔴 2026-11-03 修「任务列表不更新」：没有这个标记时，动画期间到达的
+  /// 同一天增删改会被整段丢弃（日期没变，切完也没人补账）。
+  bool _pendingSync = false;
+
   /// 重入场动画（切回首页时播放一次）。
   late final AnimationController _refreshCtrl;
 
@@ -88,9 +94,27 @@ class _HomeTodoListState extends State<HomeTodoList>
     super.didUpdateWidget(oldWidget);
     if (!_ready) return;
     if (_switching) {
+      // 🔴 2026-11-03 修「任务列表不更新」：切换动画进行中收到的更新**不能只记日期**。
+      //
+      // 原来这里只 `_pendingDate = widget.date; return;`，问题有两个：
+      //   1. 同一天的待办增删改（勾选、新增、删除）被整段丢弃 ——
+      //      日期没变，所以切换结束后也没人再补一次 `_applyDiff`，
+      //      列表就停在旧内容上，用户怎么点都不动。
+      //   2. 只要 `_switching` 卡住（见 `_enterInitial` /`_switchDay` 的
+      //      finally 注释），这个分支就永远不会再走到 `_applyDiff`。
+      // 现在用一个脏标记，等切换结束统一补一次。
       _pendingDate = widget.date;
+      _pendingSync = true;
       return;
     }
+    _applyWidgetUpdate(oldWidget);
+  }
+
+  /// 把「父级传来新数据」这件事真正落到列表上。
+  ///
+  /// 抽出来是因为它在两个地方要用：`didUpdateWidget`（正常路径）
+  /// 和切换动画结束后补账（`_pendingSync` 路径）。
+  void _applyWidgetUpdate(covariant HomeTodoList oldWidget) {
     if (!_sameDay(oldWidget.date, widget.date)) {
       _slideDir = widget.date.isAfter(oldWidget.date) ? 1 : -1;
     }
@@ -125,14 +149,64 @@ class _HomeTodoListState extends State<HomeTodoList>
     _ready = true;
     _switching = true;
     final gen = ++_generation;
-    // 等 AnimatedList 真正挂载，否则 insertItem 会被丢弃（列表空白）。
-    await _waitForList();
-    for (var i = 0; i < widget.todos.length; i++) {
-      if (!mounted || gen != _generation) return;
-      if (!await _insertAt(i, widget.todos[i])) return;
-      await Future<void>.delayed(const Duration(milliseconds: 55));
+    // 🔴 2026-11-03 修「任务列表不更新」：`_switching` 必须用 finally 复位。
+    //
+    // 原来只在函数末尾 `_switching = false`，但中间有三处 `return`
+    // （挂载丢失 / 代数过期 / `_insertAt` 返回 false）。任意一处提前返回，
+    // `_switching` 就**永久卡在 true** —— 之后 `didUpdateWidget` 每次进来
+    // 都走 `if (_switching) { _pendingDate = widget.date; return; }`，
+    // 父级传什么都进不了 `_applyDiff()`，列表从此再也不刷新。
+    // 用户的体感就是「待办改了、数据也变了，但列表一直不动」。
+    try {
+      // 等 AnimatedList 真正挂载，否则 insertItem 会被丢弃（列表空白）。
+      await _waitForList();
+      for (var i = 0; i < widget.todos.length; i++) {
+        if (!mounted || gen != _generation) return;
+        if (!await _insertAt(i, widget.todos[i])) return;
+        await Future<void>.delayed(const Duration(milliseconds: 55));
+      }
+    } finally {
+      // 只有代数没被更新的那次调用才有资格解锁，避免旧协程
+      // 把新协程正在进行的切换提前放开。
+      if (gen == _generation) {
+        _switching = false;
+        // 🔴 2026-11-03：入场动画期间到达的「换一天」也必须补切。
+        //   原来这里只 `_switching = false` 就结束 —— `didUpdateWidget`
+        //   在 `_switching` 为 true 时只把日期记进 `_pendingDate`，
+        //   而 `_enterInitial` 从不消费它 → 用户入场动画那 200ms 内点了
+        //   「明天」，列表就永远停在今天的内容上（点几次都不动）。
+        final pending = _pendingDate;
+        _pendingDate = null;
+        if (pending != null && !_sameDay(pending, widget.date)) {
+          _slideDir = widget.date.isAfter(pending) ? 1 : -1;
+          _switchDay();
+        } else if (pending != null) {
+          _flushPendingSync();
+        }
+      }
     }
-    _switching = false;
+  }
+
+  /// 切换动画结束后补上动画期间错过的数据更新。
+  void _flushPendingSync() {
+    if (!_pendingSync || !mounted) return;
+    _pendingSync = false;
+    // 此刻 widget 已是最新数据，拿它自己当 oldWidget 的基准不可行
+    // （拿不到上一帧的值），所以直接整体重算：日期若变了就走切日，
+    // 否则按 id 对齐 `_items`。
+    final sameCount = _items.length == widget.todos.length;
+    final sameOrder = sameCount &&
+        List.generate(_items.length, (i) => _items[i].id == widget.todos[i].id)
+            .every((x) => x);
+    if (sameOrder) {
+      // 顺序没变：只同步内容（完成态 / 优先级 / 标题）。
+      for (var i = 0; i < widget.todos.length; i++) {
+        _items[i] = widget.todos[i];
+      }
+      setState(() {});
+      return;
+    }
+    _applyDiff();
   }
 
   /// 等待 AnimatedList 的 State 就绪（最多约 10 帧）。
@@ -159,33 +233,45 @@ class _HomeTodoListState extends State<HomeTodoList>
     _switching = true;
     _showAllDoneArt = false;
     final gen = ++_generation;
-    // 旧项从尾部开始逐个模糊收起。
-    await _waitForList();
-    for (var i = _items.length - 1; i >= 0; i--) {
+    // 🔴 2026-11-03 修「任务列表不更新」：与 `_enterInitial` 同一个坑 ——
+    // 函数里三处 `return` 会在 `_switching = false` 之前跑掉，
+    // 只要切换日期的过程中用户又点了别的（或者某次 insert 失败），
+    // `_switching` 就永久 true，`didUpdateWidget` 全部被挡在门外。
+    try {
+      // 旧项从尾部开始逐个模糊收起。
+      await _waitForList();
+      for (var i = _items.length - 1; i >= 0; i--) {
+        if (!mounted || gen != _generation) return;
+        final removed = _items.removeAt(i);
+        _key.currentState?.removeItem(
+          i,
+          (context, animation) =>
+              _item(removed, animation, removing: true, index: i),
+          duration: UiPrefs.dur(const Duration(milliseconds: 180)),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 45));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 180));
       if (!mounted || gen != _generation) return;
-      final removed = _items.removeAt(i);
-      _key.currentState?.removeItem(
-        i,
-        (context, animation) => _item(removed, animation, removing: true, index: i),
-        duration: UiPrefs.dur(const Duration(milliseconds: 180)),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 45));
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    if (!mounted || gen != _generation) return;
-    _items.clear();
-    await _waitForList();
-    for (var i = 0; i < widget.todos.length; i++) {
-      if (!mounted || gen != _generation) return;
-      if (!await _insertAt(i, widget.todos[i])) return;
-      await Future<void>.delayed(const Duration(milliseconds: 55));
-    }
-    _switching = false;
-    final pending = _pendingDate;
-    _pendingDate = null;
-    if (pending != null && !_sameDay(pending, widget.date)) {
-      _slideDir = widget.date.isAfter(pending) ? 1 : -1;
-      _switchDay();
+      _items.clear();
+      await _waitForList();
+      for (var i = 0; i < widget.todos.length; i++) {
+        if (!mounted || gen != _generation) return;
+        if (!await _insertAt(i, widget.todos[i])) return;
+        await Future<void>.delayed(const Duration(milliseconds: 55));
+      }
+    } finally {
+      if (gen == _generation) {
+        _switching = false;
+        final pending = _pendingDate;
+        _pendingDate = null;
+        if (pending != null && !_sameDay(pending, widget.date)) {
+          _slideDir = widget.date.isAfter(pending) ? 1 : -1;
+          _switchDay();
+        } else {
+          _flushPendingSync();
+        }
+      }
     }
   }
 
@@ -193,14 +279,16 @@ class _HomeTodoListState extends State<HomeTodoList>
     final oldIds = _items.map((e) => e.id).toSet();
     final newIds = widget.todos.map((e) => e.id).toSet();
 
-    // 同一条待办完成态变化：原地替换数据，不重新插入。
+    // 同一条待办内容变化：原地替换数据，不重新插入。
+    //
+    // 🔴 原来只在「完成态 / 优先级 / 标题」三者变化时才替换，于是编辑只改
+    // 提醒时间或描述后卡片仍显旧时刻（要切一天再切回来才刷新）。
+    // 换成「对象不同就替换」——identical 比字段比较便宜，也不会漏。
     for (var i = 0; i < _items.length; i++) {
       final match = widget.todos.where((t) => t.id == _items[i].id);
       if (match.isEmpty) continue;
       final next = match.first;
-      if (next.isDoneOn(widget.date) != _items[i].isDoneOn(widget.date) ||
-          next.priority != _items[i].priority ||
-          next.title != _items[i].title) {
+      if (!identical(next, _items[i])) {
         _items[i] = next;
       }
     }
@@ -233,6 +321,36 @@ class _HomeTodoListState extends State<HomeTodoList>
       _items.insert(at, target);
       listState.insertItem(at, duration: const Duration(milliseconds: 300));
     }
+
+    // 最后重排：只处理「同一批 id、顺序变了」这种纯置换
+    // （切换排序方式 / 改优先级 / 改提醒时间都会改变 `_sortTodos` 的结果）。
+    //
+    // 🔴 不做这一步的表现是：点「排序方式」完全没反应 —— 增删两段循环
+    //    都会被 oldIds/newIds 挡住，`_items` 顺序纹丝不动，而 key 是
+    //    `ValueKey(_dataDay)`、日期没变所以 State 也不会重建。
+    //
+    // ⚠️ 只在**纯置换**时这么做：一旦同时有增删，AnimatedList 正在按
+    //    `insertItem(at)` 记录的索引播放入场动画，此刻再动 `_items` 会让
+    //    itemBuilder 取到错的元素（动画里的那格变成别人）。增删场景交给
+    //    上面两段循环，顺序差一格可以等下一帧。
+    if (oldIds.length == newIds.length && oldIds.every(newIds.contains)) {
+      final wantOrder = widget.todos.map((e) => e.id).toList();
+      final haveOrder = _items.map((e) => e.id).toList();
+      if (!_sameOrder(haveOrder, wantOrder)) {
+        final byId = {for (final t in _items) t.id: t};
+        _items
+          ..clear()
+          ..addAll([for (final id in wantOrder) if (byId[id] != null) byId[id]!]);
+      }
+    }
+  }
+
+  static bool _sameOrder(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Widget _item(
@@ -324,11 +442,10 @@ class _HomeTodoListState extends State<HomeTodoList>
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
+        // 2026-11-03：样式交给全局 snackBarTheme，只留时长。
         SnackBar(
           content: Text(msg),
-          behavior: SnackBarBehavior.floating,
           duration: const Duration(milliseconds: 1600),
-          margin: const EdgeInsets.fromLTRB(20, 0, 20, 80),
         ),
       );
   }

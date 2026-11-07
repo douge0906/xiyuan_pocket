@@ -1,18 +1,22 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../models/course_model.dart';
 import '../models/course_table.dart';
 import '../services/course_storage.dart';
 import '../services/widget_prefs.dart';
 import '../services/widget_sync_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/widget_appearance_editor.dart';
 
-/// 桌面小组件 · 个性化设置（v1.0.4）。
+/// 桌面小组件 · 今日课表（v1.0.4，2026-11-06 改版）。
 ///
 /// 入口：用户页 → 桌面小组件 → 今日课表。
-/// 改任何一项都**立即重新同步**，桌面上的小组件随即重绘，不用重进 App。
+/// 版式与考试 / 校园卡 / 倒数日三个组件的详情页统一：
+/// **顶部当前数据卡 → 立即刷新按钮 → 组件外观 → 该组件独有的设置**。
+/// 改动任何一项都立即重新同步，桌面上的小组件随即重绘。
 ///
 /// 与原生侧的约定：这里的设置经 [WidgetPrefs.toJson] 并进同步 JSON，
 /// 由 TodayWidgetRenderer.kt 读取应用（字段名改动要两边一起改）。
@@ -27,16 +31,16 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
     with WidgetsBindingObserver {
   List<CourseTable> _tables = const [];
   String _tableId = WidgetPrefs.defTableId;
-  String _theme = WidgetPrefs.defTheme;
-  String _accent = WidgetPrefs.defAccent;
-  double _fontScale = WidgetPrefs.defFontScale;
   String _smallMode = 'time';
   String _selectedSize = 'small';
 
+  /// 顶部数据卡：今天这个组件会渲染成什么。
+  String _headline = '';
+  String _detail = '';
+
   /// 精确闹钟权限被拒（Android 12+ 且未授予）→ 显示「去开启」入口。
   bool _exactDenied = false;
-  static const _alarmCh =
-      MethodChannel('wxxy/widget_alarm');
+  static const _alarmCh = MethodChannel('wxxy/widget_alarm');
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -56,16 +60,17 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
       padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
       child: Row(
         children: [
-          Icon(Icons.schedule_rounded,
-              size: 17, color: AppTheme.primaryColor),
+          Icon(Icons.schedule_rounded, size: 17, color: AppTheme.primaryColor),
           const SizedBox(width: 10),
           Expanded(
             child: Text('倒计时每分钟刷新需要「闹钟」权限',
-                style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textSecondary)),
+                style: TextStyle(
+                    fontSize: AppTheme.fontSmall, color: context.textSecondary)),
           ),
           TextButton(
             onPressed: _requestExactAlarm,
-            child: const Text('去开启', style: TextStyle(fontSize: AppTheme.fontSmall)),
+            child:
+                const Text('去开启', style: TextStyle(fontSize: AppTheme.fontSmall)),
           ),
         ],
       ),
@@ -88,6 +93,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
       await _alarmCh.invokeMethod<bool>('requestExact');
     } catch (_) {}
   }
+
   // v1.6.7：中号 / 大号**各自独立**的显示开关（此前共用同一组：中号关掉老师，
   // 大号跟着变 —— 用户反馈的 bug）。小号继续用上面那组全局值。
   bool _showTeacherMedium = true;
@@ -97,8 +103,6 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
   bool _showClassroomLarge = true;
   bool _showTimeLarge = true;
   bool _loading = true;
-
-  /// 「显示内容」的分组展开状态（v1.6.4）：默认只展开小号（1×2）。
 
   @override
   void initState() {
@@ -117,12 +121,8 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
       _tables = tables;
       // 存的表已被删 → 回落到跟随当前课表
       _tableId = tables.any((t) => t.id == tableId) ? tableId : '';
-      _loading = false;
       _activeName = active.name;
     });
-    final theme = await WidgetPrefs.theme();
-    final accent = await WidgetPrefs.accent();
-    final scale = await WidgetPrefs.fontScale();
     final sm = await WidgetPrefs.smallMode();
     // v1.6.7：中号 / 大号各自一套显示开关
     final tmT = await WidgetPrefs.showTeacherMedium();
@@ -131,11 +131,9 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
     final tl = await WidgetPrefs.showTeacherLarge();
     final cl = await WidgetPrefs.showClassroomLarge();
     final til = await WidgetPrefs.showTimeLarge();
+    final today = await _todaySummary(_tableId);
     if (!mounted) return;
     setState(() {
-      _theme = theme;
-      _accent = accent;
-      _fontScale = scale;
       _smallMode = sm;
       _showTeacherMedium = tmT;
       _showClassroomMedium = cm;
@@ -143,7 +141,42 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
       _showTeacherLarge = tl;
       _showClassroomLarge = cl;
       _showTimeLarge = til;
+      _headline = today.$1;
+      _detail = today.$2;
+      _loading = false;
     });
+  }
+
+  /// 「组件现在会显示什么」：与 [WidgetSyncService.syncTodayCourses] 取同一份数据。
+  Future<(String, String)> _todaySummary(String tableId) async {
+    final tables = await CourseStorage.loadTables();
+    CourseTable? table;
+    for (final t in tables) {
+      if (t.id == tableId) {
+        table = t;
+        break;
+      }
+    }
+    table ??= await CourseStorage.activeTable();
+    final rawStart = table.semesterStart ??
+        await CourseStorage.loadSemesterStart() ??
+        CourseStorage.defaultSemesterStart(DateTime.now());
+    final start = CourseStorage.mondayOf(
+        DateTime(rawStart.year, rawStart.month, rawStart.day));
+    final now = DateTime.now();
+    final week = CourseStorage.teachingWeek(now, start);
+
+    final list = <Course>[
+      for (final c in table.courses)
+        if (c.occursOn(now.weekday, week)) c,
+    ]..sort((a, b) => a.startSlot.compareTo(b.startSlot));
+
+    if (list.isEmpty) return ('今天没有课', '第 $week 教学周 · 组件显示「今天没课」');
+    final first = list.first;
+    final head = list.length == 1 ? first.name : '今天 ${list.length} 节课';
+    final detail = '第 $week 教学周 · 第 ${first.startSlot} 节起'
+        '${first.classroom.isEmpty ? '' : ' · ${first.classroom}'}';
+    return (head, detail);
   }
 
   String _activeName = '';
@@ -165,97 +198,82 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
-        title: const Text('桌面小组件',
+        title: const Text('今日课表组件',
             style: TextStyle(fontWeight: FontWeight.w600)),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
               children: [
-                _card(
-                  isDark,
-                  children: [
-                    Row(
-                      children: [
-                        _rowTitle(context, '同步数据'),
-                        const Spacer(),
-                        OutlinedButton(
-                          onPressed: _refreshNow,
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 9),
-                            shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(AppTheme.radiusSm)),
-                            side: BorderSide(color: context.borderColor),
-                          ),
-                          child: Text('立即刷新',
+                // ============ 顶部数据卡（与另外三种组件一致） ============
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: context.surfaceColor,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                    border: Border.all(color: context.borderColor),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.schedule_rounded,
+                              size: 20, color: AppTheme.primaryColor),
+                          const SizedBox(width: 8),
+                          Text('今日课表组件',
                               style: TextStyle(
-                                  fontSize: AppTheme.fontSmall, color: context.textPrimary)),
-                        ),
-                      ],
-                    ),
-                  ],
+                                  fontSize: AppTheme.fontSmall,
+                                  fontWeight: FontWeight.w600,
+                                  color: context.textSecondary)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(_headline,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700,
+                              color: context.textPrimary)),
+                      const SizedBox(height: 4),
+                      Text(_detail,
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              color: context.textTertiary)),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: _refreshNow,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSm)),
+                    side: BorderSide(color: context.borderColor),
+                  ),
+                  child: Text('立即刷新小组件数据',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          color: context.textPrimary)),
+                ),
+                const SizedBox(height: 12),
+                // 外观设置：与其他三种组件同一块编辑器（per-kind 生效）。
+                WidgetAppearanceEditor(
+                  kind: 'schedule',
+                  title: '组件外观',
+                  onSync: WidgetSyncService.syncTodayCourses,
+                ),
+                const SizedBox(height: 20),
+                // ============ 该组件独有的设置 ============
                 _card(
                   isDark,
                   children: [
                     _rowTitle(context, '显示哪份课表'),
                     const SizedBox(height: 10),
                     _tablePicker(context),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _card(
-                  isDark,
-                  children: [
-                    _rowTitle(context, '主题'),
-                    const SizedBox(height: 10),
-                    _segmented(
-                      context,
-                      options: const [
-                        ('system', '跟随系统'),
-                        ('light', '浅色'),
-                        ('dark', '深色'),
-                      ],
-                      value: _theme,
-                      onChanged: (v) => _apply(
-                          () => _theme = v,
-                          () => WidgetPrefs.setTheme(v)),
-                    ),
-                    const SizedBox(height: 18),
-                    _rowTitle(context, '主题色'),
-                    const SizedBox(height: 10),
-                    _accentPicker(context),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _card(
-                  isDark,
-                  children: [
-                    Row(
-                      children: [
-                        _rowTitle(context, '字号'),
-                        const Spacer(),
-                        Text('${(_fontScale * 100).round()}%',
-                            style: TextStyle(
-                                fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-                      ],
-                    ),
-                    Slider(
-                      value: _fontScale.clamp(0.8, 1.2),
-                      min: 0.8,
-                      max: 1.2,
-                      divisions: 8,
-                      activeColor: AppTheme.primaryColor,
-                      inactiveColor: context.borderColor,
-                      onChanged: (v) => setState(() => _fontScale = v),
-                      onChangeEnd: (v) => _apply(
-                          () => _fontScale = v,
-                          () => WidgetPrefs.setFontScale(v)),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -325,6 +343,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
   /// 手动把最新课表推给小组件（平时靠系统定期自动刷新）。
   Future<void> _refreshNow() async {
     await WidgetSyncService.syncTodayCourses();
+    await _load();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('小组件数据已刷新')),
@@ -368,7 +387,10 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
       ),
       style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary),
       items: [
-        DropdownMenuItem(value: '', child: Text('跟随当前课表${_activeName.isEmpty ? '' : '（$_activeName）'}')),
+        DropdownMenuItem(
+            value: '',
+            child: Text(
+                '跟随当前课表${_activeName.isEmpty ? '' : '（$_activeName）'}')),
         for (final t in _tables)
           DropdownMenuItem(value: t.id, child: Text(t.name)),
       ],
@@ -424,49 +446,16 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage>
     );
   }
 
-  Widget _accentPicker(BuildContext context) {
-    return Row(
-      children: [
-        for (final hex in WidgetPrefs.accentChoices) ...[
-          InkWell(
-            onTap: () => _apply(() => _accent = hex,
-                () => WidgetPrefs.setAccent(hex)),
-            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: Color(int.parse('FF$hex', radix: 16)),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: _accent == hex
-                      ? (Theme.of(context).brightness == Brightness.dark
-                          ? Colors.white
-                          : AppTheme.primaryColor)
-                      : Colors.transparent,
-                  width: 2,
-                ),
-              ),
-              child: _accent == hex
-                  ? const Icon(Icons.check_rounded,
-                      size: 16, color: Colors.white)
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 10),
-        ],
-      ],
-    );
-  }
-
-  Widget _switchRow(BuildContext context, String title, bool value,          ValueChanged<bool> onChanged) =>
+  Widget _switchRow(BuildContext context, String title, bool value,
+          ValueChanged<bool> onChanged) =>
       SizedBox(
         height: 48,
         child: Row(
           children: [
             Expanded(
               child: Text(title,
-                  style: TextStyle(fontSize: AppTheme.fontBody, color: context.textPrimary)),
+                  style: TextStyle(
+                      fontSize: AppTheme.fontBody, color: context.textPrimary)),
             ),
             Switch(value: value, onChanged: onChanged),
           ],

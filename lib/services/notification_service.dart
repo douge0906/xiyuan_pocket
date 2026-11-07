@@ -65,12 +65,67 @@ class NotificationService {
       } catch (_) {
         // 获取启动详情失败不影响初始化
       }
+      _available = true;
+      _failedAt = null;
     } catch (e) {
-      // 权限移除/初始化失败：标记不可用，后续操作全部静默
-      debugPrint('通知初始化失败，本地提醒已禁用: $e');
+      // 🔴 2026-11-04 审查 P1：一次初始化失败曾经让整个进程**永久**禁用通知。
+      //    `_available = false` 之后所有 schedule() 在入口静默 return false，
+      //    用户手机上可能连续好几天一条提醒都没有，自检页只有一句
+      //    「通知模块初始化失败」。而这类失败（插件 initialize /
+      //    tz_data.initializeTimeZones）往往是瞬时的。
+      //    现在：记下失败时刻，`_ensureReady()` 在 30 秒冷却后自动重试一次；
+      //    冷却期内直接短路，**不重跑 init**（否则每次调用都会重走一遍
+      //    tz 数据装载，日志会疯狂刷屏，比永久禁用更糟）。
+      debugPrint('通知初始化失败，本地提醒暂不可用（30 秒后重试）: $e');
       _available = false;
+      _failedAt = DateTime.now();
     }
+    // 无论成功失败都置 true —— 它只表示「init() 跑过了」，不表示可用。
     _initialized = true;
+  }
+
+  /// 上次初始化失败的时刻。非空且未过冷却期时不再重试。
+  static DateTime? _failedAt;
+
+  /// 初始化失败后的冷却期。
+  static const Duration _initRetryCooldown = Duration(seconds: 30);
+
+  /// 确保已初始化且当前可用；失败冷却期过后会自动重试一次。
+  ///
+  /// 所有公开方法开头都走它，替代原来的「只 `await init()` 一次」。
+  ///
+  /// ⚠️ 必须防并发重入：`_cancelAll()` 现在用 `Future.wait` 并发取消 143 个
+  ///    id，每个都会走到这里。如果只靠 `_initialized` 这个布尔值，143 个
+  ///    调用会在第一个 `init()` 返回之前**全部**进入初始化分支，实测能把
+  ///    `tz_data.initializeTimeZones()` + 插件 initialize 跑上百次。
+  ///    用一个共享 Future，让并发调用都等同一次初始化。
+  static Future<void>? _initInflight;
+
+  static Future<bool> _ensureReady() async {
+    if (_initialized && _available) return true;
+    if (_initialized && !_available) {
+      // 冷却期内直接放弃，不重跑 init。
+      final failedAt = _failedAt;
+      if (failedAt != null &&
+          DateTime.now().difference(failedAt) < _initRetryCooldown) {
+        return false;
+      }
+      _initialized = false;
+    }
+    if (!_initialized) {
+      final inflight = _initInflight;
+      if (inflight != null) {
+        await inflight;
+      } else {
+        final future = _initInflight = init();
+        try {
+          await future;
+        } finally {
+          if (identical(_initInflight, future)) _initInflight = null;
+        }
+      }
+    }
+    return _available;
   }
 
   /// 前台/后台运行时点击通知的回调。
@@ -117,7 +172,7 @@ class NotificationService {
   ///
   /// 2026-11-02：申请过就记一笔，供 [ensureFirstRunPermission] 判断要不要再问。
   static Future<bool> requestPermission() async {
-    if (!_available) return false;
+    if (!await _ensureReady()) return false;
     if (Platform.isAndroid) {
       try {
         final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
@@ -155,8 +210,7 @@ class NotificationService {
   /// 这里只在**用户真的要用提醒**时（创建带提醒的待办 / 首次进首页）
   /// 问一次，被拒绝过就不再纠缠。
   static Future<bool> ensureFirstRunPermission() async {
-    await init();
-    if (!_available) return false;
+    if (!await _ensureReady()) return false;
     if (!Platform.isAndroid) return true;
     if (await notificationsEnabled()) {
       // 已经有了就别打扰；顺手确认精确闹钟（不弹窗，只查）。
@@ -210,40 +264,55 @@ class NotificationService {
 
   /// 系统通知总开关是否已开启（Android 13+ 即 POST_NOTIFICATIONS 运行时权限）。
   /// 覆盖安装不会自动授予该权限——这是「提醒全都不响」的头号原因。
+  ///
+  /// 2026-11-04 审查 P1：catch 里原本 `return true`。插件未注册（`_available
+  /// == false`）或平台调用抛异常时，自检页会把「读不到」显示成「已开启」，
+  /// 用户被明确误导。这里改成 false —— 「无法确认」在这条链路上的安全侧
+  /// 是「当作没开」，宁可真报警也不要假绿灯。
   static Future<bool> notificationsEnabled() async {
-    await init();
-    if (!_available) return false;
+    if (!await _ensureReady()) return false;
     if (!Platform.isAndroid) return true;
     try {
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
-      return await androidPlugin?.areNotificationsEnabled() ?? true;
-    } catch (_) {
-      return true;
+      return await androidPlugin?.areNotificationsEnabled() ?? false;
+    } catch (e) {
+      debugPrint('[Notification] areNotificationsEnabled 失败: $e');
+      return false;
     }
   }
 
   /// 申请「闹钟和提醒」特殊权限（Android 12+ 出现；Android 14+ 默认关闭，
   /// 未授予时精确闹钟降级为非精确——有约 15 分钟最小窗口，短延时闹钟会"看起来没触发"）。
   /// 首次调用会跳转系统设置页，用户需打开「闹钟和提醒」开关。返回当前是否可用。
+  ///
+  /// 2026-11-04 审查 P1：catch 里原本 `return true`（同 notificationsEnabled 的
+  /// 问题）。`granted ?? true` 在 androidPlugin 为 null 时直接给出「已授权」，
+  /// 随后设置页还 toast「已授权」。改为 false 并留日志。
   static Future<bool> ensureExactAlarmPermission() async {
-    await init();
-    if (!_available) return false;
+    if (!await _ensureReady()) return false;
     if (!Platform.isAndroid) return true;
     try {
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       final granted = await androidPlugin?.requestExactAlarmsPermission();
-      return granted ?? true;
-    } catch (_) {
-      return true;
+      return granted ?? false;
+    } catch (e) {
+      debugPrint('[Notification] requestExactAlarmsPermission 失败: $e');
+      return false;
     }
   }
 
   /// 系统队列中待触发的定时提醒条数（自检用：0=没排上，>0=已排上等系统触发）。
+  ///
+  /// ⚠️ 2026-11-04 审查 P1 结论，别把这个数字当成「系统真排上了」的证明：
+  /// 插件 Java 侧 `pendingNotificationRequests` 读的是它自己写的 SharedPreferences
+  /// 缓存（`loadScheduledNotifications`），与 `AlarmManager` 里实际有没有这个
+  /// 闹钟无关。三种偏差都会出现 —— ROM 清理抹掉 PendingIntent 后缓存仍有；
+  /// 降级到 inexact 的照样计入；开机被 `removeNotificationFromCache` 删掉的
+  /// 缓存和队列同时空了。它只能当「上一轮 App 排过哪些 id」的提示。
   static Future<int> pendingCount() async {
-    await init();
-    if (!_available) return 0;
+    if (!await _ensureReady()) return 0;
     try {
       final list = await _plugin.pendingNotificationRequests();
       return list.length;
@@ -253,13 +322,16 @@ class NotificationService {
   }
 
   /// 「闹钟和提醒」精确闹钟权限是否已授予（纯查询，不会跳转系统页）。
+  ///
+  /// 2026-11-04 审查 P1：catch 里原本 `return true`，与上面两处同源问题。
   static Future<bool> exactAlarmsEnabled() async {
     if (!Platform.isAndroid) return true;
     try {
       final status = await Permission.scheduleExactAlarm.status;
       return status.isGranted;
-    } catch (_) {
-      return true;
+    } catch (e) {
+      debugPrint('[Notification] scheduleExactAlarm.status 失败: $e');
+      return false;
     }
   }
 
@@ -554,10 +626,23 @@ class NotificationService {
     bool liveUpdate = false,
     /// 待办优先级（0 普通 / 1 重要 / 2 紧急）—— 决定通知渠道与振动强度。
     int priority = 0,
+    /// 重复规则（2026-11-04 新增）。
+    ///
+    /// 不传 = 一次性排程。传了之后交给系统自己推进：
+    ///   · [DateTimeComponents.time]             → 每天同一时刻
+    ///   · [DateTimeComponents.dayOfWeekAndTime] → 每周同一星期同一时刻
+    ///
+    /// 🔴 修的是「重复待办只响一次」：此前一条「每天 8:00」的待办只排了
+    ///    一个绝对时刻，第二天不开 App 就不再响 —— 因为重排只挂在启动
+    ///    / 回前台 / 开机三条路上，App 没活着就没人补排。
+    ///
+    /// 注意 fork 里 [validateDateIsInTheFuture] 对非 null 的
+    /// matchDateTimeComponents **直接放行**，所以传过去的时刻可以是过去
+    /// （系统会自己推到下一个匹配点），这里不必再校正。
+    DateTimeComponents? matchDateTimeComponents,
   }) async {
     /// 返回是否真的排上（false = 初始化失败或三级降级全部失败）。
-    await init();
-    if (!_available) return false; // 初始化失败时静默返回
+    if (!await _ensureReady()) return false;
 
     final details = NotificationDetails(
       android: _detailsFor(
@@ -571,10 +656,21 @@ class NotificationService {
       ),
       iOS: _iosDetails,
     );
-    final when = tz.TZDateTime.from(scheduledTime.toUtc(), tz.UTC);
 
-    Future<void> doSchedule(AndroidScheduleMode mode) =>
-        _plugin.zonedSchedule(
+    // 🔴 2026-11-04 审查 P1：这里曾经用 `tz.UTC` 建 `TZDateTime`。
+    //    单次排程因此是**对的**（UTC 墙钟 + UTC zone = 正确 epoch），但重复
+    //    规则由插件 Java 侧 `getNextFireDateMatchingDateTimeComponents` 接管，
+    //    它用 `ZoneId.of(details.timeZoneName)` 推进 —— 也就是 **UTC 的墙钟
+    //    和星期**。用户从 UTC+8 到 UTC+9（或进入夏令时），UTC 时刻不变 →
+    //    本地响铃时刻整体偏移 1 小时；跨 UTC 日界的那批（本地周一 07:00 =
+    //    UTC 周日 23:00）会落到**周日**。
+    //    修法：用设备当前偏移构造一个固定时区 Location，让墙钟就是本地墙钟。
+    //    不引 `flutter_timezone` 是因为只需要一个偏移量，而
+    //    `DateTime.now().timeZoneOffset` 就有；代价是不处理夏令时切换
+    //    （中国大陆 1991 年后无夏令时，且切换时用户会重新进 App 触发重排）。
+    final when = _localWallClock(scheduledTime);
+
+    Future<void> doSchedule(AndroidScheduleMode mode) => _plugin.zonedSchedule(
           id,
           title,
           body,
@@ -582,6 +678,7 @@ class NotificationService {
           details,
           androidScheduleMode: mode,
           payload: payload,
+          matchDateTimeComponents: matchDateTimeComponents,
         );
 
     // 排程降级链（2026-10-31）：
@@ -621,8 +718,15 @@ class NotificationService {
   /// 立即发一条测试通知（设置页「自检」用）。
   /// 返回是否发送成功（权限被拒时系统会静默丢弃，这里只代表调用没抛异常）。
   static Future<bool> showTestNotification() async {
-    await init();
-    if (!_available) return false;
+    if (!await _ensureReady()) return false;
+    // 🔴 2026-11-04：`show()` 在通知权限被拒时**不会抛异常** —— 系统只是把
+    //    这条丢掉，Dart 侧拿到的是正常返回。于是「没权限」被报成「发送成功」，
+    //    这正是「清理后台后测不到通知」始终定位不了的原因之一。
+    //    必须在发之前问一次系统，被拒就是失败，别让界面说谎。
+    if (!await notificationsEnabled()) {
+      debugPrint('测试通知未发送：系统未授予通知权限');
+      return false;
+    }
     try {
       await _plugin.show(
         999001,
@@ -648,12 +752,59 @@ class NotificationService {
   }
 
   static Future<void> cancel(int id) async {
-    await init();
+    if (!await _ensureReady()) return;
     try {
       await _plugin.cancel(id);
     } catch (e) {
       debugPrint('取消通知失败: $e');
     }
+  }
+
+  /// 把「本地墙钟时刻」映射成带时区语义的 [tz.TZDateTime]。
+  ///
+  /// 2026-11-04 审查 P1 的修法核心：**不能用 `tz.UTC`**。
+  ///
+  /// `tz.UTC` 给插件的 `timeZoneName` 就是 `"UTC"`，于是插件 Java 侧的
+  /// `getNextFireDateMatchingDateTimeComponents` 用 `ZoneId.of("UTC")` 推算
+  /// 重复规则的下一个触发点 —— 它算出来的是「UTC 的 08:00」，本地就变成了
+  /// 16:00；跨 UTC 日界时星期还会错一天（本地周一 07:00 = UTC 周日 23:00）。
+  ///
+  /// 这里用一个「固定偏移」的 Location：名字取 `UTC+08:00` 这种形式（不写死
+  /// 城市名，避免误导），过渡表为空、只有一个 zone，于是任何时刻查询都得到
+  /// 同一个偏移 —— 墙钟就是用户手机上的本地墙钟。
+  ///
+  /// 为什么不用 `flutter_timezone` 取真 IANA zone：多引一个平台依赖只为拿一个
+  /// 偏移量不划算，而 `DateTime.now().timeZoneOffset` 直接就有。代价是不处理
+  /// 夏令时切换（中国大陆 1991 年后无夏令时；且真到那一步，用户重新进 App
+  /// 就会触发重排，届时偏移会重新取）。
+  static tz.TZDateTime _localWallClock(DateTime local) {
+    final offset = local.timeZoneOffset;
+    // Local 是本地墙钟，需要把它当成「该偏移下的墙钟」重建一遍：
+    // 先算出对应的 UTC 瞬时，再用固定偏移的 Location 表达它。
+    final utcInstant = local.toUtc();
+    final fixed = _fixedOffsetLocation(offset);
+    return tz.TZDateTime.from(utcInstant, fixed);
+  }
+
+  static final Map<int, tz.Location> _fixedCache = <int, tz.Location>{};
+
+  static tz.Location _fixedOffsetLocation(Duration offset) {
+    final minutes = offset.inMinutes;
+    return _fixedCache.putIfAbsent(minutes, () {
+      final sign = minutes < 0 ? '-' : '+';
+      final abs = minutes.abs();
+      final name = 'UTC$sign${abs ~/ 60 >= 10 ? '' : '0'}${abs ~/ 60}:'
+          '${(abs % 60).toString().padLeft(2, '0')}';
+      return tz.Location(
+        name,
+        const <int>[],                       // 无过渡
+        const <int>[],                       // 无过渡索引
+        <tz.TimeZone>[
+          tz.TimeZone(offset.inMilliseconds,
+              isDst: false, abbreviation: name),
+        ],
+      );
+    });
   }
 
   static Future<void> cancelAll() async {

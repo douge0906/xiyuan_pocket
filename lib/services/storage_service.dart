@@ -173,6 +173,36 @@ class StorageService {
   }
 
   /// 保存被隐藏的服务 id 列表。
+  // ---------------- 待办排序方式（2026-11-03） ----------------
+  // 'time' = 按时间（默认，原行为）；'priority' = 按优先级再按时间。
+  static const String _kTodoSortMode = 'todo_sort_mode';
+
+  static Future<String> loadTodoSortMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_kTodoSortMode);
+    return (v == 'priority') ? 'priority' : 'time';
+  }
+
+  static Future<void> saveTodoSortMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kTodoSortMode, mode == 'priority' ? 'priority' : 'time');
+  }
+
+  // ---------------- 服务页排序（2026-11-03） ----------------
+  // 存的是**用户拖出来的 id 顺序**；不在列表里的新服务由调用方追加到末尾，
+  // 这样以后加了新服务、老用户也能按「老顺序 + 新服务补末尾」展示。
+  static const String _kServiceOrder = 'service_order';
+
+  static Future<List<String>> loadServiceOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kServiceOrder) ?? <String>[];
+  }
+
+  static Future<void> saveServiceOrder(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kServiceOrder, ids);
+  }
+
   static Future<void> saveHiddenServices(List<String> ids) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_kHiddenServices, ids);
@@ -323,6 +353,10 @@ class StorageService {
   static const String _kUiHaptics = 'ui_haptics';
 
   /// 振动反馈开关；没调过 → 开。
+  ///
+  /// 2026-11-03（1.0.9）：开关升级成四档强度（关闭/轻/强/极强），
+  /// 新键 [_kUiHapticLevel]。这里保留旧键是为了**老用户迁移**：
+  /// 老版本关过振动的人，升级后不该突然开始震。
   static Future<bool> loadUiHaptics() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_kUiHaptics) ?? true;
@@ -331,6 +365,57 @@ class StorageService {
   static Future<void> saveUiHaptics(bool v) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kUiHaptics, v);
+  }
+
+  static const String _kUiHapticLevel = 'ui_haptic_level';
+
+  /// 振动强度档位（0 关闭 / 1 轻 / 2 强 / 3 极强）。
+  ///
+  /// 迁移规则：如果新键还没写过，就看旧开关 —— 明确关过的读成 0，
+  /// 其余一律默认 2（「强」）。
+  static Future<int> loadUiHapticLevel() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getInt(_kUiHapticLevel);
+    if (v != null) return v.clamp(0, 3);
+    final legacy = prefs.getBool(_kUiHaptics);
+    return legacy == false ? 0 : 2;
+  }
+
+  static Future<void> saveUiHapticLevel(int v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kUiHapticLevel, v.clamp(0, 3));
+  }
+
+  // ---------------- 字体族（2026-11-03，设置页「字体设置」） ----------------
+  static const String _kUiFontFamily = 'ui_font_family';
+
+  /// 全局字体族；空串 = 跟随系统默认。
+  static Future<String> loadUiFontFamily() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kUiFontFamily) ?? '';
+  }
+
+  static Future<void> saveUiFontFamily(String v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kUiFontFamily, v);
+  }
+
+  // ---- 通知页「我已手动设置好」的自检确认（2026-11-03，设置页 #9） ----
+  //
+  // 电池优化 / 自启动 / 通知渠道这三项**系统不给我们读状态**，
+  // 只能用户自己进系统设置看。以前页面永远显示灰色的「需手动确认」，
+  // 用户回来也不知道自己算不算搞定了。改成让用户自己点一下确认，
+  // 勾了就变绿，并且跨启动记住。
+  static const String _kNotifChecked = 'notif_manual_checked';
+
+  static Future<Set<String>> loadNotifChecked() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_kNotifChecked) ?? const <String>[]).toSet();
+  }
+
+  static Future<void> saveNotifChecked(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kNotifChecked, ids.toList()..sort());
   }
 
   // ---------------- 页面背景色（v1.5.0，浅色模式生效） ----------------
@@ -347,6 +432,41 @@ class StorageService {
   static Future<void> saveUiBackgroundColor(Color? c) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kUiBackgroundColor, c?.toARGB32() ?? -1);
+  }
+
+  // ---------------- 深色模式背景色（2026-11-03） ----------------
+  // 与浅色背景**分开存**：共用一份的话，浅色挑过米黄后一进深色就会
+  // 变成「亮底 + 深字」—— 这是原来把该设置项在深色下整行隐藏的原因。
+  static const String _kUiBackgroundColorDark = 'ui_bg_color_dark';
+
+  static Future<Color?> loadUiBackgroundColorDark() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getInt(_kUiBackgroundColorDark);
+    if (v == null || v < 0) return null;
+    return Color(v);
+  }
+
+  static Future<void> saveUiBackgroundColorDark(Color? c) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kUiBackgroundColorDark, c?.toARGB32() ?? -1);
+  }
+
+  // ---------------- 手绘纸纹背景（2026-11-04，实验性） ----------------
+  // 存的是 `HandDrawnBackground.id`（'none'/'ruled'/...），不是序号 ——
+  // 以后往枚举里插新风格不会把老用户的选择串位。null / 未知值一律回落 'none'。
+  static const String _kHandDrawnBackground = 'hand_drawn_background_v1';
+  static const String kHandDrawnBackgroundNone = 'none';
+
+  static Future<String> loadHandDrawnBackground() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_kHandDrawnBackground);
+    if (v == null || v.isEmpty) return kHandDrawnBackgroundNone;
+    return v;
+  }
+
+  static Future<void> saveHandDrawnBackground(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kHandDrawnBackground, id);
   }
 
   // ---------------- 消息页栏目样式（v1.1.0） ----------------

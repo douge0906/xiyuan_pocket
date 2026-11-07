@@ -12,4 +12,7 @@
     <string name="widget_desc_exam">最近一场考试的剩余天数（2×2）</string>
     <string name="widget_name_card">校园卡余额</string>
     <string name="widget_desc_card">一卡通余额与更新时间（2×1）</string>
+    <string name="widget_name_countdown">倒数日 1</string>
+    <string name="widget_name_countdown2">倒数日 2</string>
+    <string name="widget_desc_countdown">离重要日子还有几天（2×2）</string>
 </resources>

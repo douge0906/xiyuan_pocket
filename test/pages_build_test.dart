@@ -18,6 +18,8 @@ void main() {
     // 避开 flutter_secure_storage（测试环境没有平台通道）与真实网络。
     DormService.debugSno = '';
     DormService.debugPwd = '';
+    DormService.debugTurnoverFetcher = null;
+    DormService.debugEnsureNetworkFresh = null;
   });
 
   const dorm = DormInfo(
@@ -71,5 +73,44 @@ void main() {
     await tester.pump();
     expect(find.byType(CardBalancePage), findsOneWidget);
     expect(find.textContaining('40.89'), findsWidgets);
+  });
+
+  testWidgets('一卡通详情页：缓存恢复后不再追加首页', (tester) async {
+    CardTxn txn(int n) => CardTxn(
+          time: '2026-11-05 12:${n.toString().padLeft(2, '0')}:00',
+          title: '消费$n',
+          place: '食堂',
+          amountYuan: n.toDouble(),
+          isIncome: false,
+          balanceYuan: 40,
+        );
+    await DormService.saveTurnoverCache(CardTurnoverPage(
+      items: List.generate(20, (i) => txn(i + 1)),
+      total: 40,
+      current: 1,
+      pages: 2,
+    ));
+    DormService.debugEnsureNetworkFresh = () async {};
+    DormService.debugTurnoverFetcher = ({int page = 1, int size = 20, String type = ''}) async {
+      expect(page, 1);
+      return CardTurnoverPage(
+        items: List.generate(20, (i) => txn(i + 1)),
+        total: 40,
+        current: 1,
+        pages: 2,
+      );
+    };
+    await tester.pumpWidget(const MaterialApp(home: CardBalancePage(balance: 40.89)));
+    await tester.pump();
+    // 页面初始化有网络探测、缓存读取、请求三次异步边界；用 runAsync 等
+    // 真实微任务跑完，避免只推进假时钟而尚未恢复缓存。
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pump();
+    for (var i = 1; i <= 20; i++) {
+      expect(find.text('消费$i', skipOffstage: false), findsOneWidget);
+    }
+    final cached = await DormService.loadTurnoverCache();
+    expect(cached?.current, 1);
+    expect(cached?.items.length, 20);
   });
 }

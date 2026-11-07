@@ -165,6 +165,17 @@ class CourseTodoService {
 
   static Future<int> _syncCoursesForDateInner(DateTime day) async {
     try {
+      // 🔴 过去的日期不再同步。
+      //
+      // suppress() 会自清理「早于今天」的键（注释假设过去日期不会再被同步），
+      // 但 _load 每次都会调本方法、`_shiftWeek(-1)` 也能翻回上周 —— 于是
+      // 用户删掉的课程待办会按 completed:false 重建，紧接着
+      // autoCompleteFinishedCourses 又把它标成已完成，用户看到的是
+      // 「删掉的课回来了，还显示已完成」。
+      // 历史日期的完成态本来就由 autoCompleteFinishedCourses 负责，不需要重建。
+      final n = DateTime.now();
+      final today = DateTime(n.year, n.month, n.day);
+      if (DateTime(day.year, day.month, day.day).isBefore(today)) return 0;
       final courses = await CourseStorage.loadCourses();
       if (courses.isEmpty) return 0;
       final start = await CourseStorage.loadSemesterStart() ??
@@ -296,7 +307,19 @@ class CourseTodoService {
         title: marker,
         description: '${c.classroom} · $slotText',
         date: DateTime(day.year, day.month, day.day),
-        reminderTime: reminder,
+        // 🔴 2026-11-04 审查 P1：这里原本写的是 `reminderTime: reminder`，
+        //    而 `reminder` 就是**上课时刻本身**（时间块 start，无提前量）。
+        //    于是同一节课会响两条：
+        //      1) `CourseReminderService` 在「上课前 lead 分钟」排的
+        //         「距上课 10 分钟 · 高数」；
+        //      2) 本条待办经 `_syncNotification` 在**压铃那一刻**再排的
+        //         「待办提醒：【课程】高数」。
+        //    用户体感就是「怎么又来一条」。
+        //
+        //    改法：时间只写进 `dueAt`（列表照旧显示几点上课），
+        //    `reminderTime` 留空 → `planReminders` 直接返回空，
+        //    上课提醒**统一由 `CourseReminderService` 负责**，一个入口一个声音。
+        dueAt: reminder,
         completed: false,
       ));
       existingIds.add(idKey);

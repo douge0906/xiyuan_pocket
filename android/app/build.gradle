@@ -96,5 +96,9 @@ flutter {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // 2026-11-04：JVM 单测里 android.jar 的 org.json 是空桩（调用即 Stub!），
+    // 会让「Dart 真实 JSON 能否被原生解析」的契约测试假红。换真实现。
+    testImplementation("org.json:json:20240303")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

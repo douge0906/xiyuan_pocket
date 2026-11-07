@@ -8,10 +8,16 @@ class _CourseWelcomeSheet extends StatefulWidget {
   const _CourseWelcomeSheet({
     required this.onPickColor,
     required this.onToggleGrid,
+    required this.onToggleHighlightToday,
   });
 
   final void Function(int argb, bool gradient) onPickColor;
   final ValueChanged<bool> onToggleGrid;
+
+  /// 2026-11-04（用户 m20455 #2）：引导里补一个「时间列高亮」开关。
+  /// 指的是今天那一列的浅色高亮（日期栏 + 格子底），
+  /// 与设置页「高亮今天」是同一个键 `highlightToday`。
+  final ValueChanged<bool> onToggleHighlightToday;
 
   @override
   State<_CourseWelcomeSheet> createState() => _CourseWelcomeSheetState();
@@ -36,12 +42,14 @@ class _CourseWelcomeSheetState extends State<_CourseWelcomeSheet> {
 
   int? _picked;
   bool _grid = true;
+  bool _highlightToday = true;
 
   @override
   void initState() {
     super.initState();
     // 初始状态跟随当前设置，避免用户以为"默认没网格"
     _grid = CourseStorage.showGridLinesCache;
+    _highlightToday = CourseStorage.highlightTodayCache;
   }
 
   @override
@@ -121,6 +129,24 @@ class _CourseWelcomeSheetState extends State<_CourseWelcomeSheet> {
                   onChanged: (v) {
                     setState(() => _grid = v ?? false);
                     widget.onToggleGrid(_grid);
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+
+            // 时间列高亮（今天那一列）
+            Row(
+              children: [
+                Text('时间列高亮',
+                    style: TextStyle(fontSize: AppTheme.fontBody, color: _ink)),
+                const Spacer(),
+                Checkbox(
+                  value: _highlightToday,
+                  visualDensity: VisualDensity.compact,
+                  onChanged: (v) {
+                    setState(() => _highlightToday = v ?? false);
+                    widget.onToggleHighlightToday(_highlightToday);
                   },
                 ),
               ],

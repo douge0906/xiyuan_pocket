@@ -13,9 +13,10 @@ import 'notification_service.dart';
 ///
 /// - 排程时机：App 启动、课表数据变更（保存/导入/删除）、开机（BootReceiver）；
 /// - 通知 id 段：`_idBase + dayIndex*_dayStride + startSlot` = 100000..100132
-///   （7 天 × 每天 20 个槽位，实占到第 12 节课；取消时按 0..140 全段扫，覆盖更宽）；
-///   ⚠️ 待办用的是 `Todo.notifyId`（FNV-1a 折 31 位），理论上可能落进本段 ——
-///   概率约 141/2³¹，实际未见；真要彻底隔离得给待办 id 加固定高位偏移；
+///   （7 天 × 每天 20 个槽位，只用 1..12；13..19 空槽留给「同节重叠的第二门起」，
+///   取消时按 0..140 全段扫，覆盖更宽）；
+///   ⚠️ 待办用的是 `Todo.notifyId`（0x40000000 + hash & 0x0FFFFFFF），
+///   下限 1073741824 远高于本段上限 100140，**物理上不相交**；
 /// - 提前量：默认 10 分钟，可在设置页配置（`_kLeadMinutes`，v2.3.0 起）；
 /// - 所有异常静默吞掉，绝不影响 App 主体。
 class CourseReminderService {
@@ -110,9 +111,23 @@ class CourseReminderService {
       //    用户手机上全部上课提醒已被清掉，而异常被下面 catch 吞掉，
       //    结果是一条不响、设置页还显示「已排程 0 条」，完全无法自查。
       final courses = await CourseStorage.loadCourses();
-      await _cancelAll();
-      if (courses.isEmpty) return 0;
+      if (courses.isEmpty) {
+        // 课表空就不必重建，但历史排程仍要清（改表/退课后的残留）。
+        await _cancelAll();
+        await _saveStats(0, null, '');
+        return 0;
+      }
 
+      // 🔴 2026-11-04 审查 P0：这几步「与课程数据无关的读配置」**必须**在
+      //    `_cancelAll()` 之前做完。
+      //    原顺序是「_cancelAll() 之后才 leadMinutes/hangCountdown/
+      //    liveUpdateEnabled/loadSemesterStart/_loadSlotStartMap」，而
+      //    _cancelAll() 是 142 次串行平台调用 —— 清空与重建之间有一段
+      //    真实存在的空窗。这五步里任意一步抛（SharedPreferences 拿不到、
+      //    loadTimeBlocks 解析失败…），catch 只 debugPrint + return 0，
+      //    此刻旧提醒已全删、新提醒一条没建 → 用户侧表现是「突然安静地
+      //    再也不响」，设置页只显示「已排程 0 条」。
+      //    把它们上移之后，最坏情况是「旧的还在、新的没建」，至少能响。
       final now = DateTime.now();
       final lead = await leadMinutes();
       final hang = await hangCountdown();
@@ -120,6 +135,8 @@ class CourseReminderService {
       final semesterStart = await CourseStorage.loadSemesterStart() ??
           CourseStorage.defaultSemesterStart(now);
       final slotStart = await _loadSlotStartMap();
+
+      await _cancelAll();
 
       int scheduled = 0;
       final usedIds = <int>{};
@@ -147,8 +164,34 @@ class CourseReminderService {
                   .subtract(Duration(minutes: lead));
           if (!remindAt.isAfter(now)) continue;
 
-          final id = _idBase + d * _dayStride + c.startSlot;
-          if (!usedIds.add(id)) continue; // 同一天同一节重叠，只提醒第一条
+          // 2026-11-04 审查 P1：同一节重叠的两门课，原先在这里
+          // `if (!usedIds.add(id)) continue;` —— 第二条被**静默丢弃**，
+          // 用户只看到第一门课的提醒，以为第二门「不重要」。
+          //
+          // 修法：每天预留 20 个槽位但正常课只用 1..12，把 **13..19 这 7 个
+          // 空槽** 给重叠课用 —— 完全落在 `_cancelAll` 已扫的 0..140 段内，
+          // 不需要改取消逻辑，也不会越界到别的 id 段。
+          // 2026-11-04 审查 P3：`_dayStride = 20`，槽 20 一直是空的；
+          // 边界从 `n <= 7` 放到 `n <= 8` 可以白捡一个名额。
+          final baseId = _idBase + d * _dayStride + c.startSlot;
+          var id = baseId;
+          if (usedIds.contains(id)) {
+            // 第 2 门起用 12+n（13..20）
+            var n = 1;
+            while (n <= 8 && usedIds.contains(_idBase + d * _dayStride + 12 + n)) {
+              n++;
+            }
+            if (n > 8) {
+              // 同节超过 9 门属脏数据，别再无限找；但必须留痕，
+              // 否则用户永远不知道自己少了一条提醒。
+              debugPrint(
+                  '[CourseReminder] 同节课程过多，丢弃提醒：${c.name} '
+                  '(weekday=$wd slot=${c.startSlot})');
+              continue;
+            }
+            id = _idBase + d * _dayStride + 12 + n;
+          }
+          usedIds.add(id);
 
           // v2.3.8：记录最早一条提醒，供提醒设置页展示「下一条提醒」
           if (nextAt == null || remindAt.isBefore(nextAt)) {
@@ -241,11 +284,27 @@ class CourseReminderService {
 
   /// 发送一条测试提醒：3 秒后到达，120 秒实时倒计时（v2.3.6 按用户要求调整）。
   /// 用户按下后可退出 App / 锁屏，验证「App 不在前台也能收到通知栏提醒」与胶囊效果。
-  static Future<void> fireTest() async {
+  ///
+  /// 🔴 2026-11-04 审查 P1：原返回 `Future<void>`，调用方
+  ///    `reminder_settings_page.dart` 只能看 `pendingCount() > 0` 判成功 ——
+  ///    只要队列里本来有任意一条提醒（课程提醒开着就必然有），这个判据**恒真**。
+  ///    于是排障的唯一入口永远报「测试已排定」，即使三级降级全失败。
+  ///    现改为返回 `schedule()` 的真实结果。
+  static Future<bool> fireTest() async {
     await NotificationService.requestPermission();
+    // 🔴 2026-11-04 修「清理后台后无法触发测试通知」：
+    //    原来是**只**排一条 3 秒后的定时通知。于是两件事混在一起：
+    //      · 通知权限被拒 —— 插件仍可能返回 true（它只是把 show 交给系统，
+    //        系统静默丢弃），界面上却报「测试已排定」；
+    //      · 进程被清掉后这条完全依赖 AlarmManager —— 落到 inexact 通道
+    //        会延迟到几小时之后。
+    //    两种失败长得一模一样，用户没法判断该去开权限还是该去关省电。
+    //    现在先立刻弹一条（不经过任何闹钟）：它到达就说明权限/渠道/悬浮都
+    //    正常，剩下的问题只可能在后台闹钟那一环。
+    final immediate = await NotificationService.showTestNotification();
     final lead = await leadMinutes();
     final postAt = DateTime.now().add(const Duration(seconds: 3));
-    await NotificationService.schedule(
+    final ok = await NotificationService.schedule(
       id: _idBase - 1, // 测试专用 id，与正式排程段不冲突
       title: '测试提醒 · 倒计时演示',
       body: '正在实时倒数，120 秒后自动消失',
@@ -259,14 +318,39 @@ class CourseReminderService {
       countdownTarget: postAt.add(const Duration(seconds: 120)),
       ongoing: true, // 与正式提醒一致（常驻才触发胶囊卡片），120 秒后自动消失
     );
+    // 注意：**不要**在这里调 `NotificationHealth.instance.report()` ——
+    // 它是「整体覆盖」语义（全量重排的最近结果），用一条测试去覆盖会把
+    // 「已排上 N 条 / 失败 M 条」冲成 1/0，设置页的统计反而失真。
+    //
+    // 立刻那条失败 = 权限/渠道问题（连前台都发不出来），此时定时那条也
+    // 没意义，按失败报。
+    return immediate && ok;
+  }
+
+  /// 测试结果的两段式说明（页面 toast 用）。
+  ///
+  /// 之所以单独给一句话：光说「失败」用户不知道下一步该点哪里。
+  static String describeTestResult({required bool ok}) {
+    if (ok) {
+      return '已发送：立刻那条应该已经弹出；3 秒后还有一条定时提醒，'
+          '现在退出 App 或锁屏也能收到。';
+    }
+    return '没发出去。先点上面「通知权限」那一行完成授权；'
+        '若已授权仍无反应，去系统设置把本应用「后台运行 / 自启动」打开。';
   }
 
   /// 取消全部课程提醒（含测试 id）。
+  ///
+  /// 2026-11-04 审查 P3：原来是 142 次**串行** `await` —— 哪怕一条都不存在也
+  /// 要走完 142 个 MethodChannel 往返，而 `main.dart` 的启动、resume、
+  /// 首帧权限回调三处都会触发它。改成并发：平台侧 `cancel` 是幂等的，
+  /// 并发不会产生竞态，但把空窗从「142 个往返」压到「1 个往返」。
   static Future<void> _cancelAll() async {
-    for (var i = 0; i <= _days * _dayStride; i++) {
-      await NotificationService.cancel(_idBase + i);
-    }
-    await NotificationService.cancel(_idBase - 1);
+    final ids = <int>[
+      for (var i = 0; i <= _days * _dayStride; i++) _idBase + i,
+      _idBase - 1,
+    ];
+    await Future.wait(ids.map(NotificationService.cancel));
   }
 
   /// 读取节次→开始时刻表：优先用户自定义时间块，未设置回退默认表。

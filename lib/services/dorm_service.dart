@@ -32,6 +32,13 @@ class DormService {
             NetMode.current == CampusNetMode.webvpn ? WebVpn.wrapUrl : null,
       );
 
+  /// 回归测试用的数据接缝；生产环境始终为 null，不改真实网络与登录流程。
+  static Future<CardTurnoverPage?> Function({int page, int size, String type})?
+      debugTurnoverFetcher;
+
+  /// 回归测试用：跳过内网可达性探测。
+  static Future<void> Function()? debugEnsureNetworkFresh;
+
   /// 平台注册给 CAS 的 service（从统一认证跳转地址抄下来，必须一字不差）。
   static const String casService =
       'http://10.3.100.110/berserker-auth/cas/login/lyCas'
@@ -179,6 +186,7 @@ class DormService {
         lastLoginError = switch (login.status) {
           CasClient.badCredential => '登录失败(密码)',
           CasClient.captchaFailed => '登录失败(验证码)',
+          CasClient.throttled => '登录过于频繁，请稍后再试',
           _ => '登录失败(账号)',
         };
         return lastLoginError;
@@ -476,12 +484,17 @@ class DormService {
     }
 
     walk(node);
+    // 🔴 2026-11-04 审查 P2：候选表里原来有 `'account'`，与上面注释
+    //    「account 是学号，不能用于查卡」直接矛盾。判据 `^\d{3,10}$` 对
+    //    8-12 位学号完全成立，一旦接口没返回 cardAccount/cardId/cardNo，
+    //    就会拿学号去查卡：轻则平台返回空 card（用户看到"查询失败"而实际
+    //    是"无卡账号"），重则平台按学号返回另一张卡（教师卡/临时卡）的
+    //    余额。这条链路最终通向充值入口，不能留兜底。
     for (final k in const [
       'cardaccount',
       'cardid',
       'yktaccount',
       'cardno',
-      'account',
     ]) {
       final v = found[k] ?? '';
       if (v.isNotEmpty && RegExp(r'^\d{3,10}$').hasMatch(v)) return v;
@@ -563,6 +576,10 @@ class DormService {
     int size = 20,
     String type = '',
   }) async {
+    final debugFetcher = debugTurnoverFetcher;
+    if (debugFetcher != null) {
+      return debugFetcher(page: page, size: size, type: type);
+    }
     var result = await _fetchTurnoverOnce(page: page, size: size, type: type);
     // 平台 token 过期时请求会清 token 并返回 null；自动重登一次，
     // 避免详情页偶发「进入后一片空白，要手动更新」。
@@ -581,9 +598,14 @@ class DormService {
     final s = _session;
     if (s == null) return null;
     try {
+      // 🔴 分页参数名是 `current`，不是 `pageNum`（2026-11-06 实测）。
+      //    传 pageNum / pageNo / currentPage 服务端一律忽略、恒回第 1 页
+      //    （响应里 current 也恒为 1），于是「查看更多」每点一次就把同样的
+      //    前 10 条再追加一遍 —— 用户看到的就是「交易明细重复前十条」。
+      //    传 current=2 才真的换页（current=2、首条时间前移）。
       final r = await s.get(
         '$base/berserker-search/search/personal/turnover'
-        '?type=$type&pageNum=$page&pageSize=$size'
+        '?type=$type&current=$page&pageSize=$size'
         '&synAccessSource=$_synSource',
         headers: {
           'synjones-auth': 'bearer $_token',
@@ -807,7 +829,7 @@ class DormService {
       return CardTurnoverPage(
         items: list,
         total: (m['total'] as num?)?.toInt() ?? list.length,
-        current: 1,
+        current: (m['current'] as num?)?.toInt() ?? 1,
         pages: (m['pages'] as num?)?.toInt() ?? 1,
       );
     } catch (_) {
@@ -832,6 +854,7 @@ class DormService {
             }
         ],
         'total': page.total,
+        'current': page.current,
         'pages': page.pages,
       }),
     );

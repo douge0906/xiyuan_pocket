@@ -36,21 +36,13 @@ class AddTodoDialog extends StatefulWidget {
   ///    现在统一到这一个居中弹窗，编辑与新增**同一套交互**。
   final Todo? editTodo;
 
-  /// 预填标题（2026-10-31 语音输入用）。
-  ///
-  /// 语音识别完成后把结果塞进来 → 弹窗里**已经是填好的内容**，
-  /// 用户可以逐项检查修改后再保存（「最终确认面板」）。
+  /// 预填标题。
   final String? initialTitle;
 
   /// 预填描述（内容）。
   final String? initialDescription;
 
-  /// 预填时刻（2026-11-02）。
-  ///
-  /// 🔴 语音输入走这里，而**不是**把 "HH:mm" 拼进标题：
-  ///    手动输入的一键识别已按用户要求去掉（见 [_submit]），
-  ///    拼进标题的时间不会再被解析回 `_hour/_minute`，
-  ///    结果就是标题里残留 "15:00" 这种脏数据。
+  /// 预填时刻。
   final int? initialHour;
 
   /// 预填分钟。与 [initialHour] 成对使用。
@@ -130,6 +122,22 @@ class AddTodoDialog extends StatefulWidget {
     final next = ((secs ~/ block) + 1) * block;
     return midnight.add(Duration(seconds: next));
   }
+
+  /// 提交时这条待办该不该带「自己的」提醒时间。
+  ///
+  /// 🔴 课程待办（id 以 `course_` 开头）**不写** `reminderTime`：上课提醒
+  ///    统一由 `CourseReminderService` 负责（见
+  ///    course_todo_service.dart:310 的审查说明），写了会与「距上课 N 分钟」
+  ///    重复响铃；而过去的上课时刻又会让 [shouldBlockPastReminder] 把
+  ///    「只改错别字」的编辑拦死。其余待办（含新建）一律带准点提醒。
+  @visibleForTesting
+  static DateTime? submitReminder({
+    required DateTime dueAt,
+    required Todo? editTodo,
+  }) {
+    final isCourseTodo = editTodo?.id.startsWith('course_') ?? false;
+    return isCourseTodo ? null : dueAt;
+  }
 }
 
 class _AddTodoDialogState extends State<AddTodoDialog> {
@@ -148,20 +156,6 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
 
   /// 优先级：0=普通，1=重要，2=紧急。
   int _priority = 0;
-
-  /// 是否开启提醒（到点响铃 + 震动）。
-  ///
-  /// 🔴 2026-10-31：滚轮选的时间一直只写进 [Todo.dueAt]（展示用），
-  ///    而排通知只认 [Todo.reminderTime] → 用户「设定几点」却**永远不响**，
-  ///    首页列表也因为只读 reminderTime 而**显示成全天**。
-  ///    这里显式区分「什么时候做」（dueAt）与「要不要提醒」（reminderTime）。
-  bool _remind = true;
-
-  /// 提前提醒分钟数（0 = 准点）。
-  ///
-  /// 2026-10-31：待办原来只能准点提醒（只有课程提醒有提前量），
-  /// 这里加上提前档位。
-  int _leadMinutes = 0;
 
   /// 「每周几」选中的星期（1=周一 … 7=周日）。
   final Set<int> _weekdays = <int>{};
@@ -199,8 +193,6 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
       _priority = edit.priority;
       _repeatType = edit.repeatType;
       _weekdays.addAll(edit.repeatDays);
-      _remind = edit.reminderTime != null;
-      _leadMinutes = edit.remindLeadMinutes;
       _originalReminder = edit.reminderTime;
     } else {
       final base = widget.initialDate ?? now;
@@ -221,9 +213,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
       }
       _hour = rounded.hour;
       _minute = rounded.minute;
-      // 语音结果预填：标题原样填入（解析已在语音侧完成，见
-      // `HomePage._startVoiceInput`），时刻通过 [initialHour]/[initialMinute]
-      // 显式传入 —— 不在这里二次解析标题。
+      // 预填：标题原样填入，时刻通过 [initialHour]/[initialMinute] 显式传入。
       final pre = widget.initialTitle;
       if (pre != null && pre.isNotEmpty) {
         _titleCtrl.text = pre;
@@ -293,18 +283,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
   }
 
   void _submit() {
-    // 🔴 2026-11-02 按用户要求**去掉手动输入的一键识别**。
-    //
-    // 原来这里对手打的标题做 `TodoNaturalParser.parse(title)`：
-    //   · 命中日期 → 覆盖用户在日历里选的 `_day`（选了明天，打「昨天」就变昨天）
-    //   · 命中时刻 → 覆盖滚轮
-    //   · 命中关键词 → **改写标题**（把「明天下午3点」从标题里删掉）
-    // 用户在手打时并没有要求被"智能处理"，这种隐式改写只会让人困惑：
-    // 打什么就存什么，时间请用下面的日历与滚轮显式选择。
-    //
-    // 语音输入仍然会解析（那是语音的必要步骤），但解析在
-    // `HomePage._startVoiceInput` 里完成，通过 initialHour/initialMinute
-    // 与本弹窗交接，不经过这里。
+    // 打什么就存什么：时刻请用日历与滚轮显式选择，不对标题做隐式解析。
     final title = _titleCtrl.value.text.trim();
     if (title.isEmpty) {
       setState(() => _err = '请填写待办名称');
@@ -318,60 +297,77 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
       return;
     }
     final desc = _descCtrl.value.text.trim();
+    final base = widget.editTodo;
 
     // 当天的具体时刻（展示用）。
     final dueAt = DateTime(_day.year, _day.month, _day.day, _hour, _minute);
 
-    // 🔴 提醒时间 = 当天该时刻。**必须写 reminderTime**：
-    //    仓库排通知只认 reminderTime（见 TodoRepository._syncNotification），
-    //    只写 dueAt 会导致「设了时间却永远不响」。
-    //
-    // 「提前 N 分钟」的实现：reminderTime = dueAt − N 分钟，
-    // dueAt 仍是事项本身的时间（显示用），两者分开存。
-    DateTime? reminder;
-    if (_remind) {
-      reminder = dueAt.subtract(Duration(minutes: _leadMinutes));
-      // 时间已过：明确拦截，不静默存一个永远不响的提醒。
-      //
-      // ⚠️ 2026-11-02：编辑**已经过期**的待办时要放行 ——
-      //    用户改的可能是错别字，时间本来就在上周，不该逼他顺带改期。
-      //    判据不是「现在是不是过去」，而是「用户这次有没有动过时间」：
-      //    算出来的提醒时刻与原始值完全一致 → 视为没动 → 不拦。
-      final blocked = AddTodoDialog.shouldBlockPastReminder(
-        reminder: reminder,
-        isEdit: _isEdit,
-        originalReminder: _originalReminder,
-        now: DateTime.now(),
-      );
-      if (blocked) {
-        setState(() => _err = _leadMinutes > 0
-            ? '提前 $_leadMinutes 分钟的提醒时间已过，请调整日期或时间'
-            : '提醒时间已过，请调整日期或时间');
-        _syncWheels();
-        return;
-      }
+    // 提醒时间：普通待办 = 当天该时刻（默认开启、准点）；课程待办留空，
+    // 上课提醒交由 CourseReminderService 统一排程，避免重复响铃与误拦编辑。
+    // 是否真正排铃由「通知与提醒」里的全局开关统一门控。
+    final reminder = AddTodoDialog.submitReminder(dueAt: dueAt, editTodo: base);
+    // 时间已过：明确拦截，不静默存一条永远不响的提醒。
+    // 编辑**已经过期**的待办时放行 —— 用户可能只改错别字，时间本就在过去，
+    // 不该逼他顺带改期。判据是「这次有没有动过时间」而非「现在是不是过去」。
+    final blocked = AddTodoDialog.shouldBlockPastReminder(
+      reminder: reminder,
+      isEdit: _isEdit,
+      originalReminder: _originalReminder,
+      now: DateTime.now(),
+    );
+    if (blocked) {
+      setState(() => _err = '提醒时间已过，请调整日期或时间');
+      _syncWheels();
+      return;
     }
 
-    Navigator.of(context).pop(
-      Todo(
-        // 🔴 编辑时必须沿用原 id：仓库按 (id, 日期) 定位记录
-        //    （见 TodoRepository._indexOf），新建一个 id 会让 update 找不到目标
-        //    而静默 return —— 表现为「弹窗正常关闭，但改动没保住」。
-        id: widget.editTodo?.id ??
-            DateTime.now().microsecondsSinceEpoch.toString(),
-        title: title,
-        description: desc.isEmpty ? null : desc,
-        date: _day,
-        dueAt: dueAt,
-        // 排提醒用这个字段（与仓库口径一致）。
-        reminderTime: reminder,
-        // 提前量（显示与重排都要用）。
-        remindLeadMinutes: _remind ? _leadMinutes : 0,
-        priority: _priority,
-        repeatType: _repeatType,
-        repeatDays: _weekdays.toList()..sort(),
-      ),
-    );
+    // 课程待办 reminderTime 为空 → 必须显式清空，否则 copyWith 的 `??`
+    // 语义会保留编辑前可能存在的旧提醒时间。
+    final clearReminder = reminder == null;
+
+    // 🔴 编辑时必须以**原对象为基底** copyWith，不能新造一个 Todo。
+    //
+    // 2026-11-04 修：此前这里 `Navigator.pop(Todo(...))` 全新构造，只搬了
+    // title/desc/date/dueAt/reminder/priority/repeat 六个字段，
+    // `completed` / `completedDay` / `completedDates` 三个完成态字段全部丢失。
+    // 而 `TodoRepository.update` 是 `list[idx] = todo;` 整行覆盖 → 编辑一个
+    // 已完成待办，它会变回未完成；编辑一条重复待办，它的全部历史打卡被清空。
+    // 新建路径 base 为 null，走 else 分支，行为不变。
+    final built = base == null
+        ? Todo(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            title: title,
+            description: desc.isEmpty ? null : desc,
+            date: _day,
+            dueAt: dueAt,
+            reminderTime: reminder,
+            remindLeadMinutes: 0,
+            priority: _priority,
+            repeatType: _repeatType,
+            // 只有「每周」才需要 repeatDays：不重复 / 每天写进去是脏数据
+            // （`_weekdays` 在「不重复」「每天」chip 上不会被清空）。
+            repeatDays: _repeatType == 'weekly'
+                ? (_weekdays.toList()..sort())
+                : const <int>[],
+          )
+        : base.copyWith(
+            title: title,
+            description: desc.isEmpty ? null : desc,
+            clearDescription: desc.isEmpty,
+            date: _day,
+            dueAt: dueAt,
+            reminderTime: reminder,
+            clearReminder: clearReminder,
+            remindLeadMinutes: 0,
+            priority: _priority,
+            repeatType: _repeatType,
+            clearRepeat: _repeatType == null,
+            repeatDays: _repeatType == 'weekly'
+                ? (_weekdays.toList()..sort())
+                : const <int>[],
+          );
+
+    Navigator.of(context).pop(built);
   }
 
   Widget _priorityChip(String label, int value, Color color) {
@@ -410,15 +406,15 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
           hintText: hintText,
           hintStyle: TextStyle(fontSize: AppTheme.fontBody, color: hint),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             borderSide: BorderSide(color: border),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             borderSide: BorderSide(color: border),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             borderSide: BorderSide(color: AppTheme.primaryColor),
           ),
           isDense: true,
@@ -520,35 +516,15 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
     );
   }
 
-  /// 「提前 N 分钟」的小胶囊。
-  Widget leadChip(int minutes) {
-    final active = _leadMinutes == minutes;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final lineColor =
-        isDark ? const Color(0xFF2C2C2C) : const Color(0xFFE5E7EB);
-    final txtColor =
-        isDark ? const Color(0xFFEDEDED) : const Color(0xFF374151);
-    return GestureDetector(
-      onTap: () => setState(() => _leadMinutes = minutes),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: active ? AppTheme.primaryColor : Colors.transparent,
-          border: Border.all(
-              color: active ? AppTheme.primaryColor : lineColor),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          minutes == 0 ? '准点' : '$minutes分',
-          style: TextStyle(
-            fontSize: AppTheme.fontSmall,
-            fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-            color: active ? Colors.white : txtColor,
-          ),
-        ),
-      ),
-    );
+  /// 弹窗内容宽度（2026-11-03 自适应）。
+  ///
+  /// 原来写死 330：`minSdk = 21`，320dp 宽的小屏上 `330 + contentPadding(20×2)`
+  /// 直接超出屏幕，弹窗左右被裁、按钮点不到。现在取
+  /// `min(330, 屏宽 - 48)`，48 = 两侧各留 24 的呼吸位。
+  double dialogWidth() {
+    final w = MediaQuery.of(context).size.width;
+    final max = w - 48;
+    return max < 330 ? (max < 200 ? 200 : max) : 330;
   }
 
   /// 「每周几」的横向圆点（周一到周日，可多选）。
@@ -594,7 +570,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
         ),
         contentPadding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
         content: SizedBox(
-          width: 330,
+          width: dialogWidth(),
           child: DatePickPanel(
             initial: _day,
             first: _pickFirst,
@@ -633,7 +609,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
         ],
       ),
       content: SizedBox(
-        width: 330,
+        width: dialogWidth(),
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -650,15 +626,15 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
                   hintText: '要做什么？',
                   hintStyle: TextStyle(fontSize: AppTheme.fontTitle, color: hint),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     borderSide: BorderSide(color: border),
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     borderSide: BorderSide(color: border),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                     borderSide:
                         BorderSide(color: AppTheme.primaryColor, width: 1.5),
                   ),
@@ -677,7 +653,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
               Container(
                 decoration: BoxDecoration(
                   border: Border.all(color: border),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -739,73 +715,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
               ),
               const SizedBox(height: 16),
 
-              // ③ 提醒 —— 开关与「提前」档位合成一张卡。
-              //    原来是「一行开关 + 一个带边框的提前档位框」两层嵌套边框，
-              //    关掉提醒时下面整块消失，弹窗高度跳变。
-              sectionLabel('提醒'),
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: border),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 2, 8, 2),
-                      child: Row(
-                        children: [
-                          Text(
-                            _remind ? '到点提醒我' : '不提醒，只做个时间标记',
-                            style: TextStyle(
-                              fontSize: AppTheme.fontBody,
-                              fontWeight:
-                                  _remind ? FontWeight.w500 : FontWeight.w400,
-                              color: _remind ? null : hint,
-                            ),
-                          ),
-                          const Spacer(),
-                          Switch(
-                            value: _remind,
-                            onChanged: (v) => setState(() => _remind = v),
-                            activeColor: AppTheme.primaryColor,
-                          ),
-                        ],
-                      ),
-                    ),
-                    // 提前提醒档位（仅在开启提醒时出现）
-                    // 2026-10-31：待办原来只能准点提醒，这里补上提前量。
-                    if (_remind) ...[
-                      Divider(height: 1, thickness: 1, color: border),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 9, 14, 9),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text('提前',
-                                style: TextStyle(
-                                    fontSize: AppTheme.fontSmall, color: labelColor)),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final m in const [0, 5, 10, 15, 30])
-                                    leadChip(m),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // ④ 优先级
+              // ③ 优先级
               sectionLabel('优先级'),
               Row(
                 children: [
@@ -818,7 +728,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
               ),
               const SizedBox(height: 16),
 
-              // ⑤ 重复（2026-10-18 用户要求：三种情况由点击决定展开）
+              // ④ 重复（2026-10-18 用户要求：三种情况由点击决定展开）
               //   不重复 / 每天 / 每周 → 点「每周」才展开周一到周日的横向选择。
               sectionLabel('重复'),
               Row(
@@ -851,7 +761,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
               ],
               const SizedBox(height: 16),
 
-              // ⑥ 备注
+              // ⑤ 备注
               sectionLabel('备注'),
               TextField(
                 controller: _descCtrl,
@@ -894,7 +804,7 @@ class _AddTodoDialogState extends State<AddTodoDialog> {
             foregroundColor: Colors.white,
             elevation: 0,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           ),

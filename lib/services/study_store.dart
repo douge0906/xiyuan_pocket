@@ -50,15 +50,56 @@ class StudyStore {
     return DateTime.now().difference(at) < cacheTtl;
   }
 
-  /// 写缓存。**空档案 / 无板块的正常档案一律不写**（见类文档第 1 条）。
+  /// 写缓存。**空档案一律不写；但「未配置」这个结论要写**（见类文档第 2 条）。
+  ///
+  /// 🔴 此前是 `if (archive.blocks.isEmpty) return false;` —— 把
+  /// `StudyArchive.unconfigured()`（blocks 恒空）一起挡掉了，而它正是类文档
+  /// 第 2 条明确要缓存的那种档案。后果：教务没配培养方案的学生**永远读不到缓存**，
+  /// 每次进页面都要重走一次 10 个节点的 POST + 课表抓取（3~5 秒），还可能撞 CAS 验证码。
+  ///
+  /// 📐 **2026-11-04 审查 P1 追加**：这个「放行」放得太宽 —— 它无条件覆盖同一个
+  ///    key，于是**一次瞬时网络失败就把整份 full 档案抹成 unconfigured**。
+  ///    `_buildDegraded` 的三个 unconfigured 分支（`study_client.dart` 的成绩
+  ///    401 / 课表空 / 培养方案空）全是**降级态，不是「学生真的没配」的结论**。
+  ///    用户 135 门课、GPA 3.62 的档案，抓一次失败就变成「未配置培养方案」，
+  ///    而且因为 `updatedAt` 被刷新，`isFresh()`（若有调用方）也会认为这是新数据。
+  ///
+  ///    修法：内存里已有 full 档案时，**降级态不许覆盖它**，只更新一个「上次
+  ///    尝试时间」供下次重试用。真要让用户看到「未配置」，得先清缓存。
   static Future<bool> save(StudyArchive archive) async {
-    if (archive.blocks.isEmpty) return false;
-    // 页面结构变了（抛异常那条路）不会走到这里；这里只拦「抓到的确实是空的」。
+    if (archive.blocks.isEmpty && !archive.isUnconfigured) return false;
+
+    // 降级态 vs 已有完整档案：只允许降级态在「本来就没有完整档案」时落盘。
+    if (archive.isUnconfigured) {
+      final existing = await load();
+      if (existing != null && !existing.isUnconfigured && existing.blocks.isNotEmpty) {
+        // 保住旧档案，只记一笔「这次抓取失败过」。
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_kLastFailedAt, DateTime.now().toIso8601String());
+        return false;
+      }
+    }
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kArchive, jsonEncode(archive.toJson()));
     await prefs.setString(
         _kUpdatedAt, DateTime.now().toIso8601String());
+    await prefs.remove(_kLastFailedAt);
     return true;
+  }
+
+  static const String _kLastFailedAt = 'study_archive_last_failed_at';
+
+  /// 上次抓取失败的时刻（供页面显示「这是旧数据，刷新失败」）。
+  static Future<DateTime?> loadLastFailedAt() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kLastFailedAt);
+      if (raw == null || raw.isEmpty) return null;
+      return DateTime.tryParse(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<void> clear() async {

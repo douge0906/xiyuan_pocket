@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../services/countdown_store.dart';
 import '../services/exam_storage.dart';
 import '../services/storage_service.dart';
 import '../services/widget_sync_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/widget_appearance_editor.dart';
+import 'countdown_page.dart';
 
-enum WidgetInfoKind { exam, card }
+enum WidgetInfoKind { exam, card, countdown }
 
 /// 考试倒计时 / 校园卡余额小组件的数据与刷新页。
 ///
@@ -26,6 +29,13 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
   String _detail = '';
 
   bool get _isExam => widget.kind == WidgetInfoKind.exam;
+  bool get _isCountdown => widget.kind == WidgetInfoKind.countdown;
+
+  String get _widgetKindName => _isExam
+      ? 'exam'
+      : _isCountdown
+          ? 'countdown'
+          : 'card';
 
   @override
   void initState() {
@@ -45,6 +55,25 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
               '${exam.date.day.toString().padLeft(2, '0')} · '
               '${exam.daysLeft <= 0 ? '今天' : '还有 ${exam.daysLeft} 天'}'
               '${exam.classroom.isEmpty ? '' : ' · ${exam.classroom}'}';
+    } else if (_isCountdown) {
+      // 2026-11-05（用户 m24837）：倒数日组件的数据页。
+      // 显示的是「组件当前会渲染什么」——默认取今天及以后最近的 3 条。
+      await CountdownStore.instance.ensureLoaded();
+      final now = DateTime.now();
+      final shown = CountdownStore.instance.forWidget(now);
+      final total = CountdownStore.instance.items.length;
+      headline = shown.isEmpty
+          ? '还没有倒数日'
+          : '${shown.length} 条倒数日';
+      detail = shown.isEmpty
+          ? '去倒数日页添加，或点下方「添加」'
+          : [
+              for (final e in shown)
+                '${e.title} · ${e.label(now)}',
+            ].join('\n');
+      if (total > shown.length) {
+        detail = '$detail\n（库里共 $total 条）';
+      }
     } else {
       final cache = await StorageService.loadCardBalanceCache();
       headline = cache == null
@@ -67,6 +96,8 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
   Future<void> _refresh() async {
     if (_isExam) {
       await WidgetSyncService.syncExamWidget();
+    } else if (_isCountdown) {
+      await WidgetSyncService.syncCountdownWidget();
     } else {
       try {
         await ApiService.fetchCardBalance();
@@ -84,7 +115,13 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
 
   @override
   Widget build(BuildContext context) {
-    final title = _isExam ? '考试倒计时' : '校园卡余额';
+    // 2026-11-05（用户 m24837）：三种信息组件统一走这个页，
+    // 倒数日组件也在这里设置外观（用户要求：个性化设置在对应小组件页面）。
+    final title = _isExam
+        ? '考试倒计时组件'
+        : _isCountdown
+            ? '倒数日组件'
+            : '校园卡余额组件';
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
@@ -111,7 +148,9 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
                           Icon(
                             _isExam
                                 ? Icons.event_note_rounded
-                                : Icons.credit_card_rounded,
+                                : _isCountdown
+                                    ? Icons.hourglass_bottom_rounded
+                                    : Icons.credit_card_rounded,
                             size: 20,
                             color: AppTheme.primaryColor,
                           ),
@@ -151,6 +190,40 @@ class _WidgetInfoPageState extends State<WidgetInfoPage> {
                   child: Text('立即刷新小组件数据',
                       style: TextStyle(
                           fontSize: AppTheme.fontBody, color: context.textPrimary)),
+                ),
+                const SizedBox(height: 12),
+                // 2026-11-05（用户 m24837）：倒数日组件的添加/管理入口。
+                // 「添加」跳倒数日页；「管理」同页。用户在组件页就能完成
+                // 「新建 → 绑定 → 调整外观」的完整闭环，不用来回切页面。
+                if (_isCountdown) ...[
+                  OutlinedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const CountdownPage()),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppTheme.radiusSm)),
+                      side: BorderSide(color: context.borderColor),
+                    ),
+                    child: Text('添加 / 管理倒数日',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontBody, color: context.textPrimary)),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                // 外观设置：放在这个组件自己的页面里（用户明确要求）。
+                WidgetAppearanceEditor(
+                  kind: _widgetKindName,
+                  title: '组件外观',
+                  onSync: () => _isExam
+                      ? WidgetSyncService.syncExamWidget()
+                      : _isCountdown
+                          ? WidgetSyncService.syncCountdownWidget()
+                          : WidgetSyncService.syncCardWidget(),
                 ),
               ],
             ),

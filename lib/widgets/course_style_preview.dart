@@ -100,6 +100,15 @@ class CourseStylePreview extends StatelessWidget {
 
   bool get _hasThisWeekCourse => courses.any((c) => c.isActiveOnWeek(week));
 
+  /// 预览该用真实课表还是内置示例。
+  ///
+  /// 🔴 2026-11-04（用户 m20455 #1）：原来只看「本周有没有课」——
+  /// 用户开着「显示非本周课程」时，真机课表上明明画着一堆淡化卡片，
+  /// 预览里却是示例课（灰底六门），于是「调了淡化深浅但预览没变」。
+  /// 只要用户开了这个开关、且他确实有课，就该预览他自己的课。
+  bool get _useRealCourses =>
+      courses.isNotEmpty && (_hasThisWeekCourse || CourseStorage.showOtherWeeksCache);
+
   /// 预览缩放比（v1.6.8）：**等比缩放** —— 由「预览卡片宽度 ÷ 真机课表宽度」
   /// 算出来，而不是之前手拍的固定 0.62。
   ///
@@ -116,7 +125,7 @@ class CourseStylePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final display = _hasThisWeekCourse ? courses : _fallback();
+    final display = _useRealCourses ? courses : _fallback();
     final scale = _scale(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

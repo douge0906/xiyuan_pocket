@@ -1,66 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件选择器预览 · 今日课表 2×2（静态示范） -->
+<!-- 小组件选择器预览 · 今日课表 2×2（静态示范）
+     ⚠️ 必须与 widget_medium.xml + TodayWidgetRenderer.buildMedium 保持一致：
+     内边距 10dp、标题 12sp、容器 marginTop 4dp、
+     条目走 widget_course_item_triple 的三行结构（课程名 10sp / 时间 8sp / 教室 8sp，
+     左侧 3dp×22dp 色条）、「还有 N 门」9sp。
+     色条用 LinearLayout 而不是裸 <View> —— 与真实布局同一套写法，避免以后
+     有人把这份 preview 的结构照抄进 RemoteViews 时踩 inflate 失败。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@drawable/widget_card_bg_light"
-    android:padding="12dp">
+    android:padding="10dp">
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="13sp"
+        android:textSize="12sp"
         android:textStyle="bold"
         android:maxLines="1"
         android:textColor="#1F2937"
-        android:text="今日课表 · 第3周" />
+        android:text="今日课表" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="4dp"
         android:orientation="vertical">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:background="@drawable/widget_course_item_bg"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp">
+            android:paddingStart="5dp"
+            android:paddingEnd="5dp"
+            android:background="@drawable/widget_course_item_bg">
 
-            <View
-                android:layout_width="4dp"
-                android:layout_height="match_parent"
+            <LinearLayout
+                android:layout_width="3dp"
+                android:layout_height="22dp"
                 android:background="#B3E4FC" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="5dp"
                 android:orientation="vertical">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="11sp"
+                    android:textSize="10sp"
                     android:textStyle="bold"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="#1F2937"
                     android:text="高等数学" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="9sp"
+                    android:textSize="8sp"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="#667085"
-                    android:text="08:00-09:40 · A301 · 张老师" />
+                    android:text="08:00-09:40" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="8sp"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="#667085"
+                    android:text="A301" />
             </LinearLayout>
         </LinearLayout>
 
@@ -68,41 +88,55 @@
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="6dp"
-            android:background="@drawable/widget_course_item_bg"
+            android:layout_marginTop="3dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp">
+            android:paddingStart="5dp"
+            android:paddingEnd="5dp"
+            android:background="@drawable/widget_course_item_bg">
 
-            <View
-                android:layout_width="4dp"
-                android:layout_height="match_parent"
+            <LinearLayout
+                android:layout_width="3dp"
+                android:layout_height="22dp"
                 android:background="#B3D9C5" />
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="5dp"
                 android:orientation="vertical">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="11sp"
+                    android:textSize="10sp"
                     android:textStyle="bold"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="#1F2937"
                     android:text="大学英语" />
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="9sp"
+                    android:textSize="8sp"
+                    android:includeFontPadding="false"
                     android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="#667085"
-                    android:text="10:10-11:50 · B202 · 李老师" />
+                    android:text="10:10-11:50" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="8sp"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textColor="#667085"
+                    android:text="B202" />
             </LinearLayout>
         </LinearLayout>
     </LinearLayout>
@@ -110,9 +144,8 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:textSize="10sp"
+        android:textSize="9sp"
         android:maxLines="1"
         android:textColor="#98A2B3"
-        android:text="还有 2 门" />
+        android:text="还有 2 门课" />
 </LinearLayout>

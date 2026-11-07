@@ -152,7 +152,7 @@ class _VoiceBallOverlayState extends State<VoiceBallOverlay>
               const SizedBox(height: 22),
               // 识别中的文字（位置固定，不做位移动画 → 不会闪烁）
               SizedBox(
-                width: 280,
+                width: (MediaQuery.of(context).size.width - 40).clamp(0.0, 280.0).toDouble(),
                 child: Text(
                   _text.isEmpty ? '请说话…' : _text,
                   textAlign: TextAlign.center,

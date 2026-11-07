@@ -257,7 +257,15 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     if (_elecLoading) return;
     if (!_canQuery) {
       await _initNet();
-      return;
+      // 🔴 2026-11-04 审查 P2：原来重探一次就直接 return，界面毫无变化，
+      //    用户点电费卡片完全没反应（首次使用、校外都会撞上）。
+      if (!mounted) return;
+      if (!_canQuery) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('未连接校园网，电费需在校园网内查询'),
+        ));
+        return;
+      }
     }
     if (_dorm == null) {
       // 用户可能在「我的」页刚填过，先回读一次，避免又弹一遍
@@ -282,13 +290,22 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     await _loadElec();
   }
 
-  /// 点电费卡片：没填宿舍先填，填了进详情页。
+  /// 点电费卡片：没填宿舍先填（填完直接进详情页），填了进详情页。
+  ///
+  /// 🔴 2026-11-04 审查 P2：原来 `_dorm == null` 分支填完宿舍就 `return`，
+  ///    用户点一下只看到卡片数字变了、页面没跳，必须再点一次才进详情。
+  ///    现在填完继续往下走（`_onElecTap` 内部存盘后会 `setState` 刷新
+  ///    `_dorm`，所以这里重新取一次再判断）。
   Future<void> _openElectricity() async {
     if (_dorm == null) {
       await _onElecTap();
-      return;
+      if (!mounted || _dorm == null) return;
+    } else {
+      // 有宿舍时也要先取一次最新值，否则详情页首屏永远是卡片上那份
+      // 可能已过期数天的缓存（详情页 initState 只读 widget.info）。
+      await _loadElec();
+      if (!mounted || _dorm == null) return;
     }
-    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ElectricityPage(info: _elec, dorm: _dorm!),
@@ -440,7 +457,15 @@ class UserBalanceCards extends StatelessWidget {
     // 不再提供「点击刷新」，卡片本身进入详情页。
     if (cardBalance != null) {
       cardValue = '¥ ${cardBalance!.toStringAsFixed(2)}';
-      cardHint = balanceRefreshing ? '更新中…' : '点击查看详情页';
+      // 🔴 2026-11-04 审查 P1：原来只要 `cardBalance != null` 就写
+      //    「点击查看详情页」，于是「有缓存 + 刷新失败」这个**最需要提示**
+      //    的场景下，卡片和一切正常时长得一模一样（错误存进了 balanceError
+      //    字段但渲染层读不到，因为它的分支只在值为 null 时才走）。
+      //    现在有值时也把刷新失败说出来；hint 会带 danger 色（见 _BalanceCard
+      //    的 hintColor）。
+      cardHint = balanceRefreshing
+          ? '更新中…'
+          : (balanceError != null ? '刷新失败，显示的是上次数据' : '点击查看详情页');
     } else if (balanceLoading) {
       cardValue = '¥ --';
       cardHint = '获取中…';
@@ -456,7 +481,11 @@ class UserBalanceCards extends StatelessWidget {
     // 有值就先显示值（**离线也显示缓存**），网络状态只影响提示文案。
     if (elec?.balance != null) {
       elecValue = '¥ ${elec!.balance!.toStringAsFixed(2)}';
-      elecHint = elecLoading ? '更新中…' : (dorm?.display ?? '');
+      // 同 P1：有缓存时刷新失败也要说出来，否则「上次是 517.05」和
+      // 「现在查不到」在界面上是同一个样子。
+      elecHint = elecLoading
+          ? '更新中…'
+          : (elecError != null ? '刷新失败，显示的是上次数据' : (dorm?.display ?? ''));
     } else if (!probed) {
       // 还没探完网络：显示「获取中」，别急着说未连接校园网
       elecHint = dorm == null ? '填写宿舍号' : '获取中…';
