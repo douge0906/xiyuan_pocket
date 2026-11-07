@@ -87,6 +87,106 @@ class AppUpdateService {
     await prefs.setString(_kPromptedVersion, latest);
   }
 
+  /// 「检查更新」—— 用户**手动**点版本号时调用（2026-11-03）。
+  ///
+  /// 与 [checkAndPrompt] 的区别：
+  ///   - [checkAndPrompt] 是启动时自动跑，受「每版本只提示一次」约束
+  ///     （`_kPromptedVersion`），提示过一次这个版本就不再弹；
+  ///   - 本方法是**用户主动点**，必须**无视那个约束** —— 否则用户点完没反应
+  ///     会以为功能坏了，这正是「版本号是死点击区」修完最容易犯的新错。
+  ///
+  /// 三种结果都必须给反馈：有新版本（弹窗）/ 已是最新（提示）/ 查不到
+  /// （提示网络问题），不能静默返回。
+  static Future<void> checkManually(BuildContext context) async {
+    if (!Platform.isAndroid) {
+      _toast(context, '当前平台不支持检查更新');
+      return;
+    }
+    final release = await ControlService.fetchAppRelease();
+    if (!context.mounted) return;
+    if (release == null) {
+      _toast(context, '无法获取版本信息，请检查网络后重试');
+      return;
+    }
+
+    final latest = (release['latestVersion'] ?? '').toString().trim();
+    final info = await PackageInfo.fromPlatform();
+    if (!context.mounted) return;
+    if (latest.isEmpty) {
+      _toast(context, '无法获取版本信息，请稍后重试');
+      return;
+    }
+    if (_compare(latest, info.version) <= 0) {
+      _toast(context, '已是最新版本 v${info.version}');
+      return;
+    }
+
+    final url = (release['downloadUrl'] ?? '').toString().trim();
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) {
+      _toast(context, '新版本 v$latest 已发布，但下载地址无效');
+      return;
+    }
+    if (uri.scheme != 'https' && uri.scheme != 'http') {
+      _toast(context, '新版本 v$latest 已发布，但下载地址不安全');
+      return;
+    }
+    if (!ControlConfig.updateDownloadHosts.contains(uri.host)) {
+      _toast(context, '新版本 v$latest 已发布，但下载地址不在白名单内');
+      return;
+    }
+
+    final notes = (release['notes'] ?? '').toString().trim();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现新版本 v$latest'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              notes.isEmpty ? '新版本已准备好，建议连接 WiFi 后更新。' : notes,
+              style: const TextStyle(fontSize: AppTheme.fontSmall, height: 1.6),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '当前版本 ${info.version}',
+              style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('稍后'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            },
+            child: const Text('去下载'),
+          ),
+        ],
+      ),
+    );
+    // 手动检查也记一次，避免下次启动又弹一遍同一版本。
+    await SharedPreferences.getInstance()
+        .then((p) => p.setString(_kPromptedVersion, latest));
+  }
+
+  static void _toast(BuildContext context, String msg) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   static int _compare(String a, String b) {
     int seg(String s) {
       // 容忍 `v1.0.9` / `V1.0.9` 这类带前缀的写法：原来的正则直接把整段

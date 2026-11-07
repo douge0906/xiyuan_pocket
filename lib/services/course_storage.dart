@@ -6,6 +6,9 @@ import '../models/course_model.dart';
 import '../models/course_table.dart';
 import 'storage_service.dart';
 import 'widget_sync_service.dart';
+// 循环依赖是可接受的：course_reminder_service 也 import 本文件，Dart 允许
+// 库级循环，只要不在顶层用对方的 const 做初始化。这里只在方法体内调用。
+import 'course_reminder_service.dart';
 
 part 'course_presets.dart';
 
@@ -425,6 +428,25 @@ class CourseStorage {
   ///
   /// 判定：星期相同 + 节次区间有交集 + **存在某一周两门都上**
   /// （周次判定复用 [Course.occursOn]，与课表网格同一口径，不另写一套）。
+  /// 两门课「可能在同一个格子」的星期几候选集。
+  ///
+  /// 「每天」覆盖 1..7，「工作日」覆盖 1..5，固定周课只覆盖自己的 weekday。
+  /// 返回交集候选，再由 `occursOn(wd, 1)` 逐项确认（week=1 只是占位，
+  /// 真正的周次判定在外面单独做）。
+  static Iterable<int> _weekdayCandidates(Course a, Course b) {
+    final da = switch (a.pattern) {
+      CoursePattern.daily => const <int>[1, 2, 3, 4, 5, 6, 7],
+      CoursePattern.workday => const <int>[1, 2, 3, 4, 5],
+      CoursePattern.fixed => <int>[a.weekday],
+    };
+    final db = switch (b.pattern) {
+      CoursePattern.daily => const <int>[1, 2, 3, 4, 5, 6, 7],
+      CoursePattern.workday => const <int>[1, 2, 3, 4, 5],
+      CoursePattern.fixed => <int>[b.weekday],
+    };
+    return da.where(db.contains);
+  }
+
   static List<CourseConflict> detectConflicts(
     List<Course> existing,
     List<Course> incoming,
@@ -432,16 +454,26 @@ class CourseStorage {
     final out = <CourseConflict>[];
     for (final s in incoming) {
       for (final l in existing) {
-        if (s.weekday != l.weekday) continue;
         if (s.endSlot < l.startSlot || l.endSlot < s.startSlot) continue;
+        // 2026-11-04 审查修复：改为「星期几有交集」，不再直接比较 weekday 字段。
+        // pattern=每日 存 0、工作日 存 -1，固定周课存 1..7 —— 0/-1 与 1..7
+        // 永不相等，导致「每天 5-6 节」与「周一 5-6 节」叠在网格上却不报冲突。
         var overlapWeek = false;
-        for (var w = 1; w <= 20; w++) {
-          if (s.isActiveOnWeek(w) && l.isActiveOnWeek(w)) {
+        for (final wd in _weekdayCandidates(s, l)) {
+          if (s.occursOn(wd, 1) && l.occursOn(wd, 1)) {
             overlapWeek = true;
             break;
           }
         }
-        if (overlapWeek) out.add(CourseConflict(server: s, local: l));
+        if (!overlapWeek) continue;
+        var overlapSlotWeek = false;
+        for (var w = 1; w <= weekCountCache; w++) {
+          if (s.isActiveOnWeek(w) && l.isActiveOnWeek(w)) {
+            overlapSlotWeek = true;
+            break;
+          }
+        }
+        if (overlapSlotWeek) out.add(CourseConflict(server: s, local: l));
       }
     }
     return out;
@@ -459,16 +491,25 @@ class CourseStorage {
       for (var j = i + 1; j < incoming.length; j++) {
         final a = incoming[i];
         final b = incoming[j];
-        if (a.weekday != b.weekday) continue;
         if (a.endSlot < b.startSlot || b.endSlot < a.startSlot) continue;
+        // 2026-11-04 审查修复：同 detectConflicts —— 必须走 occursOn，
+        // 否则「每天」与「每周一」在同一格上叠着也不报冲突。
         var overlapWeek = false;
-        for (var w = 1; w <= 20; w++) {
-          if (a.isActiveOnWeek(w) && b.isActiveOnWeek(w)) {
+        for (final wd in _weekdayCandidates(a, b)) {
+          if (a.occursOn(wd, 1) && b.occursOn(wd, 1)) {
             overlapWeek = true;
             break;
           }
         }
-        if (overlapWeek) out.add(CourseConflict(server: a, local: b));
+        if (!overlapWeek) continue;
+        var overlapSlotWeek = false;
+        for (var w = 1; w <= maxTeachingWeek; w++) {
+          if (a.isActiveOnWeek(w) && b.isActiveOnWeek(w)) {
+            overlapSlotWeek = true;
+            break;
+          }
+        }
+        if (overlapSlotWeek) out.add(CourseConflict(server: a, local: b));
       }
     }
     return out;
@@ -551,6 +592,19 @@ class CourseStorage {
     // 🔴 开学日决定教学周，而教学周决定「今天上哪几门」（单双周！）→
     //    小组件必须重推，否则它会照旧周次渲染，甚至整门课都不该出现。
     unawaited(WidgetSyncService.syncTodayCourses());
+    // 🔴 2026-11-04 审查 P1：**上课提醒也必须重排**，而且只能在这里做。
+    //    `CourseReminderService.rescheduleAll()` 按 `teachingWeek(day,
+    //    semesterStart)` 决定未来 7 天哪几门课要响；开学日一改，原来排的
+    //    单双周课就全错。此前的四个调用点没有任何一个稳定地补这一步：
+    //      · `CourseProvider.setSemesterStart` 零重排，且未传 byUser；
+    //      · `CourseSyncService.sync` 的「目标不是当前表」分支提前 return，
+    //        跳过了它自己末尾的兜底重排；
+    //      · 课表页导入到**同一张表**（覆盖）时 `_activeTableId` 没变，
+    //        走不到「换表才重排」那条；
+    //      · 关掉首周对话框只调 `markSemesterStartConfirmed`，不重排。
+    //    把它们逐个补一遍等于埋四个漏洞，所以把重排收进这个唯一出口。
+    //    成本是一次 unawaited 调用，失败也不影响开学日本身落盘。
+    unawaited(CourseReminderService.rescheduleAll());
   }
 
   /// ⚠️ 老结构里的全局来源键，多课表后只用于搬家（见 _migrateLegacy）。
@@ -564,9 +618,13 @@ class CourseStorage {
   static Future<bool> loadSemesterStartConfirmed() async =>
       (await activeTable()).semesterStartConfirmedByUser;
 
-  /// 记为「用户已确认/已跳过」——**不动日期**。
+  /// 记为「用户已确认」——**不动日期**。
   ///
-  /// 用户直接把对话框关掉时也要调它：否则下次打开又弹，成了骚扰。
+  /// 🔴 2026-11-04 审查 P2：调用点是 `_askSemesterStart`，而那里原来不管
+  ///    用户选没选都会调它（点「用默认值」/ 点 × 都返回 null）。于是
+  ///    「直接关掉对话框」被永久记成「已确认」，开学日永远是自动估算值，
+  ///    真实开学日差 1~2 周时教学周长期算错且不再纠正。现在只有真选了
+  ///    日期才会走到这里。
   static Future<void> markSemesterStartConfirmed() async {
     final all = await _loadAll();
     final idx = all.tables.indexWhere((t) => t.id == all.activeId);
@@ -619,6 +677,16 @@ class CourseStorage {
   }
 
   /// 计算教学周（第 1 周从开学日期所在周一开始）
+  ///
+  /// 🔴 2026-11-04 审查 P1：这里原来**没有上限**。用户在「调整开学日期」
+  /// 里可以选到 2020-01-01 这种日期，`_selectedWeek` 会算出上百周，而
+  /// `PageView` 只有 [kMaxCourseWeeks] 页 —— 于是表头显示「第 132 周」、
+  /// 日期列画到 2022 年，格子却停在 `clamp(0, 24)` 的第 25 周。
+  /// 现在统一夹到 1..25，与 `course_table_settings_page` 已有的
+  /// `teachingWeek(now, start).clamp(1, 25)` 口径一致。
+  /// 硬上限（协议边界）。用户能看到的周数见 [weekCountCache]。
+  static const int maxTeachingWeek = kMaxCourseWeeks;
+
   static int teachingWeek(DateTime now, DateTime start) {
     // 两边都归一到当天零点再算：Duration.inDays 是截断取整，
     // 带时分秒的 now 与零点 start 相减会少算一天（跨零点后周次不跳）。
@@ -626,7 +694,9 @@ class CourseStorage {
         .difference(DateTime(start.year, start.month, start.day))
         .inDays;
     if (diff < 0) return 1;
-    return diff ~/ 7 + 1;
+    // 夹到用户设定的显示周数：开学日久远（如误选 2020 年）时，
+    // 算出「第 132 周」会让表头与网格对不上。
+    return (diff ~/ 7 + 1).clamp(1, weekCountCache);
   }
 
   /// 根据学年/学期自动估算开学日期，用于「自动定位」：
@@ -737,7 +807,8 @@ class CourseStorage {
 
   /// 课节色块**色彩方案**的内存缓存（v1.6.9）：方案一 / 方案二（柔彩）/ 方案三。
   /// 只在渲染期参与颜色转换（见 [courseColorFor]），不改课程数据。
-  static CourseColorScheme schemeCache = CourseColorScheme.standard;
+  /// 2026-11-03：默认「方案二」，与 [defaultDisplaySettings] 保持一致。
+  static CourseColorScheme schemeCache = CourseColorScheme.soft;
 
   // ---- 课表布局（v1.6.4，仿掌上徐工的「课表网格」组）----
 
@@ -745,7 +816,9 @@ class CourseStorage {
   static double rowHeightCache = 0;
 
   /// 时间列宽度（px）。开了「隐藏节次时间」时由 activeTimeColWidth 归零。
-  static double timeColWidthCache = 48;
+  // 2026-11-04（m20950 #2）：兜底值 48 → 38，与 `defaultDisplaySettings()` 对齐。
+  // 48 会让 7 天均分后（每列约 46dp）的课程块窄到放不下教室名。
+  static double timeColWidthCache = 38;
 
   /// 日期栏（周次 + 一周日期那行）高度（px）。
   /// 背景相关设置变化时自增 —— app 外层要据此重算导航栏透明态。
@@ -776,6 +849,20 @@ class CourseStorage {
   /// 课表**背景色**（ARGB，null = 未设置）。与背景图**二选一**，
   /// 设置页里选色会清图、选图会清色（2026-10-26 用户要求）。
   static int? backgroundColorCache;
+
+  /// 用户可调的「本学期显示几周」（2026-11-04 用户 m19892 #4）。
+  ///
+  /// 原来固定 25 周（[kMaxCourseWeeks]），而各校一学期普遍只有 19~21 周 ——
+  /// 用户看到的是「往后翻 5 页全空」，还找不到地方改。
+  /// 现在默认 20 周，可在「课表设置 → 课表布局 → 显示周数」里 16~25 调。
+  ///
+  /// 注意区分两者：[kMaxCourseWeeks] 是**协议硬上限**（周次解析、越界保护必须
+  /// 按它算，教务下发「1-30周」时不能真造 30 页），这里只是**显示周数**。
+  static int weekCountCache = kDefaultWeekCount;
+
+  /// 显示周数的合法范围。
+  static const int minWeekCount = 16;
+  static const int maxWeekCount = kMaxCourseWeeks;
 
   // ---------------- 课表外观设置（2026-10-13 v1.3.0：全滑杆）----------------
   //
@@ -836,12 +923,21 @@ class CourseStorage {
         'showOtherWeeks': false,
         // v1.5.0：非本周课程颜色清淡度（0.45~0.85，越大越淡；默认比旧观感更清淡）
         'otherWeeksDim': 0.75,
-        // v1.6.9：课节色块色彩方案（standard / soft / vivid，默认 = 改造前观感）
-        'scheme': 'standard',
+        // v1.6.9：课节色块色彩方案（standard / soft / vivid）。
+        // 2026-11-03：默认改为「方案二」（soft）—— 方案一偏灰、方案三过艳，
+        // 方案二在明暗两种模式下对比度都更稳。老用户由
+        // `_schemeDefaultSoft` 一次性迁移（见 loadDisplaySettings）。
+        'scheme': 'soft',
         // v1.6.4：课表布局（仿徐工）—— 0 = 课节高度自动（均分）
         'rowHeight': 0,
-        'timeColWidth': 48,
+        // 2026-11-04（用户 m20455 #2）：时间列宽 48 → 38。
+        // 7 天均分后每列本来只有 ~46dp，48 的时间列把课程块挤得太窄，
+        // 「科教中心313」这类长教室名放不下；38 之后课程块宽了 10dp。
+        'timeColWidth': 38,
         'dateRowHeight': 48,
+        // 2026-11-04（m19892 #4）：显示周数。各校一学期 19~21 周，
+        // 固定 25 周会多出 4~6 页空白，用户也找不到调整入口。
+        'weekCount': kDefaultWeekCount,
         'backgroundImage': '',
         'autoUpdateOnLaunch': false,
         // 2026-10-13 新增（默认 = 改之前的观感，老用户升级无感）
@@ -860,7 +956,8 @@ class CourseStorage {
         'showNameOnCard': true,
         'highlightToday': true,
         'cardFontScale': 1.0,
-        'cardMaxLines': 2,
+        // 2026-11-04（用户 m20455 #2）：课程名默认 2 行 → 3 行。
+        'cardMaxLines': 3,
         'cardOverflow': 'ellipsis',
         'cardFieldOrder': <String>['name', 'classroom', 'teacher'],
         'hideSectionTime': false,
@@ -881,6 +978,30 @@ class CourseStorage {
   ///
   /// 于是「在方案二里把圆角调圆 → 切回方案一 → 再切回方案二」仍然是你调过的那套。
   /// 只有「恢复默认设置」才会把三档一起清空。
+  /// 「方案二」= 轻盈一点点（2026-11-04 明确为默认方案）。
+  ///
+  /// 这**不只是换配色**，它同时是「整套外观预设」：窄时间栏 + 窄日期栏 +
+  /// 淡蓝底 + 无网格线，对应 [SchemePreset.of] 的 soft 预设。
+  /// 抽成函数是为了让三处用同一份定义：
+  ///   · [loadDisplaySettings] 的默认方案迁移
+  ///   · 设置页 `_applyScheme` 的点击套用
+  ///   · 「恢复默认设置」
+  /// 方案二（「轻盈一点点」）的整套外观补丁。
+  ///
+  /// ⚠️ 只用于**用户主动点方案二**（`_applyScheme`）与**首次默认迁移**。
+  ///    迁移侧有一次性标记兜底，不会每次读设置都重放这一套 ——
+  ///    否则它带着的 `showGridLines: false` / `backgroundImage: ''` 会
+  ///    把用户后来开的网格线、选的背景图统统驳回（2026-11-04 用户 m20128 #2）。
+  static Map<String, dynamic> softSchemePatch() => <String, dynamic>{
+        ...SchemePreset.of(CourseColorScheme.soft).toDisplayPatch(),
+        // 2026-11-04（m20950 #2）：40 → 38，与 `defaultDisplaySettings()` 一致。
+        // 之前两处一个 40 一个 38，用户套用方案后时间列会莫名变宽。
+        'timeColWidth': 38.0,
+        'dateRowHeight': 42.0,
+        'backgroundImage': '',
+        'showGridLines': false,
+      };
+
   static Map<String, dynamic> switchScheme(
       Map<String, dynamic> display, CourseColorScheme to) {
     final cur = CourseColorScheme.parse(display['scheme']);
@@ -908,7 +1029,26 @@ class CourseStorage {
     final prefs = await SharedPreferences.getInstance();
     final base = defaultDisplaySettings();
     final raw = prefs.getString(_kDisplaySettings);
-    if (raw == null || raw.isEmpty) return base;
+    // 🔴 2026-11-04（用户 m20128 #2 第二层）：全新安装没有存储，
+    //    这里若直接 `return base` 会漏掉 `_schemeDefaultSoft` 标记 ——
+    //    用户第一次改设置（比如打开网格线）保存后，**下一次读**才触发
+    //    「默认方案二」迁移，把他刚改的又驳回一次。表现与「开关自动驳回」
+    //    完全一致。所以这里在返回值上直接带上标记（不改存储，等用户改设置
+    //    时随整份 map 一起落盘）。
+    if (raw == null || raw.isEmpty) {
+      return <String, dynamic>{
+        ...base,
+        ...softSchemePatch(),
+        'backgroundColor': base['backgroundColor'] ?? 0xFFC6DDF7,
+        'scheme': 'soft',
+        // 新用户本就用默认值，没有历史数据要迁 —— 把所有一次性迁移标记
+        // 一并带上，否则他第一次保存设置后会被这些「没有标记就改一次」
+        // 的老迁移各驳回一次（网格线被强行打开就是其中之一）。
+        '_schemeDefaultSoft': true,
+        '_gridDefaultOn': true,
+        '_cardOrderV2': true,
+      };
+    }
     try {
       final j = jsonDecode(raw) as Map<String, dynamic>;
       final merged = <String, dynamic>{...base, ...j};
@@ -950,6 +1090,41 @@ class CourseStorage {
         merged['_cardOrderV2'] = true;
         await saveDisplaySettings(merged);
       }
+      // 🔴 2026-11-04 修正（m18409 #4）：默认色彩方案必须真的是「方案二」。
+      //
+      // 上一版的判据是「存储里没有 `scheme` 键 = 用户没选过」，这**不成立**：
+      //   · 2026-11-03 之前 `defaultDisplaySettings()` 的默认值就是方案一；
+      //   · 同文件里 `_gridDefaultOn` 等一次性迁移会把整份 merged（含
+      //     `'scheme': 'standard'`）**写回存储** —— 于是「从没选过方案」的
+      //     老用户，存储里也带着 `scheme: standard`；
+      //   · 结果：判据恒 false，默认方案二永远不生效，用户看到的一直是方案一。
+      //
+      // 现在改用**显式标记** `schemeUserPicked`：只有用户真的点了色卡
+      // （`_applyScheme` 里写这个键）才算「选过」。没有标记、且当前不是方案三
+      // （方案三只可能是用户主动选的）→ 一律回到方案二预设。
+      final picked = merged['schemeUserPicked'] == true;
+      // 🔴 2026-11-04（用户 m20128 #2）：迁移必须**只做一次**。
+      //    上一版漏了这个判据 —— 于是每次 `loadDisplaySettings()` 都会把
+      //    `softSchemePatch()` 再套一遍，而它带着 `showGridLines: false` /
+      //    `backgroundImage: ''` ⇒ 用户打开网格线、选了背景图，下次读设置
+      //    又被强行关掉/清空（现象：「开关自动驳回」「背景图无法生效」）。
+      final migrated = merged['_schemeDefaultSoft'] == true;
+      final curScheme = '${merged['scheme'] ?? ''}';
+      if (!picked && !migrated && curScheme != 'vivid') {
+        final patch = softSchemePatch();
+        // 保留用户自己挑过的背景色（方案二预设的淡蓝只在用户没设过时套用）
+        if (merged['backgroundColor'] == null) {
+          // 2026-11-04（用户 m20128 #2「再次增大首次选中背景色的饱和度」）：
+          // 2026-11-04（用户 m20455 #2「默认饱和度调制 20」）：
+          // 0xFFE8F1FB（HSV 饱和度 7.6%）→ 0xFFC6DDF7（饱和度 20%，明度 97%）。
+          // 色相不变，只是把蓝提到看得出来的浓度 —— 前两版一路抬饱和仍偏灰。
+          patch['backgroundColor'] = 0xFFC6DDF7;
+        }
+        merged.addAll(patch);
+        merged['scheme'] = 'soft';
+        merged['_schemeDefaultSoft'] = true;
+        await saveDisplaySettings(merged);
+      }
       return merged;
     } catch (_) {
       return base; // 损坏则回落默认值，不影响课表可用
@@ -968,8 +1143,11 @@ class CourseStorage {
     otherWeeksDimCache = d(s['otherWeeksDim'], 0.75).clamp(0.45, 0.85);
     schemeCache = CourseColorScheme.parse(s['scheme']);
     rowHeightCache = d(s['rowHeight'], 0).clamp(0, 120);
-    timeColWidthCache = d(s['timeColWidth'], 48).clamp(28, 72);
+    timeColWidthCache = d(s['timeColWidth'], 38).clamp(28, 72);
     dateRowHeightCache = d(s['dateRowHeight'], 48).clamp(36, 88);
+    weekCountCache = d(s['weekCount'], kDefaultWeekCount.toDouble())
+        .round()
+        .clamp(minWeekCount, maxWeekCount);
     // 56 是 2026-10-26 之前的默认值，用户反馈偏高，统一降到 48
     if (dateRowHeightCache == 56) dateRowHeightCache = 48;
     final prevImg = backgroundImageCache;

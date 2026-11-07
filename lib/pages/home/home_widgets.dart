@@ -47,15 +47,15 @@ class TodoTimelineItem extends StatelessWidget {
     return Pressable(
       onTap: onToggle,
       onLongPress: onEdit,
-      haptic: true,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         decoration: BoxDecoration(
           color: context.surfaceColor,
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          boxShadow: AppTheme.cardShadow,
-          border: Border.all(color: context.borderColor),
+          // 2026-11-03：轮廓用 6% 黑的内侧 Border.all，阴影只负责纵深。
+          border: Border.all(color: AppTheme.cardStrokeColor(context.isDark)),
+          boxShadow: AppTheme.cardShadowFor(context.isDark),
         ),
         child: Row(
           children: [
@@ -111,11 +111,21 @@ class TodoTimelineItem extends StatelessWidget {
         : '全天';
 
     final now = DateTime.now();
-    final isToday = todo.date.year == now.year &&
-        todo.date.month == now.month &&
-        todo.date.day == now.day;
+    // 🔴 用组件自己的 `date`（当前展示的那天），不是 `todo.date`。
+    //    重复待办的 date 是「起始日」，用它判断 isToday 会让每天 8:00 的
+    //    待办只有创建当天能命中「即将到期」高亮，之后永久失效。
+    final isToday = date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
     // 「即将到期」的判断用同一个时刻来源（与上方显示保持一致）。
-    final isHighlighted = !_done && isToday && shownTime != null && shownTime.isAfter(now);
+    // 重复待办的 reminderTime 是创建时写死的绝对时刻，起始日之后
+    // `shownTime.isAfter(now)` 恒 false —— 所以把时分搬到 date 上再比。
+    final isHighlighted = !_done &&
+        isToday &&
+        shownTime != null &&
+        DateTime(date.year, date.month, date.day, shownTime.hour,
+                shownTime.minute)
+            .isAfter(now);
     final priorityColor = switch (todo.priority) {
       2 => const Color(0xFFDC2626),
       1 => const Color(0xFFF59E0B),
@@ -127,27 +137,24 @@ class TodoTimelineItem extends StatelessWidget {
         : Pressable(
             onTap: onToggle,
             onLongPress: onEdit,
-            haptic: true,
-            child: AnimatedContainer(
+                  child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(12),
         constraints: const BoxConstraints(minHeight: 74),
         decoration: BoxDecoration(
-          color: isHighlighted
-              ? AppTheme.textPrimaryLight
-              : (_done
-                  ? (isDark ? const Color(0xFF161616) : const Color(0xFFF3F4F6))
-                  : (context.surfaceColor)),
+          // 2026-11-04（m18409 #1）：卡片本体一律用 `surfaceColor`（浅色纯白 /
+          // 深色 1E1E1E）。原来未完成走 surfaceColor、完成走 0xFF161616 /
+          // 0xFFF3F4F6 —— 同一条列表里两种底色，深色下完成项比卡片更黑，
+          // 看起来像「块状阴影」。完成态改为只降文字对比度，不换底色。
+          color: isHighlighted ? AppTheme.textPrimaryLight : context.surfaceColor,
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          boxShadow: AppTheme.cardShadow,
-          // v2.4.3：补灰线边框，与「服务」页卡片观感一致
-          // （原来首页卡片只有阴影、服务页有细灰线，切页时"分量"不同）。
-          // 高亮态本身就是深色实块，不加线以免显脏。
-          border: isHighlighted
-              ? null
-              : Border.all(color: context.borderColor, width: 1),
+          // 2026-11-03：轮廓统一走 6% 黑的内侧 Border.all（高亮态靠实色
+          // 块本身 + 同一圈描边区分，不再切页时分量不同）。
+          border: Border.all(color: AppTheme.cardStrokeColor(isDark)),
+          // 深色下不再投影：深底上的黑影是一团糊，只会让卡片看起来发脏。
+          boxShadow: isDark ? const <BoxShadow>[] : AppTheme.cardShadowFor(isDark),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,7 +191,14 @@ class TodoTimelineItem extends StatelessWidget {
                       color: isHighlighted ? Colors.white : (context.textPrimary),
                       decoration: TextDecoration.none,
                     ),
-                    child: Text(todo.title),
+                    // 2026-11-04（m18409 #1）：标题**必须只占一行**。
+                    // 原来没有 maxLines —— 长标题折成两三行，
+                    // 卡片高度随标题长度变化，整列待办参差不齐。
+                    child: Text(
+                      todo.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   if (todo.description?.isNotEmpty ?? false)
                     Padding(

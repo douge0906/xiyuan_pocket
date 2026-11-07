@@ -1,14 +1,19 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
+import '../../models/academic_term.dart';
 import '../../models/study_models.dart';
 import '../../providers/user_config_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/campus/jwgl_client.dart';
 import '../../services/study_store.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/offscreen_capture.dart';
 import '../../widgets/empty_state_art.dart';
 import '../../widgets/loading_overlay.dart';
 import '../../widgets/state_views.dart';
@@ -48,6 +53,9 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
   bool _checking = true;
   bool _credentialBound = false;
 
+  /// 导出长图进行中（防止连点导两次）。
+  bool _exporting = false;
+
   bool _loading = false;
   int _seconds = 0;
   Timer? _timer;
@@ -70,9 +78,10 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _xnm = '${now.month >= 8 ? now.year : now.year - 1}';
-    _xqm = now.month >= 8 ? '3' : '12';
+    // 学期码唯一真源见 models/academic_term.dart（1 月属秋季学期，不是春季）。
+    final term = currentAcademicTerm();
+    _xnm = term.xnm;
+    _xqm = term.xqm;
     _bootstrap();
   }
 
@@ -194,6 +203,17 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0,
         actions: [
+          // 导出学业总览为图片（2026-11-03 新增）。
+          //
+          // 为什么是「导出图片」而不是 PDF / Excel：这一页最有用的信息就是
+          // 顶部那张卡（GPA + 计划/通过/在读 + 学分进度），用户真实场景是
+          // **发给家长 / 截图存相册 / 发群里问学长**。生成一份带表格的 PDF
+          // 交付成本高、收益低；把卡片截成 PNG 正好是用户已经在做的事。
+          IconButton(
+            onPressed: _archive == null ? null : _exportOverview,
+            tooltip: '导出学业总览为图片',
+            icon: const Icon(Icons.ios_share_rounded),
+          ),
           IconButton(
             onPressed: _loading || !_credentialBound ? null : _refresh,
             tooltip: '重新获取学业数据',
@@ -247,14 +267,20 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
       );
     }
 
-    // 「教务暂未配置」是确定的结论，不是加载失败 —— 不显示重试按钮
+    // 「教务暂未配置」是确定的结论，不是加载失败；但仍要给一个重试出口 ——
+    // 学校随时可能补配培养方案，此前这里没有按钮，用户只能退出重进。
     if (archive.isUnconfigured && archive.blocks.isEmpty) {
       return EmptyState(
         message: '教务暂未配置培养方案',
         hint: '${archive.notice}\n'
             '这是教务系统对你这届学生的状态，不是 App 的问题。\n'
-            '学校配置完成后，点右上角刷新即可看到。',
+            '学校配置完成后，点下面的按钮重新读取。',
         artVariant: EmptyArtVariant.report,
+        action: OutlinedButton.icon(
+          onPressed: _refresh,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('重新读取'),
+        ),
       );
     }
 
@@ -267,6 +293,8 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
           _buildErrorBanner(isDark, _errorText!),
           const SizedBox(height: 12),
         ],
+        // 不再包 RepaintBoundary：导出改走 OffscreenCapture 离屏整树渲染，
+        // 屏幕上这层边界没有用途（见 _exportOverview 的注释）。
         _buildOverview(archive, isDark),
         const SizedBox(height: 16),
         _buildFilters(archive, isDark),
@@ -282,7 +310,9 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
           )
         else
           for (final b in blocks) ...[
-            _buildBlock(b, isDark),
+            // 筛选后 b.courses 被裁剪过，「完成 %」必须取未裁剪的那一份。
+            _buildBlock(b, isDark,
+                originalProgress: _progressOf(archive, b.id)),
             const SizedBox(height: 10),
           ],
         const SizedBox(height: 8),
@@ -423,6 +453,159 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
     return '已获 ${_trim(got)} / 要求 ${_trim(need)} 学分';
   }
 
+  /// 把**完整学业报告**（总览 + 筛选统计 + 全部板块与课程 + 页脚）导成一张长图。
+  ///
+  /// 🔴 2026-11-03 第二版（用户原话：「导出功能做得不好，应当导出完全数据图片」）：
+  ///    第一版对页面里的 `_overviewKey` 直接 `toImage()`，只能拿到**屏幕可见的
+  ///    那一屏** —— 因为 `ListView` 只 build/layout 可见区域，屏幕外的课程行
+  ///    根本没进渲染树。现在改走 [OffscreenCapture]：在一棵离屏渲染树里按
+  ///    「宽度固定、高度无界」重新排版整份内容，再取图，所以屏幕多高都不影响结果。
+  ///
+  /// 三个必须处理的边界：
+  ///   1. 没有数据 → 直接返回，不崩；
+  ///   2. 长图可能很大（40+ 门课）→ [OffscreenCapture] 内部按高度自适应倍率，
+  ///      失败返回 null，只提示「导出失败」，不影响页面继续用；
+  ///   3. 大图写盘走 `getApplicationCacheDirectory()`（可回收层），
+  ///      不污染用户的 Documents（那是教材/试卷的地盘）。
+  Future<void> _exportOverview() async {
+    final a = _archive;
+    if (a == null) {
+      _toast('还没有学业数据');
+      return;
+    }
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final screenWidth = MediaQuery.of(context).size.width;
+      final width = (screenWidth - 40).clamp(320.0, 560.0);
+
+      final bytes = await OffscreenCapture.capture(
+        context,
+        _buildExportReport(a, isDark),
+        width: width,
+      );
+      if (bytes == null) {
+        if (mounted) _toast('导出失败，稍后再试');
+        return;
+      }
+      final dir = await getApplicationCacheDirectory();
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .split('.')
+          .first;
+      final file = File('${dir.path}/我的学业_$stamp.png');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'image/png')],
+        text: '掌上锡院 · 我的学业',
+      );
+    } catch (_) {
+      if (mounted) _toast('导出失败，稍后再试');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  /// 导出图的内容：标题 + 总览卡 + 状态统计 + 全部板块（强制展开）+ 页脚。
+  ///
+  /// 刻意**不含**筛选胶囊与折叠箭头 —— 图上点不了，画出来只会让人以为能按。
+  Widget _buildExportReport(StudyArchive a, bool isDark) {
+    final blocks = a.blocks;
+    final at = a.fetchedAt ?? _cacheUpdatedAt;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '我的学业',
+                style: TextStyle(
+                  fontSize: AppTheme.fontHero,
+                  height: 1.1,
+                  fontWeight: FontWeight.w700,
+                  color: context.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              if (at != null)
+                Text(
+                  '更新于 ${_fmtTime(at)}',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption, color: context.textTertiary),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _buildOverview(a, isDark),
+          const SizedBox(height: 14),
+          _buildExportStats(a),
+          const SizedBox(height: 14),
+          for (final b in blocks) ...[
+            _buildBlock(b, isDark, forceOpen: true),
+            const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 2),
+          _buildFooter(a),
+          const SizedBox(height: 6),
+          Text(
+            '由「掌上锡院」生成',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: AppTheme.fontCaption, color: context.textTertiary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 导出图里那行「全部 / 已修 / 在读 / 未过 / 未修」统计。
+  ///
+  /// 🔴「已修」必须含「替代」：`StudyState.isCountedPassed` 明确
+  /// `passed` 和 `replaced` 都算通过（教务口径），总览的「通过」也是这么算的。
+  /// 此前这里只数 `passed`，于是同一屏出现「通过 17 / 已修 15」两个矛盾数字，
+  /// 而导出图连「替代」这一项都没有 —— 交给辅导员看就是硬伤。
+  Widget _buildExportStats(StudyArchive a) {
+    final counts = a.stateCounts;
+    final total = a.allCourses.length;
+    final passed = counts[StudyState.passed] ?? 0;
+    final replaced = counts[StudyState.replaced] ?? 0;
+    final items = <(String, int)>[
+      ('全部', total),
+      ('已修', passed + replaced),
+      ('在读', counts[StudyState.studying] ?? 0),
+      ('未过', counts[StudyState.failed] ?? 0),
+      ('未修', counts[StudyState.notStarted] ?? 0),
+      if (replaced > 0) ('其中替代', replaced),
+    ];
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final (label, n) in items)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: context.subtleFill,
+              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            ),
+            child: Text(
+              '$label $n',
+              style: TextStyle(
+                  fontSize: AppTheme.fontSmall,
+                  fontWeight: FontWeight.w500,
+                  color: context.textSecondary),
+            ),
+          ),
+      ],
+    );
+  }
+
   double _creditProgress(StudyArchive a) {
     final got = a.earnedCredits;
     final need = a.requiredCredits;
@@ -479,10 +662,19 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
   static bool _setEquals(Set<StudyState> a, Set<StudyState> b) =>
       a.length == b.length && a.every(b.contains);
 
+  /// 未筛选状态下某板块的完成度。找不到（板块被删/改名）返回 null，交给调用方兜底。
+  static double? _progressOf(StudyArchive archive, String blockId) {
+    for (final b in archive.blocks) {
+      if (b.id == blockId) return b.progress;
+    }
+    return null;
+  }
+
   // ==================== ③ 折叠板块 ====================
 
-  Widget _buildBlock(StudyBlock b, bool isDark) {
-    final open = _expanded.contains(b.id);
+  Widget _buildBlock(StudyBlock b, bool isDark,
+      {bool forceOpen = false, double? originalProgress}) {
+    final open = forceOpen || _expanded.contains(b.id);
     return Container(
       decoration: BoxDecoration(
         color: context.cardColor,
@@ -536,7 +728,8 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
                   ),
                   if (open) ...[
                     const SizedBox(height: 10),
-                    _buildBlockStats(b, isDark),
+                    _buildBlockStats(b, isDark,
+                        originalProgress: originalProgress),
                   ],
                 ],
               ),
@@ -580,7 +773,12 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
 
   /// 展开后的统计行。**只显示有值的** —— 教务对子板块的「要求学分」一律给 `1.0`
   /// （实测 10 个子节点全是这个怪值），显示出来只会让人以为「这板块只要 1 学分」。
-  Widget _buildBlockStats(StudyBlock b, bool isDark) {
+  ///
+  /// [originalProgress] 传未筛选板块的完成度。筛选后 `b.courses` 只剩命中的课，
+  /// 拿它算「完成 %」会随筛选变化（只看「未过」就成了 0%，只看「已修」就成了 100%），
+  /// 那个数字不该动 —— 它不是筛选结果的统计，是这板块本身的进度。
+  Widget _buildBlockStats(StudyBlock b, bool isDark,
+      {double? originalProgress}) {
     final parts = <String>['学分合计 ${_trim(b.courseCredits)}'];
     if (b.earnedCredits != null && b.earnedCredits! > 0) {
       parts.add('已获 ${_trim(b.earnedCredits!)}');
@@ -601,7 +799,7 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
             style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textSecondary),
           ),
         ),
-        Text('完成 ${(b.progress * 100).round()}%',
+        Text('完成 ${((originalProgress ?? b.progress) * 100).round()}%',
             style: TextStyle(fontSize: AppTheme.fontCaption, color: context.textTertiary)),
       ],
     );

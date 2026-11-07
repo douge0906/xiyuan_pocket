@@ -157,9 +157,23 @@ class StudyClient {
     }
 
     final csrf = _csrf(html);
+    // 🔴 csrf 不清空就报错是错的：2026-11-02 抓的真实页面（581,116 字符，
+    // 见 test/fixtures/jwgl_study_page_2025.html）里 `csrftoken` 命中为 0，
+    // 连 <input>/<form> 都没有。若线上同构，这里必然抛 needRelogin，
+    // 而用户明明刚登录成功 —— 错误信息还指错方向（说"请重新登录"）。
+    // 改成：空令牌也先真发一次请求，被拒了再报错。
     if (csrf.isEmpty) {
-      throw CampusException('未能获取教务校验令牌，请重新登录后重试',
-          needRelogin: true);
+      var probed = false;
+      try {
+        await _fetchCourses(session, '', nodes.first.id);
+        probed = true;
+      } catch (_) {
+        probed = false;
+      }
+      if (!probed) {
+        throw CampusException('未能获取教务校验令牌，请重新登录后重试',
+            needRelogin: true);
+      }
     }
 
     final blocks = <StudyBlock>[];
@@ -322,12 +336,7 @@ class StudyClient {
     return '';
   }
 
-  static String _csrf(String html) {
-    final m = RegExp(r'id="csrftoken"[^>]*value="([^"]+)"').firstMatch(html);
-    if (m == null) return '';
-    // 页面给的是 `<uuid>,<uuid去横线>`，只用逗号前那一段
-    return m.group(1)!.split(',').first.trim();
-  }
+  static String _csrf(String html) => extractCsrfToken(html);
 
   /// Mode B：没有培养方案，只能拿本学期课表按 `kclb` 分组。
   ///
@@ -359,6 +368,54 @@ class StudyClient {
     final raw = (schedule['courses'] as List?) ?? const [];
     if (raw.isEmpty) return StudyArchive.unconfigured();
 
+    // 🔴 按成绩推导状态（函数上方注释承诺过，此前写死 studying 从未兑现）。
+    // 整届没配培养方案的学生，课程门数从课表来、状态从成绩来 —— 否则他们会看到
+    // 「在读 135 / 已修 0 / 完成 0%」，而其实已经修完一大半。
+    //
+    // 📐 2026-11-04 审查 P1：这里原来只 `num.tryParse`，非数字成绩一律
+    //    `continue` —— 于是**等级制成绩全被当成没成绩**，`stateFor` 落到
+    //    `studying`。后果有两个，第二个更严重：
+    //      ① 「优秀 / 良好 / 中等 / 及格 / 合格 / 通过 / 免修 / 免听」这些
+    //         **已经通过**的课显示成「在读」，通过门数偏少；
+    //      ② 「不合格 / 不及格 / 不通过 / 取消资格」**挂科被抹平成「在读」**，
+    //         学生看不到自己挂了什么，而这正是最需要看见的信息。
+    //    修法：先把文本映射成三态（passed / failed / unknown），只有 unknown
+    //    才继续留在「在读」；纯数字仍走原来的 >= 60 判据。
+    final gradeByNo = <String, bool>{};
+    final gradeByName = <String, bool>{};
+    var gradesOk = false;
+    try {
+      final g = await JwglClient.fetchGrades(session);
+      final sems = (g['semesters'] as List?) ?? const [];
+      for (final s in sems) {
+        if (s is! Map) continue;
+        for (final c in (s['courses'] as List?) ?? const []) {
+          if (c is! Map) continue;
+          // cj 是成绩，bfzcj 是「百分制成绩」兜底（部分课程 cj 只给等级）。
+          final passed = _passedFromGrade(
+            '${c['cj'] ?? ''}'.trim(),
+            '${c['bfzcj'] ?? ''}'.trim(),
+          );
+          if (passed == null) continue; // 真的判不出来，留在「在读」
+          final no = '${c['kch'] ?? ''}'.trim();
+          final nm = '${c['kcmc'] ?? ''}'.trim();
+          if (no.isNotEmpty) gradeByNo.putIfAbsent(no, () => passed);
+          if (nm.isNotEmpty) gradeByName.putIfAbsent(nm, () => passed);
+        }
+      }
+      gradesOk = true;
+    } catch (e) {
+      // 成绩拉不到不能让整个学业页失败（课表已经有内容了），只是状态退回「在读」。
+      if (e is CampusException && e.needRelogin) rethrow;
+    }
+
+    StudyState stateFor(String courseNo, String name) {
+      if (!gradesOk) return StudyState.studying;
+      final passed = gradeByNo[courseNo] ?? gradeByName[name];
+      if (passed == null) return StudyState.studying;
+      return passed ? StudyState.passed : StudyState.failed;
+    }
+
     // 课表按「课程号 + 课程名」去重（同一门课一周上多次）
     final byKey = <String, Map<String, dynamic>>{};
     for (final e in raw) {
@@ -386,16 +443,17 @@ class StudyClient {
       final category = pick(['kclb', 'KCLB', 'kclbmc', 'KCLBMC']);
       final groupName = category.isEmpty ? '其他课程' : category;
       final credits = double.tryParse(pick(['xf', 'XF'])) ?? 0;
+      final courseNo = pick(['kch', 'KCH']);
+      final courseName = pick(['kcmc', 'KCMC']);
 
       groups.putIfAbsent(groupName, () => []).add(StudyCourse(
-            courseNo: pick(['kch', 'KCH']),
-            name: pick(['kcmc', 'KCMC']),
+            courseNo: courseNo,
+            name: courseName,
             credits: credits,
             hours: pick(['kczxs', 'XSXXXX', 'zhxs']),
             nature: pick(['kcxz', 'KCXZMC']),
             category: groupName,
-            // 课表里出现的课，本学期默认在修；后续接成绩接口可细化
-            state: StudyState.studying,
+            state: stateFor(courseNo, courseName),
             studyYear: _yearLabel(xnm),
             studyTerm: xqm == '3' ? '1' : (xqm == '12' ? '2' : ''),
             stateFromServer: false,
@@ -431,6 +489,42 @@ class StudyClient {
   static String _gradeYear(String major) {
     final m = RegExp(r'^(\d{4})').firstMatch(major.trim());
     return m?.group(1) ?? '';
+  }
+  /// 把一条成绩判成「过 / 不过 / 判不出来」。
+  ///
+  /// 2026-11-04 审查 P1：教务给的成绩**不一定是数字**。五级制给「优秀 /
+  /// 良好 / 中等 / 及格 / 不及格」，二级制给「合格 / 不合格」，还有一些课直接
+  /// 给「通过 / 不通过 / 免修 / 免听 / 取消资格 / 缓考 / 缺考」。
+  ///
+  /// 这里只回答一件事：**这门算不算过了**。
+  /// - 数字（含 `bfzcj` 百分制兜底）→ `>= 60`；
+  /// - 明确的通过类字样 → true；
+  /// - 明确的未通过类字样 → false；
+  /// - 「缓考 / 缺考 / 未出分 / 空」这类**没有结论**的 → null（调用方留在「在读」）。
+  ///
+  /// 注意判定顺序：`不合格` 里含 `合格`，`不通过` 里含 `通过`，必须先判否定。
+  static bool? _passedFromGrade(String cj, String bfzcj) {
+    final text = cj.trim();
+    final score = num.tryParse(text) ?? num.tryParse(bfzcj.trim());
+    if (score != null) return score >= 60;
+    if (text.isEmpty) return null;
+
+    // 否定在前：「不合格」不能因为含「合格」被判过。
+    const failedMarkers = <String>[
+      '不合格', '不及格', '不通过', '未通过', '取消资格', '取消考试资格', '禁考',
+    ];
+    for (final m in failedMarkers) {
+      if (text.contains(m)) return false;
+    }
+    const passedMarkers = <String>[
+      '优秀', '良好', '中等', '及格', '合格', '通过',
+      '免修', '免听', '免考',
+    ];
+    for (final m in passedMarkers) {
+      if (text.contains(m)) return true;
+    }
+    // 缓考 / 缺考 / 未出分 / - / / 等：没有结论，别瞎猜。
+    return null;
   }
 }
 

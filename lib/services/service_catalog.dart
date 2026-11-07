@@ -55,4 +55,11 @@ const List<ToolModel> mainServices = [
     color: Color(0xFF1F2937),
     needsNetwork: false,
   ),
+  ToolModel(
+    id: 'student_handbook',
+    name: '锡院学生手册',
+    icon: Icons.auto_stories_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: false,
+  ),
 ];

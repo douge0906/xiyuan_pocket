@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,11 +11,16 @@ import '../services/course_reminder_service.dart';
 import '../services/course_storage.dart';
 import '../services/api_service.dart';
 import '../services/course_sync_service.dart';
+import '../services/pdf/course_pdf_parser.dart';
+import '../services/pdf/mini_pdf.dart';
+import '../services/campus/jwgl_client.dart' show CampusException;
+import '../services/campus/sygl_client.dart';
 import '../services/widget_sync_service.dart';
 import '../providers/course_provider.dart';
 import '../services/course_todo_service.dart';
 import '../services/current_tab.dart';
-import 'reminder_settings_page.dart';
+import '../app.dart';
+import 'notification_reminder_page.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_day_header.dart';
@@ -23,9 +29,57 @@ import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
 import 'tools/course_table_settings_page.dart';
 import '../widgets/course_grid_widgets.dart';
+import '../widgets/semester_picker.dart';
 
 part 'course_table_welcome_sheet.dart';
+part 'course_import_sheet.dart';
+part 'course_semester_dialog.dart';
+part 'course_lab_dialog.dart';
 
+
+/// 导入新课表弹窗里「学年学期」滚轮的可选项：`25-26-1` / `25-26-2` / …
+///
+/// 2026-11-04（用户 m20455 #4）：原来是两个 DropdownButton，改成滚轮后
+/// 需要一个「标签 ↔ (xnm, xqm)」的映射。标签格式与成绩页 [shortTermLabel]
+/// 完全一致，避免同一件事两种写法。
+String _pad2(int v) => v.toString().padLeft(2, '0');
+
+List<String> _semesterOptions(List<int> years) {
+  final out = <String>[];
+  for (final y in years) {
+    out.add('${_pad2(y % 100)}-${_pad2((y + 1) % 100)}-1');
+    out.add('${_pad2(y % 100)}-${_pad2((y + 1) % 100)}-2');
+  }
+  return out;
+}
+
+/// `25-26-1` → `('2025', '3')`；`25-26-2` → `('2025', '12')`。
+(String, String) _parseSemesterOption(String label) {
+  final parts = label.split('-');
+  if (parts.length < 3) return ('${DateTime.now().year}', '3');
+  final year = 2000 + (int.tryParse(parts[0]) ?? DateTime.now().year % 100);
+  final half = int.tryParse(parts[2]) ?? 1;
+  return ('$year', half == 1 ? '3' : '12');
+}
+
+int _semesterOptionIndex(List<int> years, String xnm, String xqm) {
+  final y = int.tryParse(xnm) ?? DateTime.now().year;
+  final want = '${_pad2(y % 100)}-${_pad2((y + 1) % 100)}-${xqm == '3' ? 1 : 2}';
+  final i = _semesterOptions(years).indexOf(want);
+  return i < 0 ? 0 : i;
+}
+
+String _semesterLabel(String xnm, String xqm) {
+  final y = int.tryParse(xnm) ?? DateTime.now().year;
+  return '${_pad2(y % 100)}-${_pad2((y + 1) % 100)}-${xqm == '3' ? 1 : 2}';
+}
+
+/// 「HH:mm」时刻格式（调整上课时间用）。
+///
+/// 半角冒号、两位时分，24 小时制。全角冒号与「8点」这类写法一律拒收 ——
+/// `CourseStorage.loadSlotEndMap` 的过滤条件是 `last.contains(':')`，
+/// 全角冒号会**通过**那个判断但取到错值，所以必须在入口拦住。
+final RegExp _kClockRe = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
 
 class CourseTableHomePage extends ConsumerStatefulWidget {
   const CourseTableHomePage({super.key});
@@ -75,7 +129,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     super.initState();
     _selectedWeek = CourseStorage.teachingWeek(DateTime.now(), _effectiveStart);
     _pageController = PageController(
-      initialPage: (_selectedWeek - 1).clamp(0, kMaxCourseWeeks - 1),
+      initialPage: (_selectedWeek - 1)
+          .clamp(0, CourseStorage.weekCountCache - 1),
     );
     _loadTimeBlocks();
     _loadSemesterStart();
@@ -151,7 +206,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final target = (_selectedWeek - 1).clamp(0, kMaxCourseWeeks - 1);
+      final target =
+          (_selectedWeek - 1).clamp(0, CourseStorage.weekCountCache - 1);
       if (_pageController.hasClients && _pageController.page?.round() != target) {
         _pageController.jumpToPage(target);
       }
@@ -172,7 +228,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     // 改开学日期后同步 PageView 定位
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final target = (_selectedWeek - 1).clamp(0, kMaxCourseWeeks - 1);
+      final target =
+          (_selectedWeek - 1).clamp(0, CourseStorage.weekCountCache - 1);
       if (_pageController.hasClients && _pageController.page?.round() != target) {
         _pageController.jumpToPage(target);
       }
@@ -196,6 +253,299 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     // （课表设置页改滑杆时也调它，共用一份映射，防止两边口径漂移）。
     CourseStorage.applyDisplayToCache(s);
     setState(() {}); // 触发重建，让网格按新设置重绘
+  }
+
+  /// 右上角「导入」：先问用哪种方式，再分派。
+  ///
+  /// v1.0.9：原来的按钮是「刷新」（只有教务抓取一条路）。用户反馈
+  /// 「只有一个刷新按钮，我需要把它改成导入按钮，点开有多种方式」。
+  Future<void> _showImportSheet() async {
+    if (_syncing) return;
+    final choice = await showDialog<_ImportChoice>(
+      context: context,
+      builder: (_) => _CourseImportSheet(
+        tableName: _tableName,
+        courseCount: _courses.length,
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    switch (choice.action) {
+      case _ImportAction.campus:
+        await _syncNow();
+      case _ImportAction.pdf:
+        await _importFromPdf(choice.courses ?? const <Course>[]);
+      case _ImportAction.lab:
+        await _importLabs();
+      case _ImportAction.clearCurrent:
+        await _clearCurrentTable();
+    }
+  }
+
+  /// 把 PDF 解析出的课程导入当前课表。
+  ///
+  /// 语义是**替换**：PDF 里就是这份课表的全部内容，合并会让上一次导入的
+  /// 旧课留在原地（用户报告过「导入后课变多了一倍」这类问题）。
+  /// 所以先让用户确认「会覆盖 M 门现有课程」。
+  Future<void> _importFromPdf(List<Course> courses) async {
+    if (courses.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('导入 PDF 课表',
+            style: TextStyle(fontSize: AppTheme.fontTitle)),
+        content: Text(
+          _courses.isEmpty
+              ? '解析到 ${courses.length} 门课，将写入「$_tableName」。'
+              : '解析到 ${courses.length} 门课。\n'
+                  '「$_tableName」当前的 ${_courses.length} 门课会被替换掉。',
+          style: const TextStyle(fontSize: AppTheme.fontBody),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('导入',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _syncing = true);
+    try {
+      await ref.read(courseProvider.notifier).replaceAll(courses);
+      await _load();
+      if (!mounted) return;
+      // 小组件与上课提醒不认 provider，替换后要主动推一次。
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+      _toast('已从 PDF 导入 ${courses.length} 门课');
+    } catch (e) {
+      // 🔴 原来只有 finally：写盘失败（SharedPreferences 抛异常 / 磁盘满）时
+      // 异常会穿到 Flutter 的 zone 里，release 下用户既看不到错误也看不到
+      // 「已导入」的 toast，弹窗关闭、一切都像没发生。
+      // 这里必须把内存态拉回磁盘真相，避免界面显示成功而重启后消失。
+      debugPrint('[import] PDF 导入失败: $e');
+      if (mounted) {
+        _toast('导入失败：$e');
+        await _load();
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  /// 实验课导入。
+  ///
+  /// 🔴 这条链路的**已知不确定点**：实验管理系统（sygl.cwxu.edu.cn）的 asmx
+  ///   接口在浏览器外一律拿不到（未登录 401、带 kzJson 的请求体被服务端回 404），
+  ///   所以 [SyglClient] 里那套「读菜单 → 找实验栏目 → 解析页面」是尽力而为：
+  ///   登录本身是确定能通（CAS 票据换 ASP.NET 会话，已实测 302→CAS 正确），
+  ///   但拿到会话后能读出什么，只能在真机上第一次跑才知道。
+  ///   所以这里必须**把探测结果原样摊给用户**（解析到几条、站点回了什么栏目），
+  ///   而不是笼统报「导入成功」或「失败了」。
+  Future<void> _importLabs() async {
+    setState(() => _syncing = true);
+    try {
+      final result = await ApiService.fetchLabs();
+      if (!mounted) return;
+
+      final scheduled = [
+        for (final lab in result.labs)
+          if (lab.hasSchedule) lab,
+      ];
+      if (scheduled.isEmpty) {
+        await _showLabEmpty(result);
+        return;
+      }
+
+      final picked = await showDialog<List<SyglLab>>(
+        context: context,
+        builder: (ctx) => _LabImportDialog(labs: scheduled),
+      );
+      if (picked == null || picked.isEmpty || !mounted) return;
+      if (mounted) setState(() => _syncing = true);
+
+      // 🔴 实验课是**补充**，不是替换：走 replaceAll 会把用户原有的普通课
+      //    整份清掉（这一条踩过一次）。按 id 去重后做并集。
+      final existing = List<Course>.of(_courses);
+      final byId = <String, Course>{for (final c in existing) c.id: c};
+      var added = 0;
+      for (final lab in picked) {
+        final c = _labToCourse(lab);
+        if (byId.containsKey(c.id)) continue;
+        byId[c.id] = c;
+        added++;
+      }
+      if (added == 0) {
+        _toast('选中的实验课都已在课表里，无需重复导入');
+        return;
+      }
+      await ref.read(courseProvider.notifier).replaceAll(byId.values.toList());
+      await _load();
+      if (!mounted) return;
+      unawaited(WidgetSyncService.syncTodayCourses());
+      unawaited(CourseReminderService.rescheduleAll());
+      _toast('已添加 $added 门实验课，原有课程保留');
+    } on CampusException catch (e) {
+      if (mounted) _toast(e.message);
+    } catch (_) {
+      if (mounted) {
+        _toast('暂时读不到实验安排，请检查网络后重试；仍不行请重新登录');
+      }
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  /// 没解析出可排课的实验时，把**站点真实回什么**摊出来。
+  ///
+  /// 这是整条实验课链路唯一能让用户（和我）定位问题的地方：
+  /// 如果 `menuDump` 里根本没有「实验」栏目，说明接口层根本没打通；
+  /// 如果有栏目但 0 条，说明解析规则要按真实页面重写。
+  Future<void> _showLabEmpty(SyglLabFetchResult result) async {
+    final dump = result.menuDump.isEmpty
+        ? '（站点没有返回任何栏目）'
+        : result.menuDump
+            .split('\n')
+            .where((s) => s.trim().isNotEmpty)
+            .take(12)
+            .join('\n');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: context.cardColor,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: AppTheme.cardStrokeColor(context.isDark)),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.science_rounded, color: AppTheme.primaryColor, size: 20),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('没有读到实验安排',
+                  style: TextStyle(fontSize: AppTheme.fontTitle)),
+            ),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.of(ctx).pop(),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                result.note.isEmpty ? '实验管理系统登录成功，但没有解析出可排进课表的实验。' : result.note,
+                style: const TextStyle(fontSize: AppTheme.fontBody),
+              ),
+              const SizedBox(height: 12),
+              Text('站点返回的栏目（用于排查，不影响你的课表）：',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+              const SizedBox(height: 6),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: context.subtleFill,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                ),
+                child: Text(
+                  dump,
+                  style: const TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      fontFamily: 'monospace',
+                      height: 1.45),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              if (mounted) _importLabs();
+            },
+            child: const Text('重试'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [SyglLab] → [Course]。
+  ///
+  /// `id` 里带 `lab_` 前缀，`source` 标 [CourseSource.imported]：
+  /// 教务同步（`mergeServerCoursesInto`）只替换 `source == server` 的课，
+  /// 标 server 会让老师下次登录时把这批实验课当「上一轮的教务课」删掉。
+  /// 重复导入靠 id 去重（教室、节次、周次都并入签名：用户统一改教室后
+  /// place 变了，id 也要跟着变，否则按 id 去重会把改过的那条吞掉）。
+  Course _labToCourse(SyglLab lab) {
+    final weeks = lab.weeks.isNotEmpty ? lab.weeks : '1-20周';
+    final signature = '${lab.name}|${lab.weekday}|${lab.startSlot}|'
+        '${lab.endSlot}|$weeks|${lab.time}|${lab.place}';
+    return Course(
+      id: 'lab_${signature.hashCode.toRadixString(16)}',
+      name: lab.name,
+      teacher: lab.teacher,
+      classroom: lab.place,
+      weekday: lab.weekday,
+      startSlot: lab.startSlot,
+      // 结束节缺失时按 1 节处理：宁可画一格，也不要整门课从网格上消失
+      // （`hasSchedule` 已保证 startSlot 在 1..12，这里再兜一层）。
+      endSlot: lab.safeEndSlot,
+      weeks: weeks,
+      colorValue: 0xFF8B5CF6,
+      source: CourseSource.imported,
+    );
+  }
+
+  /// 清空当前这份课表的全部课程（导入前的归零）。
+  Future<void> _clearCurrentTable() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空当前课表',
+            style: TextStyle(fontSize: AppTheme.fontTitle)),
+        content: Text('「$_tableName」的 ${_courses.length} 门课程将被删除，无法恢复。',
+            style: const TextStyle(fontSize: AppTheme.fontBody)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清空',
+                style: TextStyle(
+                    fontWeight: FontWeight.w600, color: Color(0xFFE24B4A))),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await ref.read(courseProvider.notifier).clear();
+    await _load();
+    if (!mounted) return;
+    unawaited(WidgetSyncService.syncTodayCourses());
+    unawaited(CourseReminderService.rescheduleAll());
+    _toast('已清空「$_tableName」');
   }
 
   /// 手动同步课表（右上角刷新键）。
@@ -295,23 +645,49 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
         return AlertDialog(
+          backgroundColor: context.cardColor,
+          elevation: 0,
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
-          title: const Text('时间冲突',
-              style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(color: AppTheme.cardStrokeColor(context.isDark)),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+          actionsPadding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          title: Row(
+            children: [
+              Icon(Icons.call_split_rounded,
+                  size: 20, color: AppTheme.primaryColor),
+              const SizedBox(width: 8),
+              const Text('时间冲突',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontTitle,
+                      fontWeight: FontWeight.bold)),
+              const Spacer(),
+              if (groups.length > 1)
+                Text('${groups.length} 处',
+                    style: TextStyle(
+                        fontSize: AppTheme.fontSmall,
+                        color: context.textTertiary)),
+            ],
+          ),
           content: SizedBox(
-            width: 340,
+            // 340 太窄：课程名 + 来源标签 + 选中勾挤在一行必然省略。
+            // 按屏幕宽度自适应，上限 420（再宽在平板上会显得空旷）。
+            width: (MediaQuery.of(context).size.width - 96).clamp(280.0, 420.0),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('同一时段多门课，默认全部保留',
+                  Text('同一时段有多门课。点一门＝保留它并移除其余，什么都不点＝全部保留。',
                       style: TextStyle(
-                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-                  const SizedBox(height: 12),
+                          fontSize: AppTheme.fontSmall,
+                          height: 1.5,
+                          color: context.textTertiary)),
+                  const SizedBox(height: 14),
                   for (int g = 0; g < groups.length; g++) ...[
-                    if (g > 0) const Divider(height: 22),
+                    if (g > 0) const Divider(height: 26),
                     _conflictGroup(groups[g], picked[g],
                         (v) => setModal(() => picked[g] = v)),
                   ],
@@ -322,13 +698,17 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('都保留全部',
-                  style: TextStyle(color: Colors.grey)),
+              child: Text('全部保留',
+                  style: TextStyle(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.grey.shade400
+                          : const Color(0xFF6B7280))),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
               style: FilledButton.styleFrom(
                 backgroundColor: AppTheme.primaryColor,
+                minimumSize: const Size(76, 40),
               ),
               child: const Text('确定'),
             ),
@@ -402,6 +782,94 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   /// （2026-10-16 用户报告：刷新后提示了冲突，保留全部却仍少一门）。
   /// 所以这里要把名单清空，再同步一次把这些课带回课表。
   /// 单个冲突时段的选项组：课程 radio 列表 + 「都保留」。
+  /// 冲突弹窗里的一行「可选卡片」。
+  ///
+  /// v1.0.9：原来是 [RadioListTile]（圆点 + 文字），在 340dp 宽的弹窗里课程名
+  /// 被右侧「教务/手动」标签挤到省略号，点击热区也只有圆点附近。用户反馈
+  /// 「冲突这部分 UI 优化一下」—— 改成整块卡片：左侧色条标识课程、选中态用
+  /// 主题色描边 + 淡底、整行可点。
+  Widget _conflictOption({
+    required bool selected,
+    required VoidCallback onTap,
+    required Widget child,
+  }) {
+    final primary = AppTheme.primaryColor;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+            decoration: BoxDecoration(
+              color: selected ? primary.withValues(alpha: 0.08)
+                  : context.subtleFill,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              border: Border.all(
+                color: selected ? primary : context.borderColor,
+                width: selected ? 1.4 : 1,
+              ),
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 来源小标签（教务 / 导入 / 手动）。以前是裸文字，挤占课程名宽度；
+  /// 现在收成一个带底色的胶囊，宽度固定、不与标题抢空间。
+  ///
+  /// 三态：教务同步来的、从 PDF / 实验课导入的、用户手加的 —— 冲突弹窗里
+  /// 用户要靠这个决定「删哪一门」，两态会把「导入的」误显示成「手动」。
+  Widget _sourceTag(CourseSource source) {
+    final isServer = source == CourseSource.server;
+    final color = isServer
+        ? AppTheme.primaryColor
+        : (source == CourseSource.imported
+            ? const Color(0xFF8B5CF6)
+            : (Theme.of(context).brightness == Brightness.dark
+                ? Colors.grey.shade400
+                : const Color(0xFF6B7280)));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        switch (source) {
+          CourseSource.server => '教务',
+          CourseSource.imported => '导入',
+          CourseSource.manual => '手动',
+        },
+        style: TextStyle(
+            fontSize: AppTheme.fontCaption, height: 1.1, color: color),
+      ),
+    );
+  }
+
+  /// 「非本周」小标签：冲突弹窗里标出本周并不上的那门课。
+  Widget _weekTag() {
+    final color = Theme.of(context).brightness == Brightness.dark
+        ? Colors.grey.shade400
+        : const Color(0xFF6B7280);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        '非本周',
+        style: TextStyle(
+            fontSize: AppTheme.fontCaption, height: 1.1, color: color),
+      ),
+    );
+  }
+
   Widget _conflictGroup(
       List<Course> group, int? keep, ValueChanged<int?> onPick) {
     final first = group.first;
@@ -412,60 +880,105 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             style: TextStyle(
                 fontSize: AppTheme.fontSmall,
                 fontWeight: FontWeight.w600,
-                color: context.textPrimary)),
-        const SizedBox(height: 2),
+                color: context.textSecondary)),
+        const SizedBox(height: 6),
         for (int i = 0; i < group.length; i++)
-          RadioListTile<int>(
-            value: i,
-            groupValue: keep ?? -1,
-            onChanged: (v) => onPick(v),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            activeColor: AppTheme.primaryColor,
-            title: Row(
+          _conflictOption(
+            selected: keep == i,
+            // 再点一次已选中的那门 = 撤回选择（回到「都保留」）
+            onTap: () => onPick(keep == i ? null : i),
+            child: Row(
               children: [
                 Container(
-                  width: 10,
-                  height: 10,
+                  width: 3,
+                  height: 30,
                   decoration: BoxDecoration(
-                    // v1.6.9：小圆点跟随课节色块的色彩方案
+                    // v1.6.9：色条跟随课节色块的色彩方案
                     color: courseColorFor(
                         group[i].colorValue, CourseStorage.schemeCache),
-                    shape: BoxShape.circle,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        group[i].name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          fontWeight:
+                              keep == i ? FontWeight.w600 : FontWeight.w400,
+                          color: keep == i
+                              ? AppTheme.primaryColor
+                              : context.textPrimary,
+                        ),
+                      ),
+                      if (group[i].teacher.isNotEmpty ||
+                          group[i].classroom.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          [group[i].teacher, group[i].classroom]
+                              .where((s) => s.isNotEmpty)
+                              .join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: AppTheme.fontCaption,
+                              color: context.textTertiary),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: Text(group[i].name,
-                      style: const TextStyle(fontSize: AppTheme.fontBody),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  group[i].source == CourseSource.server ? '教务' : '手动',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontCaption, color: context.textTertiary),
-                ),
+                // 2026-11-04（m20950 #4）：非本周课现在也会出现在冲突格与
+                // 这个弹窗里，必须明确标出来 —— 否则用户看到「周一到周三有
+                // 两门课撞了」，删掉的其实是本周根本不上、只是被「显示非本周
+                // 课程」开关画出来的那门。
+                if (!group[i].isActiveOnWeek(_selectedWeek)) ...[
+                  _weekTag(),
+                  const SizedBox(width: 6),
+                ],
+                _sourceTag(group[i].source),
+                if (keep == i) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.check_circle_rounded,
+                      size: 18, color: AppTheme.primaryColor),
+                ],
               ],
             ),
-            subtitle: (group[i].teacher.isNotEmpty ||
-                    group[i].classroom.isNotEmpty)
-                ? Text(
-                    [group[i].teacher, group[i].classroom]
-                        .where((s) => s.isNotEmpty)
-                        .join(' · '),
-                    style: const TextStyle(fontSize: AppTheme.fontSmall))
-                : null,
           ),
-        RadioListTile<int>(
-          value: -1,
-          groupValue: keep ?? -1,
-          onChanged: (_) => onPick(null),
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          activeColor: AppTheme.primaryColor,
-          title: const Text('都保留', style: TextStyle(fontSize: AppTheme.fontSmall)),
+        _conflictOption(
+          selected: keep == null,
+          onTap: () => onPick(null),
+          child: Row(
+            children: [
+              Icon(
+                Icons.done_all_rounded,
+                size: 16,
+                color: keep == null
+                    ? AppTheme.primaryColor
+                    : context.textTertiary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '都保留',
+                  style: TextStyle(
+                    fontSize: AppTheme.fontSmall,
+                    color: keep == null
+                        ? AppTheme.primaryColor
+                        : context.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -482,8 +995,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         onAddCourse: () => showCourseFormSheet(
           context,
           onSave: _saveCourse,
-          onDelete: (c) =>
-              confirmDeleteCourse(context, c, onConfirmed: _deleteCourse),
+          // 2026-11-04：表单页已自己弹过「删除课程？」确认框（先问再关页），
+          // 这里直接执行，不能再问第二次 —— 否则点一次「删除」要确认两遍。
+          onDelete: _deleteCourse,
         ),
         onEditTime: _showTimeEditDialog,
         onSyncTodos: () => _syncTodayCoursesToTodos(manual: true),
@@ -508,13 +1022,33 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     //    → 顶栏写着 B 表名、格子画着 A 表课程。
     final snap = await CourseStorage.loadActiveSnapshot();
     if (!mounted || epoch != _loadEpoch) return;
+
+    // 🔴 2026-11-04 审查 P2：`_load` 更新了 `_semesterStart`，却**不重算
+    //    `_selectedWeek`、也不 jumpToPage**。每份课表各有自己的
+    //    `semesterStart`，切表路径（`_switchTable` 最后调 `_load()`）之后
+    //    周次仍是旧表算出来的 → 用户切到另一份学期不同的课表时，停在
+    //    「按旧表算出的周次」，看到的是新表的第 N 周而不是当前周。
+    //    `_loadSemesterStart` / `_changeSemesterStart` 都重算并跳页，这里漏了。
+    final startChanged = _semesterStart != snap.semesterStart;
+    final newWeek =
+        CourseStorage.teachingWeek(DateTime.now(), snap.semesterStart ??
+            CourseStorage.defaultSemesterStart(DateTime.now()));
+
     setState(() {
       _courses = snap.courses;
       _tables = snap.tables;
       _activeTableId = snap.active.id;
       _tableName = snap.active.name;
       _semesterStart = snap.semesterStart;
+      if (startChanged) _selectedWeek = newWeek;
     });
+    if (startChanged) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_pageController.hasClients) return;
+        _pageController.jumpToPage(
+            (_selectedWeek - 1).clamp(0, CourseStorage.weekCountCache - 1));
+      });
+    }
     // 进入课表自动把今日课程同步为待办（去重，不打扰）。
     await _syncTodayCoursesToTodos();
     // 先自愈脏数据（未来日期却被标完成的课程待办），再自动划掉已结束课程。
@@ -548,20 +1082,35 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     await _askSemesterStart();
   }
 
-  /// 弹「选择第 1 周」的居中对话框（复刻原来手动导入后的那一步）。
+  /// 弹「选择第 1 周」的居中对话框（v1.0.9 重做）。
+  ///
+  /// 以前直接开一个 31 格日历，用户要自己算「第 1 周的周一是哪天」——
+  /// 这正是用户说的「首周选择」体感差的地方。现在是**结果导向**：
+  /// 主体直接显示「今天将是第 N 周 · 周X」，并给两个一键选项（本周一 / 上周一），
+  /// 只有这两个都不对时才展开日历手动挑。挑完立刻把「第 N 周」回显在同一行，
+  /// 用户不需要在脑子里算日期与周次的换算。
   Future<void> _askSemesterStart() async {
     final suggested = CourseStorage.mondayOf(_effectiveStart);
-    final picked = await showCourseDatePicker(
+    final picked = await showDialog<DateTime>(
       context: context,
-      initialDate: suggested,
-      firstDate: DateTime(suggested.year - 1, 1, 1),
-      lastDate: DateTime(suggested.year + 1, 12, 31),
-      helpText:
-          '请确认本学期第 1 周的周一（默认 ${suggested.month} 月 ${suggested.day} 日）',
+      builder: (ctx) => _SemesterStartDialog(
+        suggested: suggested,
+        firstDate: DateTime(suggested.year - 1, 1, 1),
+        lastDate: DateTime(suggested.year + 1, 12, 31),
+      ),
     );
-    // 用户直接关掉也算「确认过」——保留估算值，不再反复打扰
-    await CourseStorage.markSemesterStartConfirmed();
+    // 🔴 2026-11-04 审查 P2：原来不管用户选没选，这里都会
+    //    `markSemesterStartConfirmed()`。而点「用默认值」/ 点 × 返回的都是
+    //    null —— 于是「直接关掉对话框」也被永久记成「用户已确认」，
+    //    开学日仍是自动估算值（9/7 或 2/24 所在周一）。若真实开学日差
+    //    1~2 周，教学周会一直算错，而且**再也不会主动纠正**（唯一入口
+    //    藏在「第 N 周 ▾」下拉里）。
+    //
+    //    现在的口径：**只有真选了日期才算确认**。点「用默认值」保留估算
+    //    但仍允许下次再问（对话框本身有「本周一开始」这类一眼选项，
+    //    再问一次的骚扰成本远低于周次长期算错）。
     if (picked == null || !mounted) return;
+    await CourseStorage.markSemesterStartConfirmed();
     await _changeSemesterStart(picked);
   }
 
@@ -588,6 +1137,24 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   void _onEntered(NavPageRef page) {
     if (page != NavPageRef.course || !mounted) return;
     unawaited(_maybeShowWelcome());
+    _consumePendingSettings();
+  }
+
+  /// 设置页请求「打开课表设置」→ 本页被切到前台时消费这个信号（2026-11-03）。
+  ///
+  /// 为什么由课表页接：`CourseTableSettingsPage` 要的四个回调
+  /// （`onAddCourse` / `onEditTime` / `onSyncTodos` / `onClearAll`）
+  /// 全是本页私有方法，设置页造不出来。与「首页齿轮 → 我的页 → 设置」同一套路。
+  ///
+  /// 延后一帧再开：触发时机正是 Tab 切换那一帧，此时本页可能刚被建出来，
+  /// 直接 push 会和 `setState` 打架。
+  void _consumePendingSettings() {
+    if (!AppTabs.pendingOpenCourseSettings) return;
+    AppTabs.pendingOpenCourseSettings = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_openCourseSettings());
+    });
   }
 
   Future<void> _maybeShowWelcome() async {
@@ -607,7 +1174,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         backgroundColor: Colors.white,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           side: const BorderSide(color: Color(0xFFE8E8EE)),
         ),
         child: ConstrainedBox(
@@ -622,6 +1189,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                 'bgGradientStrength': 1.0,
               }),
               onToggleGrid: (v) => _patchDisplay({'showGridLines': v}),
+              onToggleHighlightToday: (v) =>
+                  _patchDisplay({'highlightToday': v}),
             ),
           ),
         ),
@@ -704,22 +1273,39 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             child: const Text('取消'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
+              // 🔴 2026-11-04 审查 P2：这里原来是「输入什么存什么」。
+              //    TextField 只有 hintText，没有 keyboardType / 校验，
+              //    于是「8点」「08：00」（全角冒号）甚至空串都能保存。
+              //    而 `CourseStorage.loadSlotEndMap` 用 `!last.contains(':')`
+              //    过滤 —— 全角冒号、空串、`8点` 全被跳过，该节回落到默认
+              //    时刻，与用户看到的表盘不一致，「下课即自动完成」按错误
+              //    时刻触发或永不触发。
+              final bad = <String>[];
               final updated = <CourseBlock>[];
               for (int i = 0; i < _blocks.length; i++) {
+                final s = startCtls[i].text.trim();
+                final e = endCtls[i].text.trim();
+                if (!_kClockRe.hasMatch(s) || !_kClockRe.hasMatch(e)) {
+                  bad.add('第${_blocks[i].label}节');
+                  continue;
+                }
                 updated.add(CourseBlock(
                   label: _blocks[i].label,
                   period: _blocks[i].period,
                   start: _blocks[i].start,
                   end: _blocks[i].end,
-                  time:
-                      '${startCtls[i].text.trim()}\n${endCtls[i].text.trim()}',
+                  time: '$s\n$e',
                 ));
+              }
+              if (bad.isNotEmpty) {
+                _toast('${bad.join('、')}的时间格式不对，请按 08:00 填写');
+                return;
               }
               Navigator.of(ctx).pop();
               if (!mounted) return;
               setState(() => _blocks = updated);
-              CourseStorage.saveTimeBlocks(
+              await CourseStorage.saveTimeBlocks(
                 updated.map((b) => b.toJson()).toList(),
               );
               _toast('上课时间已更新');
@@ -860,7 +1446,16 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     }
     final c = CourseStorage.backgroundColorCache;
     if (c == null) return surfaceColor;
-    return Color.alphaBlend(surfaceColor.withValues(alpha: 0.12), Color(c));
+    // 🔴 2026-11-04（第二次修正）：上一版把 `backgroundDimCache`（默认 0.72）
+    //    当成**叠黑**用了 —— 纯色背景路径先 `alphaBlend(黑 0.72, 背景色)` 再叠
+    //    12% 表面色，结果顶部卡片变成一块近乎全黑的方框，用户反馈
+    //    「课程表顶部盒子出现黑色层覆盖」（2026-11-04 m18409 #2）。
+    //    `backgroundDim` 的语义是「背景**图**的蒙层浓度」，纯色背景根本没有图，
+    //    不该参与。正确做法：卡片仍然用表面色（浅色白 / 深色 1E1E1E），
+    //    只让背景色**透上来一点点**（16%），这样既看得出跟随了背景，
+    //    也不会把卡片压黑。
+    return Color.alphaBlend(
+        Color(c).withValues(alpha: 0.16), surfaceColor);
   }
 
   Widget _buildTablePanel(bool isDark, Color surfaceColor) {
@@ -1080,15 +1675,16 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
 
   static const int _kMethodAccount = 0;
   static const int _kMethodClass = 1;
+  static const int _kMethodPdf = 2;
 
-  /// 两种导入方式的显示名与图标（收起的那行 + 展开的卡片共用）。
+  /// 三种导入方式的显示名与图标（收起的那行 + 展开的卡片共用）。
   ///
-  /// 没有服务端，PDF 解析需要移植 pdfplumber（Dart 无等价库），
-  /// 所以这里是两种而非三种；「看朋友的课表」的两个主场景
-  /// （拿得到账密 / 只知道班级）都已覆盖。
+  /// 2026-11-04（用户 m20128 #3）：补上 PDF 这一路 —— 教务系统「课表 → 导出/打印」
+  /// 下载的 PDF 现在能直接解析成课程（`CoursePdfParser`，本地跑，不上传）。
   static const Map<int, (String, IconData)> _kMethods = {
     _kMethodAccount: ('输入账密快速导入', Icons.key_rounded),
     _kMethodClass: ('跨专业自选（按班级）', Icons.school_rounded),
+    _kMethodPdf: ('从 PDF 课表导入', Icons.picture_as_pdf_rounded),
   };
 
   /// 「导入一份新课表」的居中对话框。
@@ -1106,6 +1702,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     var xqm = '3';
     var start = CourseStorage.autoSemesterStart('$nowYear', '3');
     var method = _kMethodAccount;
+    // 导入方式默认收起（只显示当前那一行），点一下再展开三选一。
+    var methodOpen = false;
     final nameCtl = TextEditingController(text: '课表 ${_tables.length + 1}');
     final fg = isDark ? Colors.white : context.textPrimary;
     final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
@@ -1134,104 +1732,130 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _dialogBox(
-                  isDark,
-                  child: TextField(
-                    controller: nameCtl,
-                    style: TextStyle(fontSize: AppTheme.fontBody, color: fg),
-                    decoration: const InputDecoration(
-                      hintText: '课表名字，例如：张同学的课表',
-                      hintStyle: TextStyle(fontSize: AppTheme.fontBody),
-                      isDense: true,
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
+                // 课表名称：一行够用（2026-11-04 用户 m20128 #3「压缩课表名称输入框」）。
+                Container(
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+                    border: Border.all(
+                        color: isDark
+                            ? Colors.grey.shade700
+                            : const Color(0xFFE5E7EB)),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  ),
+                  child: Center(
+                    child: TextField(
+                      controller: nameCtl,
+                      style: TextStyle(fontSize: AppTheme.fontBody, color: fg),
+                      decoration: const InputDecoration(
+                        hintText: '课表名字，例如：张同学的课表',
+                        hintStyle: TextStyle(fontSize: AppTheme.fontSmall),
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                    child: _dialogBox(
-                      isDark,
-                      child: DropdownButton<String>(
-                        value: xnm,
-                        isExpanded: true,
-                        isDense: true,
-                        underline: const SizedBox.shrink(),
-                        style: TextStyle(fontSize: AppTheme.fontBody, color: fg),
-                        items: [
-                          for (final y in yearList)
-                            DropdownMenuItem(
-                                value: '$y', child: Text('$y-${y + 1}')),
-                        ],
-                        onChanged: (v) => setDlg(() {
-                          xnm = v ?? xnm;
-                          start = CourseStorage.autoSemesterStart(xnm, xqm);
-                        }),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _dialogBox(
-                      isDark,
-                      child: DropdownButton<String>(
-                        value: xqm,
-                        isExpanded: true,
-                        isDense: true,
-                        underline: const SizedBox.shrink(),
-                        style: TextStyle(fontSize: AppTheme.fontBody, color: fg),
-                        items: const [
-                          DropdownMenuItem(value: '3', child: Text('第 1 学期')),
-                          DropdownMenuItem(value: '12', child: Text('第 2 学期')),
-                        ],
-                        onChanged: (v) => setDlg(() {
-                          xqm = v ?? xqm;
-                          start = CourseStorage.autoSemesterStart(xnm, xqm);
-                        }),
-                      ),
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
+                // 2026-11-04（用户 m20455 #4）：学年 / 学期两个下拉框改成
+                // **一个滚轮选择器**（与成绩页、待办同一套交互）。
+                // 下拉框的问题：两年一共 4 个学期，展开再选要点两次，
+                // 而且 `第 1 学期 / 第 2 学期` 两个下拉框互相独立，
+                // 用户很难一眼看出「我现在选的是哪一年哪一学期」。
                 InkWell(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                   onTap: () async {
-                    final picked = await showCourseDatePicker(
-                      context: ctx,
-                      initialDate: start,
-                      firstDate: DateTime(start.year - 1, 1, 1),
-                      lastDate: DateTime(start.year + 1, 12, 31),
-                      helpText: '选择本学期第 1 周的周一',
+                    final picked = await showSemesterPicker(
+                      context,
+                      labels: _semesterOptions(yearList),
+                      currentIndex: _semesterOptionIndex(yearList, xnm, xqm),
+                      title: '选择学年学期',
                     );
-                    if (picked != null) {
-                      setDlg(() => start = CourseStorage.mondayOf(picked));
-                    }
+                    if (picked == null) return;
+                    final opt = _parseSemesterOption(
+                        _semesterOptions(yearList)[picked]);
+                    setDlg(() {
+                      xnm = opt.$1;
+                      xqm = opt.$2;
+                      start = CourseStorage.autoSemesterStart(xnm, xqm);
+                    });
                   },
                   child: _dialogBox(
                     isDark,
                     child: Row(children: [
-                      Icon(Icons.event_rounded, size: 16, color: sub),
+                      Icon(Icons.event_note_rounded,
+                          size: 16, color: AppTheme.primaryColor),
                       const SizedBox(width: 8),
-                      Text('第 1 周　${start.month} 月 ${start.day} 日',
-                          style: TextStyle(fontSize: AppTheme.fontBody, color: fg)),
+                      Expanded(
+                        child: Text(_semesterLabel(xnm, xqm),
+                            style: TextStyle(
+                                fontSize: AppTheme.fontBody, color: fg)),
+                      ),
+                      Icon(Icons.expand_more_rounded, size: 18, color: sub),
                     ]),
                   ),
                 ),
-                const SizedBox(height: 12),
-                // 导入方式：**直接平铺、常显**，选中的带 ✓。
-                // 以前是「一行显示当前方式 + 点开才出卡片」—— 选中项会出现两次
-                //（行上一次、卡片上一次），看着像两条重复的「跨专业自选」，
-                // 还多点一次才能换。平铺后所见即所选。
-                for (final entry in _kMethods.entries) ...[
-                  _methodCard(
+                const SizedBox(height: 8),
+                // 2026-11-04（用户 m20128 #3）：**去掉「第 1 周定位」**。
+                // 导入的是别人/别的专业的课表，用户本来也不知道对方从哪周开始；
+                // 而学期第 1 周在导入完成后仍可在课表页顶部随时改，不必在这里卡一道。
+                // `start` 仍按所选学年学期自动估算，只用于落库，不再让用户选。
+                // 2026-11-04（用户 m20455 #4）：这一块加一行小标题「导入方式」，
+                // 否则收起状态下只是一行「输入账密快速导入」，用户不知道它是可以展开的。
+                Padding(
+                  padding: const EdgeInsets.only(left: 2, bottom: 6),
+                  child: Text('导入方式',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption,
+                          fontWeight: FontWeight.w600,
+                          color: sub)),
+                ),
+                // 导入方式：收起时只显示当前那一行，点开再三角择一（#3「三种导入方式叠起来（可展开）」）。
+                InkWell(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  onTap: () => setDlg(() => methodOpen = !methodOpen),
+                  child: _dialogBox(
                     isDark,
-                    title: entry.value.$1,
-                    icon: entry.value.$2,
-                    selected: method == entry.key,
-                    onTap: () => setDlg(() => method = entry.key),
+                    child: Row(children: [
+                      Icon(_kMethods[method]!.$2,
+                          size: 16, color: AppTheme.primaryColor),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(_kMethods[method]!.$1,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: AppTheme.fontBody, color: fg)),
+                      ),
+                      Icon(
+                          methodOpen
+                              ? Icons.expand_less_rounded
+                              : Icons.expand_more_rounded,
+                          size: 18,
+                          color: sub),
+                    ]),
                   ),
-                  const SizedBox(height: 8),
+                ),
+                if (methodOpen) ...[
+                  const SizedBox(height: 6),
+                  for (final entry in _kMethods.entries)
+                    if (entry.key != method) ...[
+                      _methodCard(
+                        isDark,
+                        title: entry.value.$1,
+                        icon: entry.value.$2,
+                        selected: false,
+                        onTap: () => setDlg(() {
+                          method = entry.key;
+                          methodOpen = false;
+                        }),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
                 ],
               ],
             ),
@@ -1263,7 +1887,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     );
 
     // 🔴 释放输入框控制器（否则每次新建课表泄漏一个）。
-    final name = nameCtl.text.trim().isEmpty
+    var name = nameCtl.text.trim().isEmpty
         ? '课表 ${_tables.length + 1}'
         : nameCtl.text.trim();
     nameCtl.dispose();
@@ -1281,7 +1905,30 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     // 账密错误、网络异常）都会静默中断，用户看到的就是「点了导入没反应」。
     // 现在统一捕获并把原因提示出来。
     try {
-      if (method == _kMethodAccount) {
+      if (method == _kMethodPdf) {
+        // PDF 路线：本地解析，不上传任何文件。
+        final picked = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: const ['pdf'],
+          withData: true,
+        );
+        final bytes = picked?.files.firstOrNull?.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          if (mounted) setState(() => _importing = false);
+          return;
+        }
+        final parsed = CoursePdfParser.parse(bytes);
+        if (parsed.courses.isEmpty) {
+          if (mounted) {
+            setState(() => _importing = false);
+            _toast('这份 PDF 里没解析出课程，可能不是教务系统导出的课表');
+          }
+          return;
+        }
+        imported = parsed.courses;
+        final t = (parsed.title ?? '').trim();
+        if (t.isNotEmpty) name = t;
+      } else if (method == _kMethodAccount) {
         // 账密：问「导入谁的课表」，拿对方的账密去取
         final cred = await _askOtherAccount();
         if (cred == null || !mounted) {
@@ -1705,7 +2352,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                 // 周选择器与下方 PageView 双向同步
                 if (_pageController.hasClients) {
                   _pageController.animateToPage(
-                    (w - 1).clamp(0, kMaxCourseWeeks - 1),
+                    (w - 1).clamp(0, CourseStorage.weekCountCache - 1),
                     duration: const Duration(milliseconds: 300),
                     curve: Curves.easeInOut,
                   );
@@ -1716,7 +2363,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
             Expanded(
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: kMaxCourseWeeks,
+                // 2026-11-04（m19892 #4）：页数跟随用户设定的显示周数，
+                // 不再固定 25 页（多出来的页永远是空的）。
+                itemCount: CourseStorage.weekCountCache,
                 onPageChanged: (i) {
                   final w = i + 1;
                   if (w != _selectedWeek && mounted) setState(() => _selectedWeek = w);
@@ -1750,11 +2399,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         presetStartSlot: startSlot,
         presetEndSlot: endSlot,
         onSave: _saveCourse,
-        onDelete: (c) => confirmDeleteCourse(
-          context,
-          c,
-          onConfirmed: _deleteCourse,
-        ),
+        onDelete: _deleteCourse,
       ),
       onOpenDetail: (course) => showCourseDetailSheet(
         context,
@@ -1768,11 +2413,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
           context,
           course: c,
           onSave: _saveCourse,
-          onDelete: (x) => confirmDeleteCourse(
-            context,
-            x,
-            onConfirmed: _deleteCourse,
-          ),
+          onDelete: _deleteCourse,
         ),
       ),
       // v1.6.0：点冲突格 → 冲突解决弹窗（选保留哪门 / 都保留）
@@ -1870,14 +2511,13 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                 tooltip: '上课提醒',
                 onPressed: () {
                   Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => const ReminderSettingsPage()));
+                      builder: (_) => const NotificationReminderPage()));
                 },
               ),
-              // 右上角刷新键 = **手动同步课表**（v1.2.0）。
-              // 原来这里是「重读本地」，旁边还有个云朵按钮专门从教务导入。
-              // 云朵按钮已去掉（它点开只有「一键导入」一个选项，
-              // 属于白多一次点击），同步改由「登录后 / 进入 App（可关）」自动做，
-              // 想手动更新时用户点这个刷新键 —— 直觉上它就是「更新课表」。
+              // 右上角「导入」= **课表导入入口**（v1.0.9）。
+              // 此前是一个刷新图标，只能从教务抓一遍；用户反馈「只有一个刷新
+              // 按钮，我需要把它改成导入按钮，点开有多种方式」。现在点开先选
+              // 方式：教务系统 / PDF 课表 / 实验课，最下方还有清空当前课表。
               IconButton(
                 icon: _syncing
                     ? SizedBox(
@@ -1889,12 +2529,12 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                               AlwaysStoppedAnimation(AppTheme.primaryColor),
                         ),
                       )
-                    : Icon(Icons.refresh_rounded,
+                    : Icon(Icons.file_download_outlined,
                         color: isDark
                             ? Colors.grey.shade500
                             : const Color(0xFF6B7280)),
-                tooltip: '同步课表',
-                onPressed: _syncing ? null : _syncNow,
+                tooltip: '导入课表',
+                onPressed: _syncing ? null : _showImportSheet,
               ),
               // v1.1.0：右上角「三个点」→ 齿轮（进课表设置页）。
               // 原菜单四项（添加课程 / 调整上课时间 / 同步今日课程到待办 / 清空全部课程）

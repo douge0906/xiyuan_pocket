@@ -50,6 +50,65 @@ class AppTabs {
   /// 小组件点击 → 服务页 / 我的页。
   static void goService() => go(NavPage.service);
   static void goUser() => go(NavPage.user);
+
+  /// 「打开设置」的一次性请求（2026-11-03）。
+  ///
+  /// 首页齿轮不再进那个 82 行的残页 `HomeSettingsPage`，而是切到「我的」
+  /// 并打开那一套唯一完整的设置页。但首页自己**造不出** `SettingsPage`
+  /// 需要的回调（`onLogout` / `onThemeChanged` / `onPrimaryChanged` 全都
+  /// 属于「我的」页的状态），所以改成发一个信号：
+  ///   首页齿轮 → 置位 + 切 Tab → “我的”页在 Tab 可见时消费并打开设置。
+  ///
+  /// 用一次性布尔（消费即清）而不是每次 goUser 都打开 —— 否则用户单纯
+  /// 点「我的」Tab 也会被弹设置页。
+  static bool pendingOpenSettings = false;
+
+  /// 请求「切到我的页并打开设置」。
+  static void openSettings() {
+    pendingOpenSettings = true;
+    go(NavPage.user);
+  }
+
+  /// 「打开课表设置」的一次性请求（2026-11-03）。
+  ///
+  /// 与 [pendingOpenSettings] 同一个套路：`CourseTableSettingsPage` 要的
+  /// 回调（`onAddCourse` / `onEditTime` / `onSyncTodos` / `onClearAll`）
+  /// 全是课表页的私有方法，设置页造不出来。
+  static bool pendingOpenCourseSettings = false;
+
+  /// 请求「切到课表页并打开课表设置」。
+  static void openCourseSettings() {
+    pendingOpenCourseSettings = true;
+    go(NavPage.course);
+  }
+
+  /// 「打开倒数日」的一次性请求（2026-11-04）。
+  ///
+  /// 桌面上倒数日组件被点击时，原生只给一个 `homewidget://countdown`，
+  /// 而倒数日页挂在「服务」页的工具列表里 —— 和上面两个 pending 是同一种
+  /// 处境：信号由 `route()` 置位，由服务页在可见时消费并 push 页面。
+  /// 用一次性布尔而不是「每次 goService 都开」，否则用户点「服务」Tab
+  /// 也会被弹一次倒数日。
+  static bool pendingOpenCountdown = false;
+
+  /// 「打开考试查询」的一次性请求（2026-11-05，用户 m24495 #2）。
+  ///
+  /// 桌面上「考试倒计时」组件原来只切到服务页（`goService()`），用户还得
+  /// 自己找入口 —— 这不叫「跳转到对应页面」。改成置位 + 由服务页消费后
+  /// 直接推 `ExamQueryPage`（走 `ToolNavigator.open` 复用登录闸门与埋点）。
+  static bool pendingOpenExam = false;
+
+  /// 「打开一卡通余额详情」的一次性请求（2026-11-05，用户 m24495 #2）。
+  ///
+  /// 原来是 `goUser()`（我的页），但余额详情是 `CardBalancePage`，
+  /// 不在「我的」页里。改走服务页消费，与 exam 同一条路径。
+  static bool pendingOpenCard = false;
+
+  /// 「倒数日组件点某一格 → 直接弹该槽的新建框」（2026-11-05，用户 m24495 #3）。
+  ///
+  /// 原生侧每个槽位挂 `homewidget://countdown?slot=N`，这里把 N 带过去。
+  /// -1 = 没带槽位（老的整卡点击），走原来的「打开倒数日页」。
+  static int pendingCountdownSlot = -1;
 }
 
 class MainApp extends StatefulWidget {
@@ -187,29 +246,93 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     _controllers[_current]!.forward();
   }
 
-  /// 小组件点击直达课表（2026-10-12）。
+  /// 小组件点击直达课表（2026-10-12；2026-11-03 修「点了没反应」）。
   ///
-  /// 两条入口都要接：
-  ///  · [HomeWidget.initiallyLaunchedFromHomeWidget] —— App 是**被小组件冷启动**的；
-  ///  · [HomeWidget.widgetClicked] —— App 已在后台/前台，点小组件被唤起。
-  /// 原生侧（TodayWidgetRenderer.pendingOpenApp）把点击做成
-  /// `homewidget://course`，这里收到就切到课表 Tab。
+  /// ## 为什么单靠 home_widget 插件不够（这是 bug 的真根因）
+  ///
+  /// 插件的 `HomeWidgetPlugin.onNewIntent` 只做一件事：
+  /// ```kotlin
+  /// override fun onNewIntent(intent: Intent): Boolean {
+  ///   receiver?.onReceive(context, intent)
+  ///   return receiver != null
+  /// }
+  /// ```
+  /// 而 `receiver` 只在 Dart 侧 `HomeWidget.widgetClicked.listen` 订阅之后才创建。
+  /// 冷启动那一刻订阅还没建立（它在本方法的末尾），`receiver == null` →
+  /// **点小组件打开 App 后什么都没发生**，用户看到的就是「点了不跳转」。
+  ///
+  /// ## 现在的两条腿
+  ///
+  ///  · 原生侧 `MainActivity` 自己兜住：`configureFlutterEngine` 里先把
+  ///    `intent.data` 记进 `pendingLaunchRoute`，`onNewIntent` 再补一次，
+  ///    通过 `wxxy/launch_route` 通道询问（`getInitialRoute` / `routeChanged` 事件）。
+  ///  · 插件监听继续保留：它覆盖「热路径上恰好订阅已建立」的情况，
+  ///    两条路都路由到同一个 [route]，重复调用 [AppTabs.go] 是幂等的。
   Future<void> _handleWidgetClick() async {
-    try {
-      void route(Uri? uri) {
-        if (uri == null) return;
-        switch (uri.host) {
-          case 'exam':
-            AppTabs.goService();
-            return;
-          case 'card':
-            AppTabs.goUser();
-            return;
-          default:
-            AppTabs.goCourse();
+    // 🔴 2026-11-04 修 P0：这条路由以前只读 `uri.host`，而原生侧
+    //    `MainActivity.captureLaunchRoute()` 把 `homewidget://exam`
+    //    归一化成了**裸串** `"exam"`。`Uri.parse("exam").host` 是空串，
+    //    于是永远落进 default → 一律跳课表页。
+    //    更糟的是顺序：`onNewIntent` 里 `super.onNewIntent()` 先让
+    //    home_widget 插件下发完整的 `homewidget://exam`（Dart 正确跳「服务」），
+    //    随后原生又把裸串推过来，把页面**覆盖回课表页** ——
+    //    用户看到的就是「点考试 / 一卡通小组件没反应」。
+    //
+    //    修法：host 与 path 都认。这样同时兼容
+    //      · 新版原生（完整 `homewidget://exam`）
+    //      · 已装的旧包（裸串 `exam`，path = "exam"）
+    //      · 插件腿（完整 URI）
+    void route(Uri? uri) {
+      if (uri == null) return;
+      final target = uri.host.isNotEmpty ? uri.host : uri.path;
+      if (target.isEmpty) return; // 空 Uri() 不当成「打开课表」
+      switch (target) {
+        case 'exam':
+          // 2026-11-05（用户 m24495 #2）：考试组件应直达「考试查询」页，
+          // 不能只切到服务页让用户自己找。
+          AppTabs.goService();
+          AppTabs.pendingOpenExam = true;
+          return;
+        case 'card':
+          // 2026-11-05（用户 m24495 #2）：一卡通组件应直达「卡片详情」页。
+          // 原先进「我的」页，而详情页根本不在那里。
+          AppTabs.goService();
+          AppTabs.pendingOpenCard = true;
+          return;
+        case 'countdown': {
+          // 2026-11-05（用户 m25800）：倒数日 1/2 分别管理。
+          // 点击桌面组件不再走旧 slot 信号，而是直接打开倒数日页并指定组件槽位。
+          final slot = int.tryParse(uri.queryParameters['slot'] ?? '') ?? -1;
+          AppTabs.goService();
+          AppTabs.pendingOpenCountdown = true;
+          AppTabs.pendingCountdownSlot = slot;
+          return;
         }
+        default:
+          AppTabs.goCourse();
       }
+    }
 
+    // ---- 腿 1：原生通道（冷启动可靠路径）----
+    try {
+      const channel = MethodChannel('wxxy/launch_route');
+      // 先注册事件：setMethodCallHandler 必须在 invokeMethod 之前，
+      // 否则原生侧 onNewIntent 主动推的 routeChanged 会丢。
+      channel.setMethodCallHandler((call) async {
+        if (call.method == 'routeChanged') {
+          final raw = call.arguments;
+          if (raw is String && raw.isNotEmpty) route(Uri.parse(raw));
+        }
+        return null;
+      });
+      final initial = await channel.invokeMethod<String>('getInitialRoute');
+      if (initial != null && initial.isNotEmpty) route(Uri.parse(initial));
+    } catch (_) {
+      // 通道缺失（老安装包 / 非 Android）不影响下面那条腿
+    }
+
+    // ---- 腿 2：插件（热路径兜底）----
+    try {
       final initial = await HomeWidget.initiallyLaunchedFromHomeWidget();
       route(initial);
       // 🔴 订阅必须保存并在 dispose 里取消：MainApp 被重建时
@@ -312,7 +435,19 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     // 页面淡入：只改 opacity（不重栅格化文字），给切页一点「质感」。
     _pageFadeCtrl.forward(from: 0);
     // 通知目标页「用户真正进来了」→ 一次性引导在这里弹（而非 initState）。
-    CurrentTab.notifyEntered(_navRef(page));
+    //
+    // 🔴 2026-11-03 修「首页设置 / 课表个性化跳转失败」：必须延后一帧广播。
+    //   五个 Tab 的 State 是**懒建**的（`_visited` 含某页时 IndexedStack 才
+    //   真正 build 它），上面那个 `setState` 只是把页标脏，此刻目标页的
+    //   `initState` 还没跑、`CurrentTab.addListener` 也还没注册 —— 同步广播
+    //   等于广播给空列表，监听器永远收不到「我进来了」，一次性信号
+    //   （`pendingOpenSettings` / `pendingOpenCourseSettings`）就永久残留。
+    //   症状正是「第一次点齿轮没反应，第二次才有」。
+    //   延后到 post-frame：那时目标页已 build 完、监听器已就位。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      CurrentTab.notifyEntered(_navRef(page));
+    });
     // 切回首页时重新加载待办并播放一次入场。
     if (page == NavPage.home) {
       _homeKey.currentState?.onHomeTabResumed();
@@ -331,6 +466,14 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
       if (!NavPrefs.visible.contains(page)) return;
       if (page == _current) {
         setState(() => _visited.add(page));
+        // 🔴 2026-11-03：已在当前页时也必须广播一次。
+        //   否则「用户在『我的』页按首页齿轮 / 已在课表页点课表个性化」这条
+        //   路径永远消费不到一次性信号（监听器只在 notifyEntered 时被调）。
+        //   同样延后一帧，理由见 _onTap。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          CurrentTab.notifyEntered(_navRef(page));
+        });
         return;
       }
       _onTap(page);
@@ -343,9 +486,14 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
   }
 
   Color _navBackground(BuildContext context, NavPage current) {
-    final base = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF1E1E1E)
-        : Colors.white;
+    // 🔴 2026-11-04 审查 P1：原来写死 `isDark ? 0xFF1E1E1E : Colors.white`。
+    //    用户在深色里选「石墨 1A1A1A / 冷灰 161A1F / 墨蓝 131820 / 松绿 141A16」
+    //    之后，页面和 AppBar 都变了，底部导航栏还是 1E1E1E —— 屏幕最下方
+    //    多出一条明显的色带。浅色选米黄时同理（底部仍是纯白）。
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final base = isDark
+        ? (AppTheme.backgroundDarkNotifier.value ?? AppTheme.surfaceDark)
+        : (AppTheme.backgroundNotifier.value ?? Colors.white);
     if (current != NavPage.course) return base;
     final c = CourseStorage.backgroundColorCache;
     // 半透明背景色叠在底色上，避免导航栏比页面更透、露出内容
@@ -402,7 +550,16 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
             KeyedSubtree(
               key: ValueKey<NavPage>(p),
               child: _visited.contains(p)
-                  ? AnimatedBuilder(
+                  // 🔴 2026-11-04 审查 P2：IndexedStack 会把**所有**已访问页
+                  //    保留在树里（只是不绘制），它们的 `Timer.periodic`、
+                  //    `AnimationController`、轮播仍然照跑 —— 冲突格即使不在
+                  //    前台也每 3 秒 setState 一次，一直耗电。
+                  //    `TickerMode` 只停 `Ticker`（动画），周期 Timer 不会停，
+                  //    所以这里用 `TickerMode` 停动画 + 显式传 `active`
+                  //    让页面自己决定要不要挂定时器。
+                  ? TickerMode(
+                      enabled: p == current,
+                      child: AnimatedBuilder(
                       animation: _pageFadeCtrl,
                       builder: (context, child) {
                         // 非当前页保持完全不透明（视觉上无变化）。
@@ -417,7 +574,8 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
                           child: child,
                         );
                       },
-                      child: _pages[p],
+                        child: _pages[p],
+                      ),
                     )
                   : const SizedBox.shrink(),
             ),
@@ -557,7 +715,6 @@ class _NavButton extends StatelessWidget {
         final scale = 1.0 + (Curves.easeOutBack.transform(t.clamp(0, 1)) * 0.14);
         return Pressable(
           onTap: () => onTap(page),
-          haptic: true,
           scale: 0.92,
           child: SizedBox(
             width: double.infinity,

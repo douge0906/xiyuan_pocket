@@ -1,8 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 语音输入待办（长按首页「＋」→ 语言球）：调用系统语音识别需录音权限 -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- v2.2.21：恢复本地提醒（上课/待办通知栏提醒，WakeUp 式本地精确闹钟） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -29,7 +27,6 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -60,6 +57,12 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <!-- 2026-11-04 审查 P1：系统改时间/换时区必须补排。
+                     AlarmManager 里存的是绝对 epoch，改时间后不会重算目标
+                     本地墙钟 → 已排提醒整体偏移。两个 action 在 Android 8.0
+                     的隐式广播豁免清单内，静态注册可用。 -->
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
         <!-- 今日课表桌面小组件（v2.2.14）：三个独立尺寸（2×1 / 2×2 / 4×2），桌面添加列表分别显示 -->
@@ -118,6 +121,45 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_card_info" />
+        </receiver>
+        <!-- 2026-11-04：倒数日（2×2，用户需求第 6 条）。
+             天数由原生每次渲染现算（见 CountdownWidgetRenderer.daysFromToday），
+             所以跨零点不需要额外闹钟，onUpdate 被系统调起一次就正确。 -->
+        <receiver
+            android:name=".widget.CountdownWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_name_countdown">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_countdown_info" />
+        </receiver>
+        <receiver
+            android:name=".widget.CountdownWidget2Provider"
+            android:exported="true"
+            android:label="@string/widget_name_countdown2">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_countdown2_info" />
+        </receiver>
+        <!-- 2026-11-04：重启后补刷小组件。
+             「小组件数据不更新」的残留断点之一：AlarmManager 里的闹钟重启即清空，
+             而 AppWidgetProvider.onUpdate 在国产 ROM 上常被推迟一整天，
+             于是重启后组件会永久停在旧内容（课表停在昨天、倒数日停在昨天）。
+             这个 receiver 只做「立刻重画 + 重排下一个闹钟」，不联网、不拉 Flutter 引擎。 -->
+        <receiver
+            android:name=".widget.WidgetBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
         </receiver>
         <!-- v2.2.14：小组件「下一节课」精准切换闹钟接收器（内部广播，每节课开始/结束时刻触发刷新） -->
         <receiver

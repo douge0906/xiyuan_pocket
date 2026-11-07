@@ -4,12 +4,9 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.res.Configuration
-import android.net.Uri
 import android.util.TypedValue
 import android.widget.RemoteViews
-import es.antonborri.home_widget.HomeWidgetLaunchIntent
 import es.antonborri.home_widget.HomeWidgetPlugin
-import icu.wxxydouge.wxxy_pocket.MainActivity
 import icu.wxxydouge.wxxy_pocket.R
 import org.json.JSONObject
 import java.util.Locale
@@ -34,7 +31,13 @@ object InfoWidgetRenderer {
             Kind.CARD -> CardWidgetProvider::class.java
         }
         val ids = manager.getAppWidgetIds(ComponentName(context, cls))
-        if (ids.isEmpty()) return
+        if (ids.isEmpty()) {
+            // 2026-11-05（用户 m24210）：**「桌面没装」必须留证据**。
+            // 原来这里直接 return，自检页只会显示「已装组件：无」，无法区分
+            // 「用户没添加」与「渲染整份被丢」。记一条 0/0。
+            WidgetDiagnostics.recordApplied(context, if (kind == Kind.EXAM) "EXAM" else "CARD", 0, 0)
+            return
+        }
         val key = if (kind == Kind.EXAM) EXAM_KEY else CARD_KEY
         val raw = HomeWidgetPlugin.getData(context).getString(key, null)
         val json = try {
@@ -42,9 +45,17 @@ object InfoWidgetRenderer {
         } catch (_: Exception) {
             null
         }
+        var applied = 0
         for (id in ids) {
-            manager.updateAppWidget(id, build(context, json, kind))
+            // 2026-11-04（用户 m20455 #7）：逐 id 兜底，见 TodayWidgetRenderer 同处注释。
+            try {
+                manager.updateAppWidget(id, build(context, json, kind))
+                applied++
+            } catch (t: Throwable) {
+                WidgetDiagnostics.recordError(context, "info.updateAppWidget($kind, id=$id)", t)
+            }
         }
+        WidgetDiagnostics.recordApplied(context, if (kind == Kind.EXAM) "EXAM" else "CARD", applied, ids.size)
     }
 
     fun isInstalled(context: Context, kind: Kind): Boolean {
@@ -61,11 +72,18 @@ object InfoWidgetRenderer {
         val layout = if (kind == Kind.EXAM) R.layout.widget_exam else R.layout.widget_card
         val views = RemoteViews(context.packageName, layout)
         val dark = useDark(context, root)
-        views.setInt(
-            R.id.info_root,
-            "setBackgroundResource",
-            if (dark) R.drawable.widget_card_bg_dark else R.drawable.widget_card_bg_light
-        )
+        // 2026-11-04 晚：皮肤是增强项，抛了不能连累文字。
+        // 原来这行排在所有 setTextViewText 之前，一抛整份 RemoteViews 就被
+        // updateAppWidget 的 try 丢掉 → 桌面停在 XML 默认文字、点击也没了。
+        try {
+            views.setInt(
+                R.id.info_root,
+                "setBackgroundResource",
+                if (dark) R.drawable.widget_card_bg_dark else R.drawable.widget_card_bg_light
+            )
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "info.build.skin", t)
+        }
         val primary = if (dark) 0xFFF3F4F6.toInt() else 0xFF1F2937.toInt()
         val secondary = if (dark) 0xFF9CA3AF.toInt() else 0xFF667085.toInt()
         val accent = accentColor(root, dark)
@@ -131,16 +149,13 @@ object InfoWidgetRenderer {
             views.setTextColor(R.id.info_meta, secondary)
         }
 
-        val uri = if (kind == Kind.EXAM) {
-            Uri.parse("homewidget://exam")
+        // 2026-11-05：改用 LaunchIntents（独立 requestCode + 后台启动许可），
+        // 不再走插件那个 requestCode 恒为 0 的共享 PendingIntent。
+        val pending = if (kind == Kind.EXAM) {
+            LaunchIntents.exam(context)
         } else {
-            Uri.parse("homewidget://card")
+            LaunchIntents.card(context)
         }
-        val pending = HomeWidgetLaunchIntent.getActivity(
-            context,
-            MainActivity::class.java,
-            uri
-        )
         views.setOnClickPendingIntent(R.id.info_root, pending)
         return views
     }
@@ -180,12 +195,22 @@ abstract class BaseInfoWidgetProvider : android.appwidget.AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
-        InfoWidgetRenderer.updateAll(context, kind)
+        // 2026-11-04（用户 m20455 #7）：回调跑在 App 进程里，异常会直接闪退。
+        try {
+            InfoWidgetRenderer.updateAll(context, kind)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "info.onUpdate($kind)", t)
+        }
     }
 
     override fun onEnabled(context: Context) {
-        super.onEnabled(context)
-        InfoWidgetRenderer.updateAll(context, kind)
+        // 2026-11-04（用户 m20455 #7）：同上，回调异常会闪退。
+        try {
+            super.onEnabled(context)
+            InfoWidgetRenderer.updateAll(context, kind)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "info.onEnabled($kind)", t)
+        }
     }
 }
 

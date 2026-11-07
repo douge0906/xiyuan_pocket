@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  倒数日组件（2026-11-04 新增）。
+  2×2 = 110dp×110dp，与考试组件一致。
+
+  updatePeriodMillis 1800000（30 分钟）是系统允许的最小值。
+  跨零点后「还有几天」需要更新，但**天数由原生现算**，只要 onUpdate
+  被调起一次就自动正确 —— 不需要额外闹钟。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_countdown"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:previewLayout="@layout/widget_countdown_preview"
+    android:description="@string/widget_desc_countdown" />

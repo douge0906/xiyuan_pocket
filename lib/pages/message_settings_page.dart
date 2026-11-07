@@ -141,9 +141,6 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                   _switchRow(
                     icon: Icons.sync_rounded,
                     title: '每次进入自动更新',
-                    subtitle: _autoRefresh
-                        ? '进消息页时会联网查一次新内容'
-                        : '只看本机已存内容，下拉刷新不受影响',
                     value: _autoRefresh,
                     onChanged: _toggleAutoRefresh,
                   ),
@@ -151,7 +148,6 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                   _row(
                     icon: Icons.view_agenda_outlined,
                     title: '栏目样式',
-                    subtitle: '列表外观，两套随时互换',
                     value: _style == StorageService.kMessageStyleCard
                         ? '圆角卡片'
                         : '纯白列表',
@@ -161,23 +157,10 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
                   _row(
                     icon: Icons.download_rounded,
                     title: '最多同步条数',
-                    subtitle: '每个栏目最多保留并显示多少条',
                     value: '$_count 条',
                     onTap: _pickSyncCount,
                   ),
                 ]),
-                const SizedBox(height: 14),
-                Text(
-                  '样式改动立即生效；调大条数会重新抓取一次（可能需要一小会儿）。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '关闭「自动更新」不会清掉已经存下的内容。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
-                ),
               ],
             ),
     );
@@ -194,7 +177,6 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
   Widget _row({
     required IconData icon,
     required String title,
-    required String subtitle,
     required String value,
     required VoidCallback onTap,
   }) {
@@ -207,21 +189,11 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
             Icon(icon, size: 20, color: AppTheme.primaryColor),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontBody,
-                          fontWeight: FontWeight.w500,
-                          color: context.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-                ],
-              ),
+              child: Text(title,
+                  style: TextStyle(
+                      fontSize: AppTheme.fontBody,
+                      fontWeight: FontWeight.w500,
+                      color: context.textPrimary)),
             ),
             const SizedBox(width: 8),
             Text(value,
@@ -242,7 +214,6 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
   Widget _switchRow({
     required IconData icon,
     required String title,
-    required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
@@ -255,21 +226,11 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
             Icon(icon, size: 20, color: AppTheme.primaryColor),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontBody,
-                          fontWeight: FontWeight.w500,
-                          color: context.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-                ],
-              ),
+              child: Text(title,
+                  style: TextStyle(
+                      fontSize: AppTheme.fontBody,
+                      fontWeight: FontWeight.w500,
+                      color: context.textPrimary)),
             ),
             const SizedBox(width: 8),
             Switch(
@@ -293,10 +254,9 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
 /// 并未复用本组件 —— 已知重复，见审查报告。
 class _DialogShell extends StatelessWidget {
   final String title;
-  final String? desc;
   final Widget child;
 
-  const _DialogShell({required this.title, this.desc, required this.child});
+  const _DialogShell({required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -332,12 +292,6 @@ class _DialogShell extends StatelessWidget {
                   ),
                 ],
               ),
-              if (desc != null) ...[
-                const SizedBox(height: 4),
-                Text(desc!,
-                    style: TextStyle(
-                        fontSize: AppTheme.fontSmall, height: 1.4, color: Colors.grey.shade500)),
-              ],
               const SizedBox(height: 12),
               child,
             ],
@@ -358,7 +312,6 @@ class _StyleDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     return _DialogShell(
       title: '栏目样式',
-      desc: '两套随时互换，选完立即生效。',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -366,7 +319,6 @@ class _StyleDialog extends StatelessWidget {
             context,
             icon: Icons.view_agenda_outlined,
             title: '纯白列表',
-            subtitle: '无卡片边框，行与行之间一条细线',
             value: StorageService.kMessageStylePlain,
           ),
           const SizedBox(height: 6),
@@ -374,7 +326,6 @@ class _StyleDialog extends StatelessWidget {
             context,
             icon: Icons.crop_square_rounded,
             title: '圆角卡片',
-            subtitle: '每条消息一个白色圆角卡片，带阴影',
             value: StorageService.kMessageStyleCard,
           ),
         ],
@@ -386,7 +337,6 @@ class _StyleDialog extends StatelessWidget {
     BuildContext context, {
     required IconData icon,
     required String title,
-    required String subtitle,
     required String value,
   }) {
     final on = current == value;
@@ -406,21 +356,11 @@ class _StyleDialog extends StatelessWidget {
             Icon(icon, size: 20, color: AppTheme.primaryColor),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontBody,
-                          fontWeight: on ? FontWeight.w600 : FontWeight.normal,
-                          color: context.textPrimary)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style:
-                          TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-                ],
-              ),
+              child: Text(title,
+                  style: TextStyle(
+                      fontSize: AppTheme.fontBody,
+                      fontWeight: on ? FontWeight.w600 : FontWeight.normal,
+                      color: context.textPrimary)),
             ),
             SizedBox(
               width: 24,
@@ -485,8 +425,6 @@ class _SyncCountDialogState extends State<_SyncCountDialog> {
   Widget build(BuildContext context) {
     return _DialogShell(
       title: '最多同步条数',
-      desc: '每个栏目最多保留并显示这么多条。调大会重新抓取一次；'
-          '调小会丢弃多出来的条目（连同它们的详情链接），不做恢复。',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

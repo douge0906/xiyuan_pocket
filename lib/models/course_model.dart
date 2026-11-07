@@ -1,8 +1,30 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
+/// 一学期最大周数（原 `course_table_home_page` 的 `_maxWeeks`）。
+///
+/// 放在模型层是为了让「周次解析」「课表网格页数」「表单 chip 列表」共用
+/// 同一个值 —— 之前 `course_storage.dart` 的冲突检测写死 `w <= 20`、
+/// `course_day_header.dart` 的周次列表写死 `25`，各自漂移。
+const int kMaxCourseWeeks = 25;
+
+/// 默认显示周数（2026-11-04 用户 m19892 #4）。
+///
+/// 各校一学期普遍 19~21 周；原来固定按 [kMaxCourseWeeks] 25 页渲染，
+/// 后面 4~6 页永远是空的。用户在课表设置里可 16~25 调。
+const int kDefaultWeekCount = 20;
+
 /// 课程来源：manual（自主添加）/ server（教务系统导入）
-enum CourseSource { manual, server }
+/// 课程来源。
+///
+/// 🔴 三者语义必须严格区分，因为 [CourseStorage.mergeServerCoursesInto] 用
+///    「先删 server、再放入本次教务结果」来合并 —— 一旦把「导入的课」也标成
+///    [server]，用户下次登录自动同步时那门课会被**静默删掉**（不报错、不提示，
+///    只是课表少了几门）。
+/// - [manual]：用户手动新增/编辑
+/// - [server]：教务系统当次同步抓来的（唯一会被同步替换的一类）
+/// - [imported]：从 PDF 课表 / 实验课系统导入的（同步时必须原样保留）
+enum CourseSource { manual, server, imported }
 
 /// 周次类型（v2.0.7）：解决"1-16周(单)"写法繁琐的问题，改为选项式。
 enum CourseWeekType {
@@ -51,9 +73,16 @@ extension CoursePatternX on CoursePattern {
 ///   - "8-11周(双)" / "8-11(双)" => 8,10（双周）
 ///   - "13周" => 13
 ///   - 多个区间用逗号/分号/空格分隔："1-8周,10-16周"
+///   - 全角括号「（单）」、前缀「第」、全角破折号「—」、波浪号「~」
 /// 解析失败返回 null，表示"不限制周次"（每周都显示）。
+///
+/// 🔴 2026-11-04 修（子智能体 c940b976 报告）：
+///    原来只认半角 `(单)`，遇到教务处下发的 `1-16周（单）` 会**整段解析
+///    失败并 continue**，最后 `result` 为空 → 返回 null → 而 null 的语义是
+///    「每周都上」。结果就是单周课变成每周都上，一周凭空多出一倍的课。
+///    现在先把全角括号 / 「第」/ 破折号 / 波浪号归一化再解析。
 Set<int>? parseWeeks(String? raw) {
-  final text = (raw ?? '').trim();
+  final text = normalizeWeeksText(raw ?? '');
   if (text.isEmpty) return null;
 
   final result = <int>{};
@@ -70,7 +99,15 @@ Set<int>? parseWeeks(String? raw) {
     final end = endStr == null ? start : int.parse(endStr);
     final parity = m.group(3); // 单 / 双 / null
 
-    for (int w = start; w <= end; w++) {
+    // 🔴 2026-11-04 审查 P3：原来不设上下限，教务下发「0周」或
+    //    「25-40周」时会造出 {0} / {25..40} 这类永不匹配的周集合 ——
+    //    `isActiveOnWeek` 永远 false，课程存进去了但任何一周都不显示，
+    //    用户只会觉得「课少了」。而课表最多只到 25 周。
+    if (start > end || end < 1 || start > kMaxCourseWeeks) continue;
+    final from = start < 1 ? 1 : start;
+    final to = end > kMaxCourseWeeks ? kMaxCourseWeeks : end;
+
+    for (int w = from; w <= to; w++) {
       if (parity == '单' && w.isEven) continue;
       if (parity == '双' && w.isOdd) continue;
       result.add(w);
@@ -78,6 +115,23 @@ Set<int>? parseWeeks(String? raw) {
   }
 
   return result.isEmpty ? null : result;
+}
+
+/// 把各种「周次写法」归一化成 [parseWeeks] 认的形式。
+///
+/// 单独抽出来是因为它还要给「无法解析时要报出来」的判断复用：
+/// 归一化后仍解析不出任何一段，说明教务这次下发的格式我们没见过。
+String normalizeWeeksText(String raw) {
+  return raw
+      .replaceAll('（', '(')
+      .replaceAll('）', ')')
+      .replaceAll('第', '')
+      .replaceAll('—', '-')
+      .replaceAll('–', '-')
+      .replaceAll('～', '-')
+      .replaceAll('~', '-')
+      .replaceAll('　', ' ') // 全角空格
+      .trim();
 }
 
 /// 将一组「周数」格式化为标准文本（与 [parseWeeks] 互转）。
@@ -174,7 +228,7 @@ class Course {
         'endSlot': endSlot,
         'weeks': weeks,
         'colorValue': colorValue,
-        'source': source == CourseSource.server ? 'server' : 'manual',
+        'source': source.name,
         'weekType': weekType.name,
         'pattern': pattern.name,
       };
@@ -189,19 +243,27 @@ class Course {
     if (id.isEmpty) {
       id = 'legacy_${_stableHash('${json['name']}|$weekday|${json['startSlot']}|${json['weeks']}')}';
     }
+    // 🔴 v1.0.9：节次夹到 1..12 且 end >= start。
+    //    此前脏数据（0 / 13 / 99）会让课表网格 `blocks.indexWhere(...)` 返回 -1，
+    //    那门课被静默丢弃 —— 存进了课表但格子上看不见，用户只会觉得「课少了」。
+    final rawStart = (json['startSlot'] as num?)?.toInt() ?? 1;
+    final rawEnd = (json['endSlot'] as num?)?.toInt() ?? 1;
+    final startSlot = rawStart.clamp(1, 12);
+    final endSlot = rawEnd.clamp(startSlot, 12);
     return Course(
       id: id,
       name: (json['name'] as String?) ?? '',
       teacher: (json['teacher'] as String?) ?? '',
       classroom: (json['classroom'] as String?) ?? '',
       weekday: weekday,
-      startSlot: (json['startSlot'] as num?)?.toInt() ?? 1,
-      endSlot: (json['endSlot'] as num?)?.toInt() ?? 1,
+      startSlot: startSlot,
+      endSlot: endSlot,
       weeks: (json['weeks'] as String?) ?? '',
       colorValue: (json['colorValue'] as num?)?.toInt() ?? 0xFF667EEA,
-      source: (json['source'] as String? ?? 'manual') == 'server'
-          ? CourseSource.server
-          : CourseSource.manual,
+      source: CourseSource.values.firstWhere(
+        (e) => e.name == json['source'],
+        orElse: () => CourseSource.manual,
+      ),
       weekType: CourseWeekType.values.firstWhere(
         (e) => e.name == weekTypeRaw,
         orElse: () => CourseWeekTypeX.fromOldText((json['weeks'] as String?) ?? ''),
@@ -357,9 +419,13 @@ int colorForName(String name) {
 //
 // ⚠️ 存储值仍是枚举的 `name`（standard/soft/vivid）——**改 label 不动 name**，
 //    老用户已选的方案不会因为改名而丢失。
+// 2026-11-04（用户 m20950 #2）：「把现在的默认方案二放置到第一位，也就是方案一」。
+// 只调**枚举顺序与 label**，`name`（standard/soft/vivid）一个字都没动 ——
+// 存储里落的是 name，老用户已选的方案不会因为改名而丢失。
+// `values` 的顺序就是设置页色卡的排列顺序，所以 soft 必须在最前。
 enum CourseColorScheme {
-  standard('方案一'),
-  soft('方案二'),
+  soft('方案一'),
+  standard('方案二'),
   vivid('方案三');
 
   const CourseColorScheme(this.label);
@@ -367,13 +433,17 @@ enum CourseColorScheme {
   /// 设置页展示用的名字。
   final String label;
 
-  /// 从存储值解析（容错：未知/缺失一律回落「方案一」，老用户升级无感）。
+  /// 从存储值解析（容错：未知/缺失一律回落默认方案 soft）。
+  ///
+  /// 2026-11-04（m20950 #2）：默认方案已改成 soft（现「方案一」），
+  /// 所以兜底也从 standard 改成 soft —— 否则「没有 scheme 字段」的老数据
+  /// 会落到排在第二位的那一档，与 `defaultDisplaySettings()` 的 `'soft'` 打架。
   static CourseColorScheme parse(Object? v) {
     final s = '$v';
     for (final e in values) {
       if (e.name == s) return e;
     }
-    return CourseColorScheme.standard;
+    return CourseColorScheme.soft;
   }
 }
 
@@ -391,8 +461,12 @@ Color courseColorFor(int colorValue, CourseColorScheme scheme) {
       // 幅度明显小于方案二 / 三 —— 保证一眼仍认得出「这是课程原色」。
       return _shiftColor(base, satScale: 1.10, darken: 0.08);
     case CourseColorScheme.soft:
-      // 方案二（复刻参考图 1）：饱和 ×1.16、明度 ×0.91
-      return _shiftColor(base, satScale: 1.16, darken: 0.09);
+      // 方案二（复刻参考图 1）。
+      // 2026-11-04（m18409 #3）：用户反馈首次进入课表时块的色彩**太淡**
+      // （「提高首次进入课程表页面提供的色彩的饱和度」）。原参数
+      // 饱和 ×1.16 / 明度 ×0.91，在浅色背景上看着发灰。
+      // 提到 ×1.30 / ×0.88 —— 同色相，明显更实，但仍不是方案三那种浓艳。
+      return _shiftColor(base, satScale: 1.30, darken: 0.12);
     case CourseColorScheme.vivid:
       // 方案三（复刻参考图 2）：饱和 ×1.22、明度 ×0.84
       return _shiftColor(base, satScale: 1.22, darken: 0.16);

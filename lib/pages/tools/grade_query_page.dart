@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/empty_state_art.dart';
 import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,12 +8,13 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_service.dart';
 import '../../providers/user_config_provider.dart';
+import '../../models/grade_stats.dart';
 import '../../providers/grade_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/loading_overlay.dart';
-import '../../widgets/semester_picker.dart';
 import '../../widgets/site_links.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/semester_picker.dart';
 
 /// 成绩查询（v2.4.5 起与「考试安排」彻底分开，各自独立页面）。
 ///
@@ -41,26 +41,29 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
 
   String? _message;
 
+  /// 是否展开「全部 / 选修 / 学年」细账（2026-11-04 用户 m19892 #3）。
+  ///
+  /// 默认关：评奖评优只看必修，先把必修的那两个数摆出来；
+  /// 想核对总和与选修时点一下展开。
+  bool _showAllStats = false;
+
+  /// 当前选中的学期（2026-11-04 用户 m19892 #1）。
+  ///
+  /// 空串 = 全部学期。用户原话：「成绩页面选择器 建议把这一块修改为
+  /// 按时间排序 类似待办里的滚动选择器 如 26-27-1 / 25-26-2 / 25-26-1」。
+  /// 默认仍是「全部学期」，不改变 m19335 #1「一次列完所有成绩」的口径。
+  String _semesterFilter = '';
+
   /// 当前学期课程筛选 / 排序
   final TextEditingController _search = TextEditingController();
   String _keyword = '';
-  String _filter = 'all'; // all / pass / fail
-  String _sort = 'default'; // default / name / score / credit
 
   /// 本地缓存的成绩数据里的学期列表
   List<dynamic> _semesters = [];
   /// 缓存的保存时间（ISO8601），用于显示「数据新鲜度」。
-  String _cacheSavedAt = '';
-  /// 上次选的学期（跨启动记住；用户要求「退出时是哪个，下次进来还是哪个」）
-  static const String _kSemesterKey = 'grade_selected_semester_v1';
-
-  /// 当前选中的学期名（形如 `2025-2026 第1学期`，与教务系统命名一致）
-  String _selectedName = '';
-
   @override
   void initState() {
     super.initState();
-    _selectedName = _semesterNames().first;
     _bootstrap();
   }
 
@@ -74,90 +77,18 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     }
   }
 
-  /// 可选学期名：优先用已缓存的真实学期；没有则按当前时间往前推 6 个
-  /// （教务学期名格式 = `{学年} 第{1|2}学期`，所以推算出来的能直接对上）。
-  List<String> _semesterNames() {
-    final names = <String>[];
-    for (final s in _semesters) {
-      if (s is Map && (s['name'] != null)) {
-        final n = s['name'].toString();
-        if (n.isNotEmpty) names.add(n);
-      }
-    }
-    // 以「按当前时间推算的最近 8 个学期」为骨架，再把缓存里出现过的更早学期补到末尾。
-    // 原因：只用缓存会让「只修过 1-2 个学期」的同学选不到以前的学期（同学反馈的"缺少学期"）。
-    final merged = <String>[...recentSemesterLabels()];
-    for (final name in names) {
-      if (!merged.contains(name)) merged.add(name);
-    }
-    return merged;
-  }
-
-  /// 最近一个**有成绩记录**的学期；都没有就退回第一个（最新）。
-  String _firstWithGrades(List<String> names) {
-    for (final name in names) {
-      for (final s in _semesters) {
-        if (s is Map && s['name'] == name) {
-          final list = (s['courses'] as List<dynamic>?) ?? const [];
-          if (list.isNotEmpty) return name;
-        }
-      }
-    }
-    return names.first;
-  }
-
-  Map<String, dynamic>? get _selectedSemester {
-    for (final s in _semesters) {
-      if (s is Map && s['name'] == _selectedName) {
-        return Map<String, dynamic>.from(s);
-      }
-    }
-    return null;
-  }
-
   Future<void> _loadCachedSemesters() async {
     // 成绩缓存来自 gradeProvider（唯一数据源）
     final cached = await ref.read(gradeProvider.notifier).ensureLoaded();
     if (!mounted) return;
     final list = cached.semesters;
-    String? saved;
-    if (list.isNotEmpty) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        saved = prefs.getString(_kSemesterKey);
-      } catch (_) {}
-    }
     if (!mounted) return;
     setState(() {
       _loadingCache = false;
       if (list.isEmpty) return;
       _semesters = list;
-      _cacheSavedAt = cached.savedAt;
-      // 保留了已有选择就沿用；否则默认「最近一个**有成绩**的学期」。
-      final names = _semesterNames();
-      if (!names.contains(_selectedName)) {
-        _selectedName = (saved != null && names.contains(saved))
-            ? saved
-            : _firstWithGrades(names);
-      }
+      // 2026-11-04（m19335 #1）：不再有「选中的学期」，所有学期在本页平铺。
     });
-  }
-
-  Future<void> _pickSemester() async {
-    final names = _semesterNames();
-    var currentIndex = names.indexOf(_selectedName);
-    if (currentIndex < 0) currentIndex = 0;
-    final picked = await showSemesterPicker(
-      context,
-      labels: names,
-      currentIndex: currentIndex,
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _selectedName = names[picked]);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_kSemesterKey, _selectedName);
-    } catch (_) {}
   }
 
   @override
@@ -219,11 +150,6 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
             : null;
         if (semesters.isNotEmpty && (!partial || _semesters.isEmpty)) {
           _semesters = semesters;
-          _cacheSavedAt = ''; // 本次是新查的，不再标「缓存」
-          final names = _semesterNames();
-          if (!names.contains(_selectedName)) {
-            _selectedName = _firstWithGrades(names);
-          }
         }
       });
     } catch (e) {
@@ -265,7 +191,11 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
         backgroundColor: context.cardColor,
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
-        // 仿掌上徐工：右上角一个刷新按钮（取代原来的大查询按钮）
+        // 右上角只留刷新。
+        //
+        // 2026-11-04（m19335 #1）：用户明确「成绩总览指的单纯是所有搜索框加所有成绩，
+        // 不是什么总览页面」→ 删掉独立的总览页入口（`GradeOverviewPage`），
+        // 改成**本页把所有学期的成绩平铺在一起**，上方一个搜索框统管全部。
         actions: [
           IconButton(
             onPressed: _querying ? null : _query,
@@ -291,8 +221,8 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
                       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
-                        _buildSemesterRow(isDark),
-                        const SizedBox(height: 12),
+                        // 2026-11-04（m19335 #1）：学期选择器撤掉 ——
+                        // 所有学期的成绩都在本页平铺，不需要先选一个。
                         _buildOverview(isDark),
                         const SizedBox(height: 16),
                         _buildResult(isDark),
@@ -309,36 +239,35 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     );
   }
 
+  /// 总览卡。
+  ///
+  /// 🔴 2026-11-04（用户 m19892 #3）：**主显必修，选修收进折叠区**。
+  ///    用户原话：「我校评奖评优等只看必修课成绩，选修课成绩是不计入的，
+  ///    即『60=100』，建议右上角的绩点优先显示『必修课绩点』和
+  ///    『必修课加权平均成绩』，选修课可以隐藏，点一下进去可以看总和和选修」。
+  ///    所以这张卡的默认视图只回答一件事：**必修课打成了什么样**。
   Widget _buildOverview(bool isDark) {
     final state = ref.watch(gradeProvider);
     final summary = state.summary;
     if (summary.isEmpty && _semesters.isEmpty) return const SizedBox.shrink();
 
-    var totalXf = _asDouble(summary['total_xf']);
-    var gpa = _asDouble(summary['gpa']);
-    var count = _asInt(summary['count']);
-    final needCompute = summary.isEmpty || count == 0;
-    var passed = 0;
-    var xfjd = 0.0;
-    for (final sem in _semesters) {
-      if (sem is! Map) continue;
-      for (final c in (sem['courses'] as List<dynamic>?) ?? const []) {
-        if (c is! Map) continue;
-        if (_passStatus(c['cj']?.toString() ?? '') == true) passed++;
-        if (needCompute) {
-          count++;
-          final credit = _asDouble(c['xf']);
-          totalXf += credit;
-          xfjd += credit * _asDouble(c['jd']);
-        }
-      }
-    }
-    if (needCompute) {
-      gpa = totalXf > 0 ? xfjd / totalXf : 0;
-    }
-    final passRate = count > 0 ? (passed / count * 100).round() : 0;
-    final student = state.student;
-    final name = (student['xm'] ?? '').toString().trim();
+    final all = _allCourses();
+    final reqList = all.where((c) => kindOfCourse(c) == CourseKind.required);
+    final eleList = all.where((c) => kindOfCourse(c) == CourseKind.elective);
+    final unkList = all.where((c) => kindOfCourse(c) == CourseKind.unknown);
+
+    final req = CourseStats.from(reqList);
+    final ele = CourseStats.from(eleList);
+    final every = CourseStats.from(all);
+
+    // 教务没回 `kcxzmc` 的学校（或老缓存）里必修会是空的。
+    // 这时退回「全部」，但下面那行会明说「未区分必修」，不含糊。
+    final main = req.isEmpty ? every : req;
+    final mainIsRequired = !req.isEmpty;
+    final mainTag = mainIsRequired ? '必修' : '全部';
+
+    final name = (state.student['xm'] ?? '').toString().trim();
+    final muted = context.textTertiary;
 
     return AppCard(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 15),
@@ -357,39 +286,197 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
                 onPressed: _showGpaInfo,
                 tooltip: '绩点口径',
                 visualDensity: VisualDensity.compact,
-                icon: Icon(Icons.info_outline_rounded,
-                    size: 16, color: context.textTertiary),
+                icon: Icon(Icons.info_outline_rounded, size: 16, color: muted),
               ),
               if (name.isNotEmpty) ...[
-                const SizedBox(width: 8),
-                Text(name,
-                    style: TextStyle(
-                        fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall, color: muted)),
+                ),
               ],
               const Spacer(),
-              Text('全部学期',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontCaption, color: context.textTertiary)),
+              if (!every.isEmpty)
+                InkWell(
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  onTap: () => setState(() => _showAllStats = !_showAllStats),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_showAllStats ? '收起' : '全部 / 选修',
+                            style: TextStyle(
+                                fontSize: AppTheme.fontCaption,
+                                color: context.textTertiary)),
+                        Icon(
+                            _showAllStats
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            size: 15,
+                            color: muted),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Row(
             children: [
-              _metric('加权绩点', gpa.toStringAsFixed(2), ' / 5.0',
+              _metric('$mainTag课绩点', main.gpa.toStringAsFixed(2), ' / 5.0',
                   isDark, AppTheme.primaryColor),
-              _metric('学分', totalXf.toStringAsFixed(1), '',
+              _metric('$mainTag加权', main.avgText, '', isDark,
+                  context.textPrimary),
+              _metric('$mainTag学分', main.credits.toStringAsFixed(1), '',
                   isDark, context.textPrimary),
-              _metric('课程', '$count', ' 门',
-                  isDark, context.textPrimary),
-              _metric('及格率', '$passRate', '%',
-                  isDark, passRate >= 60
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFFEF4444)),
             ],
           ),
+          // 2026-11-06（用户 m01524 #6）：「我校评奖评优是按照每学年一次的，
+          // 所以总览可以按照学年」。学年分账因此从折叠区提到主视图，
+          // 累计三数仍在上方供整体参考。
+          ..._buildYearRows(isDark),
+          if (_showAllStats && !every.isEmpty) ...[
+            const SizedBox(height: 12),
+            Divider(height: 1, color: context.borderColor),
+            const SizedBox(height: 10),
+            _statLine('全部', every, isDark),
+            const SizedBox(height: 6),
+            _statLine('选修', ele, isDark),
+            if (unkList.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _statLine('未标注性质', CourseStats.from(unkList), isDark),
+            ],
+          ],
         ],
       ),
     );
+  }
+
+  /// 展开区的一行：`全部 · 绩点 3.55 · 加权 86.2 · 84.0 学分`
+  Widget _statLine(String tag, CourseStats s, bool isDark) {
+    final muted = context.textTertiary;
+    if (s.isEmpty) {
+      return Row(
+        children: [
+          SizedBox(
+            width: 66,
+            child: Text(tag,
+                style: TextStyle(
+                    fontSize: AppTheme.fontSmall, color: context.textSecondary)),
+          ),
+          Text('暂无', style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        SizedBox(
+          width: 66,
+          child: Text(tag,
+              style: TextStyle(
+                  fontSize: AppTheme.fontSmall,
+                  fontWeight: FontWeight.w600,
+                  color: context.textSecondary)),
+        ),
+        Expanded(
+          child: Text(
+            '绩点 ${s.gpa.toStringAsFixed(2)} · 加权 ${s.avgText} · '
+            '${s.credits.toStringAsFixed(1)} 学分 · ${s.count} 门',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: AppTheme.fontSmall, color: muted),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 按学年聚合（评奖评优是每学年一次，用户 m19892 #3 明确要求）。
+  ///
+  /// 学年从学期名里取：教务给的是 `2025-2026 第1学期` 这种，
+  /// 取前 9 个字符即 `2025-2026`，展示时压成 `25-26`。
+  List<Widget> _buildYearRows(bool isDark) {
+    final buckets = <String, List<Map<String, dynamic>>>{};
+    for (final s in _semesters) {
+      if (s is! Map) continue;
+      final m = Map<String, dynamic>.from(s);
+      final name = (m['name'] ?? '').toString();
+      final match = RegExp(r'(\d{4})-(\d{4})').firstMatch(name);
+      final key = match == null
+          ? (name.isEmpty ? '未知学年' : name)
+          : '${match.group(1)}-${match.group(2)}';
+      buckets.putIfAbsent(key, () => []).addAll(_semesterCourses(m));
+    }
+    if (buckets.isEmpty) return const [];
+
+    final keys = buckets.keys.toList()..sort((a, b) => b.compareTo(a));
+    final rows = <Widget>[];
+    for (final k in keys) {
+      final list = buckets[k]!;
+      // 学年平均同样只算必修：与主视图同一口径，否则用户没法拿它对账。
+      final reqOnly =
+          list.where((c) => kindOfCourse(c) == CourseKind.required).toList();
+      final source = reqOnly.isEmpty ? list : reqOnly;
+      final s = CourseStats.from(source);
+      if (s.isEmpty) continue;
+      final tag = RegExp(r'^(\d{4})-(\d{4})$').firstMatch(k);
+      final label = tag == null
+          ? k
+          : '${tag.group(1)!.substring(2)}-${tag.group(2)!.substring(2)} 学年';
+      final muted = context.textTertiary;
+      rows.add(Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 78,
+              child: Text(label,
+                  style: TextStyle(
+                      fontSize: AppTheme.fontSmall,
+                      fontWeight: FontWeight.w500,
+                      color: context.textSecondary)),
+            ),
+            Expanded(
+              child: Text(
+                '绩点 ${s.gpa.toStringAsFixed(2)}'
+                '${reqOnly.isEmpty ? '' : '（必修）'} · 加权 ${s.avgText}'
+                ' · ${s.count} 门',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: AppTheme.fontSmall, color: muted),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    if (rows.isEmpty) return const [];
+    return [
+      const SizedBox(height: 12),
+      Divider(height: 1, color: context.borderColor),
+      const SizedBox(height: 10),
+      Text('按学年',
+          style: TextStyle(
+              fontSize: AppTheme.fontCaption,
+              fontWeight: FontWeight.w600,
+              color: context.textSecondary)),
+      ...rows,
+    ];
+  }
+
+  /// 所有学期的全部课程（不去重，一个学期一门课算一门）。
+  List<Map<String, dynamic>> _allCourses() {
+    final out = <Map<String, dynamic>>[];
+    for (final s in _semesters) {
+      if (s is! Map) continue;
+      out.addAll(_semesterCourses(Map<String, dynamic>.from(s)));
+    }
+    return out;
   }
 
   Widget _metric(String label, String value, String unit, bool isDark,
@@ -426,122 +513,131 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     );
   }
 
-  /// 学期选择（点击弹出选择面板）
-  Widget _buildSemesterRow(bool isDark) {
-    return Material(
-      color: context.cardColor,
-      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      child: InkWell(
-        onTap: _querying ? null : _pickSemester,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-            border: Border.all(
-                color: context.borderColor),
-          ),
-          child: Row(
+  /// 所有学期的成绩平铺在一起，上方一个搜索框 + 排序统管全部。
+  ///
+  /// 2026-11-04（m19335 #1）：用户原话「成绩总览指的单纯是所有搜索框加所有成绩，
+  /// 不是什么总览页面」→ 删掉独立的总览页与学期选择器，本页一次列完所有学期。
+  Widget _buildResult(bool isDark) {
+    if (!_credentialBound && _semesters.isEmpty) {
+      return _needLogin();
+    }
+    final sections = <Map<String, dynamic>>[];
+    for (final s in _semesters) {
+      if (s is! Map) continue;
+      final map = Map<String, dynamic>.from(s);
+      if (_semesterCourses(map).isEmpty) continue;
+      sections.add(map);
+    }
+    if (_message == null && sections.isEmpty) {
+      return _emptyState(
+          isDark, Icons.assignment_outlined, '还没有查询结果，下拉或点右上角刷新');
+    }
+
+    // 按学期名倒序 = 时间从新到旧（2026-11-04 用户 m19892 #1 的「按时间排序」）。
+    sections.sort((a, b) => '${b['name']}'.compareTo('${a['name']}'));
+
+    // 选了某个学期就只留那一段；`_semesterFilter` 为空串表示全部。
+    final shown = _semesterFilter.isEmpty
+        ? sections
+        : sections
+            .where((s) => _shortSemName('${s['name']}') == _semesterFilter)
+            .toList();
+
+    final hits = <MapEntry<Map<String, dynamic>, List<Map<String, dynamic>>>>[];
+    var total = 0;
+    for (final sem in shown) {
+      final courses = _visibleCourses(_semesterCourses(sem));
+      total += courses.length;
+      if (courses.isNotEmpty) hits.add(MapEntry(sem, courses));
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_message != null) _errorCard(),
+        // 2026-11-04（用户 m20455 #5）：学期选择器「明显化」+ 搜索框压缩，
+        // 两者并排一行。原来选择器是左对齐的一行小字、搜索框单独占整块卡片，
+        // 视觉重心全在搜索上，用户找不到切换学期的地方。
+        if (sections.isNotEmpty)
+          Row(
             children: [
-              Icon(Icons.date_range_rounded,
-                  size: 20,
-                  color: isDark ? Colors.grey.shade400 : const Color(0xFF9CA3AF)),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  _selectedName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: AppTheme.fontBody,
-                    fontWeight: FontWeight.w600,
-                    color: context.textPrimary,
-                  ),
-                ),
-              ),
-              Icon(Icons.keyboard_arrow_down_rounded,
-                  size: 22,
-                  color: isDark ? Colors.grey.shade400 : const Color(0xFF9CA3AF)),
+              _buildSemesterSelector(isDark, sections),
+              const SizedBox(width: 8),
+              Expanded(child: _buildSearchField()),
             ],
+          ),
+        if (sections.isNotEmpty) const SizedBox(height: 10),
+        if (sections.isEmpty)
+          _emptyState(isDark, Icons.school_outlined, '暂无成绩数据')
+        else if (total == 0)
+          _emptyState(isDark, Icons.search_off_rounded, '没有匹配的课程')
+        else
+          for (final hit in hits) _buildSemesterSection(isDark, hit.key, hit.value),
+      ],
+    );
+  }
+
+  /// 学期选择器（2026-11-04 用户 m19892 #1）。
+  ///
+  /// 一排胶囊按钮的样子太占地方，这里做成「当前值 + 下拉箭头」一行，
+  /// 点开是滚轮（[showSemesterPicker] 内部已是 CupertinoPicker）。
+  Widget _buildSemesterSelector(bool isDark, List<Map<String, dynamic>> sections) {
+    final label = _semesterFilter.isEmpty
+        ? '全部学期'
+        : _semesterFilter;
+    final count = _semesterFilter.isEmpty
+        ? sections.length
+        : sections
+            .where((s) => _shortSemName('${s['name']}') == _semesterFilter)
+            .length;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+          onTap: sections.isEmpty ? null : () => _pickSemesterFilter(sections),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.event_note_rounded,
+                    size: 15, color: context.textTertiary),
+                const SizedBox(width: 5),
+                Text(label,
+                    style: TextStyle(
+                        fontSize: AppTheme.fontSmall,
+                        fontWeight: FontWeight.w600,
+                        color: context.textPrimary)),
+                const SizedBox(width: 4),
+                Text('($count)',
+                    style: TextStyle(
+                        fontSize: AppTheme.fontCaption,
+                        color: context.textTertiary)),
+                Icon(Icons.expand_more_rounded,
+                    size: 17, color: context.textTertiary),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  /// 缓存时间提示（v2.3.1，2026-10-12 调整）。
-  ///
-  /// 背景：成绩查询结果会缓存到本地，重进页面直接展示 —— 但用户不知道
-  /// 看到的是「刚查的」还是「上周的」。这里在结果顶部如实标注缓存时间。
-  ///
-  /// 🔴 2026-10-12：**不再把缓存判为「过期」**（用户要求：缓存不过期）。
-  ///    原来超过 1 天会转成橙色警告「建议重新查询」；但成绩、考试这类数据
-  ///    本身低频变更，没必要催用户重查 —— 现在任何时候都是中性样式，
-  ///    只标注「本地缓存 · X 前」，查不查由用户自己决定。
-  Widget _cacheHint(bool isDark) {
-    if (_cacheSavedAt.isEmpty) return const SizedBox.shrink();
-    DateTime? t;
-    try {
-      t = DateTime.tryParse(_cacheSavedAt);
-    } catch (_) {}
-    if (t == null) return const SizedBox.shrink();
-
-    final diff = DateTime.now().difference(t);
-    final ago = diff.inMinutes < 1
-        ? '刚刚'
-        : diff.inHours < 1
-            ? '${diff.inMinutes} 分钟前'
-            : diff.inHours < 24
-                ? '${diff.inHours} 小时前'
-                : '${diff.inDays} 天前';
-
-    final fg = isDark ? Colors.grey.shade500 : Colors.grey.shade600;
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-        border: Border.all(color: context.borderColor),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.history_rounded, size: 15, color: fg),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '本地缓存 · $ago · 下拉可刷新',
-              style: TextStyle(fontSize: AppTheme.fontSmall, color: fg),
-            ),
-          ),
-        ],
-      ),
+  Future<void> _pickSemesterFilter(List<Map<String, dynamic>> sections) async {
+    final labels = <String>['全部学期', ...sections.map((s) => _shortSemName('${s['name']}'))];
+    final current = _semesterFilter.isEmpty
+        ? 0
+        : labels.indexOf(_semesterFilter).clamp(0, labels.length - 1);
+    final picked = await showSemesterPicker(
+      context,
+      labels: labels,
+      currentIndex: current,
+      title: '选择学期',
     );
-  }
-
-  Widget _buildResult(bool isDark) {
-    final summary = _selectedSemester;
-    if (!_credentialBound && _semesters.isEmpty) {
-      return _needLogin();
-    }
-    if (_message == null && summary == null) {
-      return _emptyState(
-          isDark, Icons.assignment_outlined, '还没有查询结果，下拉或点右上角刷新');
-    }
-    return Column(
-      children: [
-        // v2.3.1：缓存新鲜度提示（有缓存时才显示）
-        _cacheHint(isDark),
-        if (_message != null) _errorCard(),
-        if (summary != null) ...[
-          if (_message != null) const SizedBox(height: 12),
-          _buildSemesterSummary(isDark, summary),
-        ] else if (_message == null)
-          _emptyState(isDark, Icons.school_outlined, '该学期暂无成绩'),
-      ],
-    );
+    if (picked == null || !mounted) return;
+    setState(() => _semesterFilter = picked == 0 ? '' : labels[picked]);
   }
 
   Widget _needLogin() {
@@ -605,46 +701,87 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     );
   }
 
-  /// 所选学期的成绩（版式仿掌上徐工）：
-  /// 顶部一行「学分靠左 / 绩点靠右」的小字小结，下面按课程逐条卡片。
-  Widget _buildSemesterSummary(bool isDark, Map<String, dynamic> sem) {
-    final xf = _asDouble(sem['total_xf']);
-    final gpa = _asDouble(sem['gpa']);
+  /// 一个学期的成绩段：学期名 + 学分绩点小结 + 该学期命中的课程卡。
+  ///
+  /// 版式沿用「掌上徐工」口味：小字小结放上面，课程卡逐条往下。
+  /// 搜索框已提到 `_buildResult` 顶部统管全部学期，这里不再重复渲染。
+  Widget _buildSemesterSection(
+      bool isDark, Map<String, dynamic> sem, List<Map<String, dynamic>> visible) {
     final courses = _semesterCourses(sem);
-    final passed = courses.where((c) {
-      return _passStatus(c['cj']?.toString() ?? '') == true;
-    }).length;
-    final visible = _visibleCourses(courses);
+    final all = courses.length;
+    final name = (sem['name'] ?? '').toString();
     final muted = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
+
+    // 2026-11-04（用户 m19892 #3）：学期小结也走必修口径，与顶部总览一致。
+    // 原来这里读的是教务给的 `total_xf` / `gpa`（含选修），
+    // 于是「总览说必修绩点 3.6、这一行说 3.4」，用户没法对账。
+    final reqOnly =
+        courses.where((c) => kindOfCourse(c) == CourseKind.required).toList();
+    final eleOnly =
+        courses.where((c) => kindOfCourse(c) == CourseKind.elective).toList();
+    final stats = CourseStats.from(reqOnly.isEmpty ? courses : reqOnly);
+    final reqTag = reqOnly.isEmpty ? '' : '必修';
+    final summaryText = [
+      '$reqTag绩点 ${stats.gpa.toStringAsFixed(2)}',
+      '$reqTag加权 ${stats.avgText}',
+      '${stats.credits.toStringAsFixed(1)} 学分',
+      if (eleOnly.isNotEmpty) '另有选修 ${eleOnly.length} 门',
+    ].join(' · ');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+          padding: const EdgeInsets.fromLTRB(2, 12, 2, 4),
           child: Row(
             children: [
-              Text('该学期学分 ${xf.toStringAsFixed(1)}',
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
-              const SizedBox(width: 10),
-              Text('绩点 ${gpa.toStringAsFixed(2)}',
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
-              const Spacer(),
-              Text('${courses.length} 门 · 及格 $passed',
+              Expanded(
+                child: Text(
+                  name.isEmpty ? '未知学期' : _shortSemName(name),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: AppTheme.fontBody,
+                    fontWeight: FontWeight.w700,
+                    color: context.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text('$all 门',
                   style: TextStyle(
                       fontSize: AppTheme.fontSmall, color: context.textTertiary)),
             ],
           ),
         ),
-        if (courses.isNotEmpty) _buildCourseToolbar(),
-        if (courses.isEmpty)
-          _emptyState(isDark, Icons.school_outlined, '该学期暂无成绩')
-        else if (visible.isEmpty)
-          _emptyState(isDark, Icons.search_off_rounded, '没有匹配的课程')
-        else
-          for (final c in visible) _buildCourseTile(isDark, c),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
+          child: Text(
+            summaryText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: AppTheme.fontSmall, height: 1.35, color: muted),
+          ),
+        ),
+        for (final c in visible) _buildCourseTile(isDark, c),
       ],
     );
+  }
+
+  /// 学期名压成 `25-26-1`（2026-11-04 用户 m19892 #1）。
+  ///
+  /// 教务给的是 `2025-2026 第1学期`，在标题行里占 13 个字符，
+  /// 和右边的「N 门」挤在一起时容易省略；短格式与选择器的标签统一。
+  String _shortSemName(String raw) {
+    final m = RegExp(r'(\d{4})-(\d{4})').firstMatch(raw);
+    if (m == null) return raw;
+    final a = m.group(1)!.substring(2);
+    final b = m.group(2)!.substring(2);
+    // 学期号：优先认「第1/第2学期」，其次认中文「一/二」，兜底 1
+    final half = RegExp(r'第\s*([12])').firstMatch(raw)?.group(1) ??
+        (raw.contains('一') ? '1' : (raw.contains('二') ? '2' : '1'));
+    return '$a-$b-$half';
   }
 
   List<Map<String, dynamic>> _semesterCourses(Map<String, dynamic> sem) {
@@ -669,135 +806,59 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
           return false;
         }
       }
-      final status = _passStatus(c['cj']?.toString() ?? '');
-      if (_filter == 'pass') return status == true;
-      if (_filter == 'fail') return status == false;
       return true;
     }).toList();
 
-    int compareScore(Map<String, dynamic> a, Map<String, dynamic> b) {
-      final sa = _scoreNum(a['cj']?.toString() ?? '') ?? -1;
-      final sb = _scoreNum(b['cj']?.toString() ?? '') ?? -1;
-      return sb.compareTo(sa);
-    }
-
-    switch (_sort) {
-      case 'name':
-        list.sort((a, b) => (a['kcmc'] ?? '')
-            .toString()
-            .compareTo((b['kcmc'] ?? '').toString()));
-      case 'score':
-        list.sort(compareScore);
-      case 'credit':
-        list.sort((a, b) =>
-            _asDouble(b['xf']).compareTo(_asDouble(a['xf'])));
-      default:
-        break;
-    }
+    // 2026-11-04（用户 m20455 #5）：排序功能整体移除。
+    // 保留教务返回的原始顺序 —— 学期内按课程号，找课靠搜索不靠排序。
     return list;
   }
 
-  Widget _buildCourseToolbar() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: context.surfaceColor,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        border: Border.all(color: context.borderColor),
-      ),
-      child: Column(
-        children: [
-          TextField(
-            controller: _search,
-            onChanged: (v) => setState(() => _keyword = v),
-            decoration: InputDecoration(
-              hintText: '搜索课程 / 教师 / 类型',
-              prefixIcon: const Icon(Icons.search_rounded, size: 18),
-              suffixIcon: _keyword.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close_rounded, size: 16),
-                      onPressed: () {
-                        _search.clear();
-                        setState(() => _keyword = '');
-                      },
-                    ),
-              isDense: true,
-              filled: true,
-              fillColor: context.scaffoldColor,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                borderSide: BorderSide.none,
-              ),
-            ),
-            style: const TextStyle(fontSize: AppTheme.fontSmall),
-          ),
-          const SizedBox(height: 7),
-          Row(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _filterChip('all', '全部'),
-                      _filterChip('pass', '及格'),
-                      _filterChip('fail', '不及格'),
-                    ],
-                  ),
+  /// 搜索框（2026-11-04 用户 m20455 #5）。
+  ///
+  /// 用户原话：「成绩页面搜索框优化，压缩并且去除排序功能」。
+  /// 原来是一个整块卡片：上面一行输入框、下面一行排序菜单，占了一百多 dp。
+  /// 现在压成 38 高的单行、不带排序菜单，与学期选择器并排。
+  /// 排序本来就要点两次才用得上，默认顺序保留教务返回顺序（学期内按课程号）。
+  Widget _buildSearchField() {
+    return SizedBox(
+      height: 38,
+      child: TextField(
+        controller: _search,
+        onChanged: (v) => setState(() => _keyword = v),
+        decoration: InputDecoration(
+          hintText: '搜索课程 / 教师',
+          isDense: true,
+          filled: true,
+          fillColor: context.surfaceColor,
+          prefixIcon: Icon(Icons.search_rounded, size: 17, color: context.textTertiary),
+          prefixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          suffixIcon: _keyword.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 15),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                  onPressed: () {
+                    _search.clear();
+                    setState(() => _keyword = '');
+                  },
                 ),
-              ),
-              PopupMenuButton<String>(
-                tooltip: '排序',
-                initialValue: _sort,
-                onSelected: (v) => setState(() => _sort = v),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'default', child: Text('默认顺序')),
-                  PopupMenuItem(value: 'name', child: Text('课程名')),
-                  PopupMenuItem(value: 'score', child: Text('分数从高到低')),
-                  PopupMenuItem(value: 'credit', child: Text('学分从高到低')),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Row(
-                    children: [
-                      Icon(Icons.sort_rounded,
-                          size: 16, color: context.textSecondary),
-                      const SizedBox(width: 3),
-                      Text(
-                        switch (_sort) {
-                          'name' => '课程名',
-                          'score' => '分数',
-                          'credit' => '学分',
-                          _ => '默认',
-                        },
-                        style: TextStyle(
-                            fontSize: AppTheme.fontSmall, color: context.textSecondary),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            borderSide: BorderSide(color: context.borderColor),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _filterChip(String value, String label) {
-    final selected = _filter == value;
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: ChoiceChip(
-        label: Text(label, style: const TextStyle(fontSize: AppTheme.fontCaption)),
-        selected: selected,
-        showCheckmark: false,
-        onSelected: (_) => setState(() => _filter = value),
-        visualDensity: VisualDensity.compact,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            borderSide: BorderSide(color: context.borderColor),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+            borderSide: BorderSide(color: AppTheme.primaryColor),
+          ),
+        ),
+        style: const TextStyle(fontSize: AppTheme.fontSmall),
       ),
     );
   }
@@ -866,12 +927,8 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
                   color: _scoreColor(isDark, score),
                 ),
               ),
-              if (_passStatus(rawScore) == false)
-                const Text('不及格',
-                    style: TextStyle(
-                        fontSize: 9.5,
-                        color: Color(0xFFEF4444),
-                        fontWeight: FontWeight.w600)),
+              // 2026-11-04（m18409 #5）：不再标「不及格」——
+              // 及格与否是学校认定的事，分数本身已经把话说清楚了。
             ],
           ),
         ],
@@ -884,10 +941,6 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     return double.tryParse('$v') ?? 0;
   }
 
-  int _asInt(Object? v) {
-    if (v is num) return v.toInt();
-    return int.tryParse('$v') ?? 0;
-  }
 
   void _showGpaInfo() {
     showDialog<void>(
@@ -895,9 +948,15 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('绩点怎么算'),
         content: const Text(
-          '总览绩点 = Σ(课程学分 × 教务绩点) ÷ Σ课程学分。\n\n'
-          '课程学分、绩点都来自教务成绩查询结果，App 不自行换算。\n\n'
-          '及格率：数字成绩按 60 分判定；合格、通过、及格、优秀、良好、中等计为及格。',
+          '总览默认只统计**必修课**：绩点 = Σ(必修学分 × 教务绩点) ÷ Σ必修学分，'
+          '加权 = Σ(必修学分 × 分数) ÷ Σ参与计算的必修学分。\n\n'
+          '选修课按用户所在学校的评奖口径单列（点「全部 / 选修」展开看），'
+          '不并入主视图。\n\n'
+          '加权平均只计入**有数字成绩**的课程；「优秀 / 良好 / 通过」这类等级制'
+          '成绩没有可换算的数值，不计入平均，也不影响绩点以外的数字。\n\n'
+          '学年平均按学期名的学年前缀聚合，同样只算必修。\n\n'
+          '课程学分、绩点全部来自教务成绩查询结果，App 不自行换算；'
+          '是否及格由学校认定，本页只呈现原始分数与学分。',
           style: TextStyle(fontSize: AppTheme.fontBody, height: 1.55),
         ),
         actions: [
@@ -915,19 +974,8 @@ class _GradeQueryPageState extends ConsumerState<GradeQueryPage> {
     return m == null ? null : double.tryParse(m.group(0)!);
   }
 
-  /// 判定是否及格：数字成绩按 60 分；文字成绩兼容「合格/通过/及格/优秀/良好/中等」。
-  /// 未知文字不算及格也不算不及格（筛选时不误伤）。
-  bool? _passStatus(String raw) {
-    final n = _scoreNum(raw);
-    if (n != null) return n >= 60;
-    final s = raw.trim();
-    if (s.isEmpty) return null;
-    if (RegExp(r'不合格|不通过|不及格|缺考|取消').hasMatch(s)) return false;
-    if (RegExp(r'合格|通过|及格|优秀|良好|中等').hasMatch(s)) return true;
-    return null;
-  }
-
-  /// 分数着色：≥90 标绿（优秀）、<60 标红（不及格）、其余用正文色。
+  /// 分数着色：≥90 标绿（高分）、<60 标红（低分）、其余用正文色。
+  /// 注意这是**分数段着色**，不表达「及格/不及格」—— 见 m18409 #5。
   Color _scoreColor(bool isDark, String score) {
     final normal = isDark ? Colors.white : AppTheme.textPrimaryLight;
     final n = _scoreNum(score);

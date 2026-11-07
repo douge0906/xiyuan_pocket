@@ -150,19 +150,29 @@ class Todo {
   /// ⚠️ 改这里会让升级后重新计算的 id 与旧版不同：旧通知靠
   ///    [TodoRepository.rescheduleAll] 里 cancel 掉 tracked 集合来清理，
   ///    正常情况下不会留幽灵通知。
+  ///
+  /// 📐 **id 空间规划（2026-11-04 审查修正）**：插件 Java 侧
+  ///    `NotificationDetails.id` 是 `Integer`，Dart 侧传超过 int32 的值会
+  ///    抛 `ClassCastException`（且被三级降级无声吞掉）。
+  ///    本函数返回值必须落在 **0x40000000..0x4FFFFFFF**（约 10.7 亿..13.4 亿），
+  ///    给「每周重复待办」的星期偏移留出至少 7×1000 的余量。
+  ///    上一版注释写「0x40000000..0x60000000 加 700 万不会溢出」是**错的**：
+  ///    0x60000000 尚未越界，但 `base + 7*1_000_000` 可达 21.5 亿 > int32 上限 21.47 亿。
   static int stableNotifyId(String source) {
     var hash = 0x811c9dc5;
     for (final unit in source.codeUnits) {
       hash ^= unit;
       hash = (hash * 0x01000193) & 0x7fffffff;
     }
-    return 0x40000000 + (hash & 0x3FFFFFFF);
+    // 只取低 28 位 → 上限 0x4FFFFFFF（13.4 亿），留 8 亿给星期偏移。
+    return 0x40000000 + (hash & 0x0FFFFFFF);
   }
 
   Todo copyWith({
     String? id,
     String? title,
     String? description,
+    bool clearDescription = false,
     DateTime? date,
     DateTime? reminderTime,
     bool clearReminder = false,
@@ -182,7 +192,8 @@ class Todo {
     return Todo(
       id: id ?? this.id,
       title: title ?? this.title,
-      description: description ?? this.description,
+      description:
+          clearDescription ? null : (description ?? this.description),
       date: date ?? this.date,
       reminderTime: clearReminder ? null : (reminderTime ?? this.reminderTime),
       completed: completed ?? this.completed,

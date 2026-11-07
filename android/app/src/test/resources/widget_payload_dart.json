@@ -1,0 +1,107 @@
+{
+  "date": "2026-11-06",
+  "semesterWeek": 1,
+  "weekday": 5,
+  "hasSchedule": true,
+  "semesterStart": "2026-11-02",
+  "prefs": {
+    "tableId": "",
+    "theme": "system",
+    "accent": "1F2937",
+    "fontScale": 1.0,
+    "showTeacher": true,
+    "showClassroom": true,
+    "showTime": true,
+    "showWeek": true,
+    "countdown": true,
+    "smallMode": "countdown",
+    "showTeacherMedium": true,
+    "showClassroomMedium": true,
+    "showTimeMedium": true,
+    "showTeacherLarge": true,
+    "showClassroomLarge": true,
+    "showTimeLarge": true
+  },
+  "courses": [
+    {
+      "name": "高等数学",
+      "teacher": "张老师",
+      "classroom": "A301",
+      "startSlot": 1,
+      "endSlot": 2,
+      "color": 4294743972,
+      "timeText": "08:00-09:40",
+      "startMinute": 480,
+      "endMinute": 580
+    },
+    {
+      "name": "早自习",
+      "teacher": "",
+      "classroom": "",
+      "startSlot": 1,
+      "endSlot": 1,
+      "color": 4288801744,
+      "timeText": "08:00-08:45",
+      "startMinute": 480,
+      "endMinute": 525
+    },
+    {
+      "name": "大学物理",
+      "teacher": "李老师",
+      "classroom": "B202",
+      "startSlot": 3,
+      "endSlot": 4,
+      "color": 4288137980,
+      "timeText": "10:10-11:50",
+      "startMinute": 610,
+      "endMinute": 710
+    }
+  ],
+  "allCourses": [
+    {
+      "name": "高等数学",
+      "teacher": "张老师",
+      "classroom": "A301",
+      "weekday": 5,
+      "startSlot": 1,
+      "endSlot": 2,
+      "color": 4294743972,
+      "timeText": "08:00-09:40",
+      "startMinute": 480,
+      "endMinute": 580,
+      "weeks": "1-20",
+      "weekType": 0,
+      "pattern": 0
+    },
+    {
+      "name": "大学物理",
+      "teacher": "李老师",
+      "classroom": "B202",
+      "weekday": 5,
+      "startSlot": 3,
+      "endSlot": 4,
+      "color": 4288137980,
+      "timeText": "10:10-11:50",
+      "startMinute": 610,
+      "endMinute": 710,
+      "weeks": "1-18(单)",
+      "weekType": 0,
+      "pattern": 0
+    },
+    {
+      "name": "早自习",
+      "teacher": "",
+      "classroom": "",
+      "weekday": 0,
+      "startSlot": 1,
+      "endSlot": 1,
+      "color": 4288801744,
+      "timeText": "08:00-08:45",
+      "startMinute": 480,
+      "endMinute": 525,
+      "weeks": "1-20",
+      "weekType": 0,
+      "pattern": 1
+    }
+  ]
+}

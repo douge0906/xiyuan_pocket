@@ -83,9 +83,10 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
                 c.book.toLowerCase().contains(q);
           }).toList();
           return AlertDialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
             title: const Text('选择教材'),
             content: SizedBox(
-              width: 360,
+              width: (MediaQuery.of(context).size.width - 80).clamp(0.0, 360.0).toDouble(),
               height: 420,
               child: Column(
                 children: [

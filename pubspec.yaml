@@ -1,7 +1,7 @@
 name: xiyuan_pocket
 description: "掌上锡院 —— 无锡学院校园生活助手"
 publish_to: 'none'
-version: 1.0.8+22
+version: 1.0.9+23
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -79,8 +79,11 @@ flutter:
   # 数据来自服务器此前爬好的教务处公告 + 校园资讯，见 services/seed_data.dart）
   assets:
     - assets/seed/app_seed.json
-    # 校园地图（内置图片，1920×1004，见 pages/tools/campus_map_page.dart）
+    # 锡院学生手册（2026 版·完全版，见 pages/tools/handbook_page.dart）
+    - assets/seed/handbook_2026.json
+    # 校园地图（内置图片，见 pages/tools/campus_map_page.dart）
     - assets/images/campus_map.jpg
+    - assets/images/campus_map_illustrated.png
     # 法务文本（隐私政策 / 用户协议）
     - assets/legal/privacy_policy.md
     - assets/legal/user_agreement.md

@@ -17,7 +17,11 @@ import 'user/user_cards.dart';
 import 'settings_page.dart';
 import 'widget_hub_page.dart';
 import '../services/data_wipe.dart';
+import '../services/current_tab.dart';
+import '../app.dart';
 import '../services/login_prefetch_service.dart';
+import '../services/login_sync_progress.dart';
+import '../widgets/login_sync_dialog.dart';
 import '../services/widget_sync_service.dart';
 import '../providers/course_provider.dart';
 import '../providers/grade_provider.dart';
@@ -70,6 +74,18 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
 
   /// 项目主页（登录页展示、点击在浏览器打开）。
   static const String _repoUrl = 'https://github.com/douge0906/xiyuan_pocket';
+
+  /// 「登录后引导填宿舍」只问一次。
+  ///
+  /// 为什么要这个标记：电费要靠宿舍号（楼栋 + 房号）才有意义，而新人登录后
+  /// 根本没绑过宿舍 —— 首页电费卡永远「未设置」。用户要求「电费自动同步，
+  /// 此步骤触发宿舍号填写」，那就必须在登录链路里主动问一次；但**不能每次
+  /// 登录都问**，否则换账号 / 重登录会被同一个弹窗反复打断。
+  /// 点了「以后再说」也算问过（用户已经知道这件事在哪改）。
+  static const String _kDormAsked = 'dorm_asked_after_login_v1';
+
+  /// 「用户进入本页」的监听注销函数（首页齿轮请求打开设置时用）。
+  void Function()? _unsubEntered;
 
   // ---------------- 教程锚点 ----------------
   final GlobalKey _kHeader = GlobalKey();
@@ -126,7 +142,29 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // 设置页改了导航（隐藏/排序）→ 本页开关状态跟着变
     NavPrefs.notifier.addListener(_onNavPrefsChanged);
+    // 首页齿轮请求「打开设置」时，由本页接收并打开（2026-11-03）。
+    _unsubEntered = CurrentTab.addListener((page) {
+      if (page == NavPageRef.user) _consumePendingSettings();
+    });
     _load();
+  }
+
+  /// 首页齿轮点了「打开设置」→ 本页被切到前台时消费这个信号（2026-11-03）。
+  ///
+  /// 为什么由「我的」页接：`SettingsPage` 要的 `onLogout` / `onThemeChanged` /
+  /// `onPrimaryChanged` 全是本页的私有方法，首页造不出来。
+  ///
+  /// 用 [CurrentTab] 而不是在 initState 里判 —— 首次预热时本页会被建出来，
+  /// 但用户还没真正切过来；只有在 `notifyEntered(NavPageRef.user)` 之后
+  /// 打开设置才符合「点了齿轮就该看到设置」。
+  void _consumePendingSettings() {
+    if (!AppTabs.pendingOpenSettings) return;
+    if (CurrentTab.current != NavPageRef.user) return;
+    AppTabs.pendingOpenSettings = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openSettings();
+    });
   }
 
   @override
@@ -150,9 +188,68 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     NavPrefs.notifier.removeListener(_onNavPrefsChanged);
+    _unsubEntered?.call();
     _usernameCtl.dispose();
     _passwordCtl.dispose();
     super.dispose();
+  }
+
+  /// 登录后问一次宿舍号（只问一次，见 [_kDormAsked]）。
+  ///
+  /// 链路：登录 → 预取（含电费）→ 本方法。到达这里时：
+  /// · 宿舍已绑定 → 什么都不做（预取那一步已经把余额抓回来了）；
+  /// · 宿舍未绑定且没问过 → 直接弹 [showDormDialog]；
+  /// · 填了就顺手查一次电费写缓存，首页电费卡立刻有数；
+  /// · 用户点「以后再说」/ 直接关掉 → 也记成「问过」，不再打扰。
+  Future<void> _askDormAfterLogin() async {
+    if (!mounted) return;
+    if (_dorm != null) return;
+    final prefs = await SharedPreferences.getInstance();
+    if ((prefs.getBool(_kDormAsked) ?? false)) return;
+    if (!mounted) return;
+
+    final d = await showDormDialog(context);
+    if (!mounted) return;
+    await prefs.setBool(_kDormAsked, true);
+    if (d == null) return; // 「以后再说」：不追问，入口一直在「我的」页
+
+    await DormStore.save(d);
+    if (!mounted) return;
+    setState(() => _dorm = d);
+
+    // 顺手查一次，首页电费卡不用等用户再去点一次
+    try {
+      final info = await DormService.query(d);
+      if (info != null) {
+        await DormService.saveElecCache(info, d);
+        if (info.balance != null) {
+          await DormService.saveElecPoint(info.balance!, kwh: info.kwh, dorm: d);
+        }
+        if (!mounted) return;
+        _snack(
+          info.balance == null
+              ? '已记录 ${d.display}'
+              : '${d.display} 电费余额 ¥${info.balance!.toStringAsFixed(2)}',
+        );
+      } else {
+        _snack('已记录 ${d.display}（余额稍后自动获取）');
+      }
+    } catch (_) {
+      _snack('已记录 ${d.display}');
+    }
+  }
+
+  /// 轻提示（本页多处用到）。
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          duration: const Duration(milliseconds: 1800),
+        ),
+      );
   }
 
   /// 编辑宿舍：居中弹窗（楼栋可搜索 + 房号），保存后刷新本页。
@@ -169,8 +266,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
         SnackBar(
           content: Text('已切换到 ${d.display}'),
           duration: const Duration(milliseconds: 1600),
-          behavior: SnackBarBehavior.floating,
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         ),
       );
   }
@@ -339,10 +434,35 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       if (_loginFails != 0) await _saveLoginFails(0);
       // 控制台：设备登记 + 断言登录（失败静默，不影响本机功能）
       unawaited(ControlService.warmUp(force: true));
-      // 课表同步与预取共用同一个教务会话（含 csrftoken），必须串行：
+      // ⑤ 弹「自动同步」进度条，再把每一步推到它上面。
+      //
+      // 为什么要弹：首次登录会一次性触发课表 / 成绩 / 考试 / 教材 / 一卡通
+      // 五件事，以前全静默跑，用户看到的是「点完登录，愣了几秒，课表突然
+      // 换了」——像是 App 自己动了。现在一行一件事，跑完自己关。
+      //
+      // 课表同步与其余预取共用同一个教务会话（含 csrftoken），必须串行：
       // 先课表，完成后再拉成绩 / 考试 / 教材，避免并发互相顶掉会话。
-      unawaited(CourseSyncService.sync(container)
-          .whenComplete(() => LoginPrefetchService.run(container)));
+      // 进度条不阻塞登录：`show` 只等对话框关，同步在后台继续，用户点
+      // 「后台继续」也不会中断。
+      if (!mounted) return; // 上面有 await，用 context 前必须再确认一次
+      unawaited(LoginSyncDialog.show(context));
+      unawaited(
+        CourseSyncService.sync(container).then((r) {
+          LoginSyncProgress.mark(
+            LoginSyncStep.courses,
+            r.ok ? LoginSyncStatus.done : LoginSyncStatus.failed,
+            note: r.ok ? '${r.totalCourses} 门课' : r.message,
+          );
+        }).catchError((Object e) {
+          LoginSyncProgress.failed(LoginSyncStep.courses, note: '网络异常');
+        }).whenComplete(
+          () => LoginPrefetchService.run(container).then((_) {
+            // 预取跑完（含「电费」那步）再问宿舍号：此时若宿舍已绑定，
+            // 预取里已经把余额写进缓存，不需要再问。
+            if (mounted) _askDormAfterLogin();
+          }),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       final message = e.toString().replaceFirst('Exception: ', '').trim();
@@ -442,6 +562,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     await StorageService.saveUserConfig(config);
     if (mounted) setState(() => _config = config);
   }
+
 
   // ------------------------------------------------------------ build
 
@@ -728,7 +849,11 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     onDormTap: _editDorm,
                   ),
                   const SizedBox(height: 8),
-                  _sectionTitle('主题色'),
+                  // 🔴 2026-11-03：分区名从「主题色」改成「外观」。
+                  //    这一组装的是「主题」入口 + 「极简模式」开关，跟
+                  //    「主题色」根本不是一回事（主题色在设置 → 界面与显示里）。
+                  //    分区名与内容对不上，用户会以为点进去就能调颜色。
+                  _sectionTitle('外观'),
                   _card(
                     child: Column(
                       children: [
@@ -791,15 +916,17 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                   _card(
                     child: Column(
                       children: [
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          child: _listTile(
-                            icon: Icons.info_outline_rounded,
-                            title: '版本号',
-                            trailing: Text('v$_appVersion',
-                                style:
-                                    TextStyle(color: Colors.grey.shade500)),
-                          ),
+                        // 2026-11-04（m18409 #8）：版本号**只显示版本号**。
+                        // 原来整行可点「检查更新」并带一个刷新图标 —— 用户明确
+                        // 要求去掉：更新检查在 App 里已有三处自动触发
+                        // （启动、回前台、登录后），这一行不该再承担入口。
+                        _listTile(
+                          icon: Icons.info_outline_rounded,
+                          title: '版本号',
+                          trailing: Text('v$_appVersion',
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontSmall,
+                                  color: context.textTertiary)),
                         ),
 
                         _divider(),
@@ -901,7 +1028,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                 decoration: BoxDecoration(
                   color: (installed ? const Color(0xFF10B981) : Colors.grey)
                       .withValues(alpha: .10),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                 ),
                 child: Text(
                   installed ? '已添加' : '未添加',

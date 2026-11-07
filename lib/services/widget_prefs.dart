@@ -51,6 +51,80 @@ class WidgetPrefs {
 
   static Future<SharedPreferences> get _p => SharedPreferences.getInstance();
 
+  // ---------- 每种组件各自的外观（2026-11-05，用户 m24495 #1）----------
+  //
+  // 背景：原来 theme / accent / fontScale 是**全局一套**，于是「把考试组件
+  // 调成深色」会连课表组件一起变。用户要求每张卡片都能独立调。
+  //
+  // 兼容策略：per-kind 键不存在时**回落到全局值**。老用户升级后外观不变，
+  // 只有主动到某个组件的设置里改过，那个组件才开始走自己的一套。
+  static const List<String> appearanceKinds = <String>[
+    'schedule', 'exam', 'card', 'countdown',
+  ];
+
+  static String _kindTheme(String kind) => 'widget_theme_$kind';
+  static String _kindAccent(String kind) => 'widget_accent_$kind';
+  static String _kindFontScale(String kind) => 'widget_font_scale_$kind';
+
+  /// 某个组件的实际生效值（per-kind 优先，缺失回落全局）。
+  static Future<String> themeFor(String kind) async {
+    final p = await _p;
+    return p.getString(_kindTheme(kind)) ?? p.getString(kTheme) ?? defTheme;
+  }
+
+  static Future<String> accentFor(String kind) async {
+    final p = await _p;
+    return p.getString(_kindAccent(kind)) ?? p.getString(kAccent) ?? defAccent;
+  }
+
+  static Future<double> fontScaleFor(String kind) async {
+    final p = await _p;
+    return p.getDouble(_kindFontScale(kind)) ??
+        p.getDouble(kFontScale) ??
+        defFontScale;
+  }
+
+  /// 该组件是否已经被单独设置过（决定设置页显示「自定义」还是「跟随全局」）。
+  static Future<bool> hasCustomAppearance(String kind) async {
+    final p = await _p;
+    return p.containsKey(_kindTheme(kind)) ||
+        p.containsKey(_kindAccent(kind)) ||
+        p.containsKey(_kindFontScale(kind));
+  }
+
+  static Future<void> setThemeFor(String kind, String v) async =>
+      (await _p).setString(_kindTheme(kind), v);
+
+  static Future<void> setAccentFor(String kind, String v) async =>
+      (await _p).setString(_kindAccent(kind), v);
+
+  static Future<void> setFontScaleFor(String kind, double v) async =>
+      (await _p).setDouble(_kindFontScale(kind), v.clamp(0.8, 1.2));
+
+  /// 清除某个组件的自定义外观，回到跟随全局。
+  static Future<void> clearAppearanceFor(String kind) async {
+    final p = await _p;
+    await p.remove(_kindTheme(kind));
+    await p.remove(_kindAccent(kind));
+    await p.remove(_kindFontScale(kind));
+  }
+
+  /// 打包某个组件的生效外观，并到该组件的 JSON 里。
+  ///
+  /// 🔴 键名仍是 `theme` / `accent` / `fontScale`（与原生侧 `WidgetModels.kt`
+  /// 的 `WidgetPrefs` 一致），**不是** per-kind 的存储键名。
+  /// 原生侧完全不需要知道「独立外观」这回事 —— 它读的永远是解析后的生效值。
+  static Future<Map<String, dynamic>> appearanceFor(String kind) async {
+    final p = await _p;
+    return <String, dynamic>{
+      'theme': p.getString(_kindTheme(kind)) ?? p.getString(kTheme) ?? defTheme,
+      'accent': p.getString(_kindAccent(kind)) ?? p.getString(kAccent) ?? defAccent,
+      'fontScale': p.getDouble(_kindFontScale(kind)) ??
+          p.getDouble(kFontScale) ??
+          defFontScale,
+    };
+  }
+
   // ---------- 读 ----------
   static Future<String> tableId() async => (await _p).getString(kTableId) ?? defTableId;
   static Future<String> theme() async => (await _p).getString(kTheme) ?? defTheme;
@@ -93,7 +167,7 @@ class WidgetPrefs {
   static Future<void> setAccent(String v) async =>
       (await _p).setString(kAccent, v);
   static Future<void> setFontScale(double v) async =>
-      (await _p).setDouble(kFontScale, v);
+      (await _p).setDouble(kFontScale, v.clamp(0.8, 1.2));
 
   static Future<void> setShowTeacher(bool v) async =>
       (await _p).setBool(kShowTeacher, v);

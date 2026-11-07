@@ -73,7 +73,6 @@ ControlFailure _failureForStatus(int status, String message) {
 class ControlService {
   ControlService._();
 
-  static bool _registering = false;
   static DateTime? _lastWarmUp;
 
   /// 冷启动/回前台预热：设备登记 → 必要时断言登录 → 版本探测。
@@ -85,11 +84,14 @@ class ControlService {
     if (!force && last != null && DateTime.now().difference(last) < const Duration(hours: 6)) {
       return;
     }
-    _lastWarmUp = DateTime.now();
 
     if (!await ControlApi.allowed()) return;
     final token = await ensureDevice();
     if (token == null) return;
+    // 🔴 v1.0.9：时间戳必须**成功之后**才写。
+    //    此前写在请求之前 → 第一次因断网失败，就把预热冻结满 6 小时，
+    //    冷启动与回前台全部被跳过，只有「登录成功」那条 force 路径能救。
+    _lastWarmUp = DateTime.now();
 
     final cfg = await StorageService.loadUserConfig();
     final studentId = cfg.username.trim();
@@ -101,15 +103,28 @@ class ControlService {
 
   /// 确保设备已登记（带签名），返回设备令牌。
   ///
-  /// 幂等：已有令牌直接返回；并发调用只发一次注册请求。
-  static Future<String?> ensureDevice() async {
+  /// 幂等：已有令牌直接返回；并发调用**共享同一次注册 Future**。
+  ///
+  /// 🔴 v1.0.9：此前用 `_registering` 布尔 + `return null` 做并发闸门 ——
+  ///    注释写着「并发调用只发一次注册请求」，实际是第二个调用者**立刻拿到 null**，
+  ///    上层把它翻译成「请先登录统一认证后再下载」，已登录用户也会被这么提示。
+  ///    现在改成共享 Future（与 `net_mode.dart` 的 `_inflight` 同一套写法）。
+  static Future<String?>? _registering;
+
+  static Future<String?> ensureDevice() {
+    _registering ??= _ensureDeviceOnce().whenComplete(() {
+      // 失败不缓存：下次调用重新尝试（成功时 token 已落盘，会走上面的短路）。
+      _registering = null;
+    });
+    return _registering!;
+  }
+
+  static Future<String?> _ensureDeviceOnce() async {
     if (!await ControlApi.allowed()) return null;
 
     final existing = await DeviceIdentity.loadToken();
     if (existing != null && existing.isNotEmpty) return existing;
-    if (_registering) return null;
 
-    _registering = true;
     try {
       final identity = await DeviceIdentity.load();
       final info = await PackageInfo.fromPlatform();
@@ -142,8 +157,9 @@ class ControlService {
       final serial = res?['device_serial']?.toString();
       if (serial != null) await DeviceIdentity.saveSerial(serial);
       return token;
-    } finally {
-      _registering = false;
+    } catch (_) {
+      // 注册失败保持静默：这是后台预热路径，不该弹任何提示。
+      return null;
     }
   }
 
@@ -370,8 +386,13 @@ class ControlService {
     }
     try {
       if (!await ControlApi.allowed()) return '未登录统一认证，无法上传';
-      final token = await DeviceIdentity.loadToken();
-      if (token == null || token.isEmpty) return '设备未登录，无法上传';
+      // 🔴 v1.0.9：必须走 ensureDevice() 而不是直读本地 token。
+      //    直读时新装设备/首次上传的 token 还没注册过（warmUp 是 unawaited），
+      //    必然报「设备未登录，无法上传」——服务端注册链路根本没被触发。
+      final token = await ensureDevice();
+      if (token == null || token.isEmpty) {
+        return '设备注册失败，请检查网络后重试';
+      }
 
       final uri = Uri.parse(
           '${ControlConfig.baseUrl}${ControlConfig.pathResourceUploads}');
@@ -526,7 +547,17 @@ class ControlService {
       await file.parent.create(recursive: true);
       sink = file.openWrite();
       var received = 0;
-      await for (final chunk in response.stream) {
+      // 🔴 v1.0.9：流本身也要超时。此前只有 `client.send` 那一次有 12 秒超时，
+      //    响应头到达后如果服务端卡住不发字节，`await for` 会永远挂着 ——
+      //    而上层的「正在保存」对话框 `barrierDismissible: false`，
+      //    用户只能杀进程。这里给每一块数据之间也加超时（不限制总时长，
+      //    大文件仍然可以慢慢下完）。
+      await for (final chunk in response.stream.timeout(
+        Duration(seconds: ControlConfig.timeoutSeconds),
+        onTimeout: (sinkStream) => sinkStream.addError(
+          TimeoutException('下载数据流中断'),
+        ),
+      )) {
         sink.add(chunk);
         received += chunk.length;
         onProgress?.call(received, total);
@@ -534,6 +565,20 @@ class ControlService {
       await sink.flush();
       await sink.close();
       sink = null;
+      // 🔴 2026-11-04 审查 P1：此前「流正常结束」就当成成功，从不和
+      //    Content-Length 对账。服务端用 FileResponse 一次性 sendfile，
+      //    中途被掐（切网、锁屏、nginx 超时）时 Dart 侧常常是 stream 正常
+      //    done 而不是抛错 → 这里返回 null（成功）→ 上层把 .part rename 成
+      //    正式文件 → 缓存判定只认「文件非空」，于是一个截断的坏 PDF 会被
+      //    **永久命中**：预览一直是坏文件，「保存到本机」连请求都不发就弹
+      //    「已保存到…」。必须在这里发现并拒绝。
+      if (total > 0 && received != total) {
+        if (kDebugMode) {
+          debugPrint('[control] 下载不完整：收到 $received / 应为 $total');
+        }
+        return const ControlFailure(
+            ControlFailureKind.server, '下载不完整，请重试');
+      }
       return null;
     } on TimeoutException {
       return const ControlFailure(

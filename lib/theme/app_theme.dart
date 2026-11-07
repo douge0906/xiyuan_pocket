@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/ui_prefs.dart';
+
 class AppTheme {
   /// 默认主题色（墨黑）。
   static const Color defaultPrimary = Color(0xFF1F2937);
@@ -29,23 +31,56 @@ class AppTheme {
     if (primaryNotifier.value != c) primaryNotifier.value = c;
   }
 
-  /// 页面背景色（v1.5.0，2026-10-14）：**浅色模式生效**；null = 跟随默认
-  /// （[backgroundColor]）。深色模式固定深色背景，此设置不生效。
+  /// 页面背景色（v1.5.0，2026-10-14，2026-11-03 修订）。
+  ///
+  /// **浅色模式**用的背景色。存的是用户原样选中的颜色（不再 `alphaBlend`
+  /// 到白底）。深色模式用独立的 [backgroundDarkNotifier]，两者互不影响 ——
+  /// 共用一份的话，浅色挑过米黄后一进深色就会变成「亮底 + 深字」。
   static final ValueNotifier<Color?> backgroundNotifier =
       ValueNotifier<Color?>(null);
 
+  /// **深色模式**用的页面背景色（2026-11-03 新增）。null = 跟随 [scaffoldDark]。
+  static final ValueNotifier<Color?> backgroundDarkNotifier =
+      ValueNotifier<Color?>(null);
+
   static void setBackground(Color? c) {
-    if (backgroundNotifier.value != c) backgroundNotifier.value = c;
+    if (backgroundNotifier.value != c) {
+      backgroundNotifier.value = c;
+      // 系统手势条的颜色也跟着背景走，否则页面变了、底部还是老色带。
+      refreshSystemOverlay();
+    }
   }
 
-  /// 背景色预设（浅色系；深色模式不生效，设置页里该行会隐藏）。
+  static void setBackgroundDark(Color? c) {
+    if (backgroundDarkNotifier.value != c) {
+      backgroundDarkNotifier.value = c;
+      refreshSystemOverlay();
+    }
+  }
+
+  /// 背景色预设（浅色系）。
+  ///
   /// v1.6.3：色值按同一明度层级重调（更柔和、彼此更协调）。
+  /// 2026-11-03：另加一组**深色系**预设 [backgroundPresetsDark]，
+  /// 让深色模式也能选背景色 —— 此前那一行在深色下被整行隐藏。
   static const List<(String, Color)> backgroundPresets = [
     ('默认', Color(0xFFFFFFFF)),
     ('米黄', Color(0xFFFAF6EE)),
     ('浅灰', Color(0xFFF1F2F5)),
     ('淡蓝', Color(0xFFEDF3FA)),
     ('淡绿', Color(0xFFEDF6F0)),
+  ];
+
+  /// 深色模式背景预设（2026-11-03 新增）。
+  ///
+  /// 与浅色那组一一对应，保持同一层级关系：默认接近纯黑，
+  /// 其余四个分别带一点点冷/暖倾向，避免深色下所有页面都是一模一样的死黑。
+  static const List<(String, Color)> backgroundPresetsDark = [
+    ('默认', Color(0xFF121212)),
+    ('石墨', Color(0xFF1A1A1A)),
+    ('冷灰', Color(0xFF161A1F)),
+    ('墨蓝', Color(0xFF131820)),
+    ('松绿', Color(0xFF141A16)),
   ];
   static const Color backgroundColor = Color(0xFFFFFFFF);
 
@@ -152,6 +187,12 @@ class AppTheme {
     final v = s.clamp(minRadiusScale, maxRadiusScale);
     if ((v - _radiusScale).abs() < 0.001) return;
     _radiusScale = v;
+    // 🔴 v1.0.9：主题缓存必须一起失效。
+    //    `_buildTheme` 里 5 处用了 `radiusMd`（SnackBar / ElevatedButton / 输入框描边），
+    //    但缓存 key 只含 主色 ^ 背景 ^ 字体 → 拖圆角滑杆后卡片（widget 层直接读
+    //    getter）立刻变圆，按钮/输入框/SnackBar 却纹丝不动，直到重启。
+    _lightCache = null;
+    _darkCache = null;
     radiusNotifier.value = v;
   }
 
@@ -254,15 +295,24 @@ class AppTheme {
           : Brightness.light,
     };
     final isDark = brightness == Brightness.dark;
+    // 🔴 2026-11-04 审查 P1：系统手势条原来写死 121212 / 白。
+    //    用户在深色里选石墨/冷灰/墨蓝/松绿后，页面变了、系统导航条还是纯黑，
+    //    底部又是一条色带。这里与 `context.scaffoldColor` 保持同一口径。
+    final navBar = isDark
+        ? (backgroundDarkNotifier.value ?? scaffoldDark)
+        : (backgroundNotifier.value ?? Colors.white);
     SystemChrome.setSystemUIOverlayStyle(
       SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-        systemNavigationBarColor: isDark ? const Color(0xFF121212) : Colors.white,
+        systemNavigationBarColor: navBar,
         systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
       ),
     );
   }
+
+  /// 背景色变更后重算系统栏配色（背景与明暗是两条独立的通知线）。
+  static void refreshSystemOverlay() => _setSystemOverlay(modeNotifier.value);
 
   // 主题缓存（v1.9.1 性能修复）
   //
@@ -276,10 +326,18 @@ class AppTheme {
   static int _lightKey = -1;
   static int _darkKey = -1;
 
+  /// 字体族进缓存 key 的低位扰动（2026-11-03）。
+  ///
+  /// 换字体必须让 `_buildTheme` 重跑，否则缓存命中会返回旧字体，
+  /// 用户会以为「字体设置没生效」。
+  static int get _fontKey => UiPrefs.fontFamily.hashCode & 0xFFFF;
+
   static ThemeData get lightTheme {
-    // 缓存 key 同时含主题色与背景色（背景色只影响浅色主题）
+    // 缓存 key 同时含主题色与背景色（2026-11-03：深色背景也进 key，
+    // 否则深色换背景色不生效 —— 缓存命中直接返回旧主题）
     final bg = backgroundNotifier.value?.toARGB32() ?? -1;
-    final key = primaryColor.toARGB32() ^ (bg * 97);
+    final bgDark = backgroundDarkNotifier.value?.toARGB32() ?? -1;
+    final key = primaryColor.toARGB32() ^ (bg * 97) ^ (bgDark * 31) ^ _fontKey;
     if (_lightCache == null || _lightKey != key) {
       _lightKey = key;
       _lightCache = _buildTheme(Brightness.light);
@@ -288,7 +346,7 @@ class AppTheme {
   }
 
   static ThemeData get darkTheme {
-    final key = primaryColor.toARGB32();
+    final key = primaryColor.toARGB32() ^ (backgroundDarkNotifier.value?.toARGB32() ?? -1) * 31 ^ _fontKey;
     if (_darkCache == null || _darkKey != key) {
       _darkKey = key;
       _darkCache = _buildTheme(Brightness.dark);
@@ -298,23 +356,55 @@ class AppTheme {
 
   static ThemeData _buildTheme(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
+    // 2026-11-03：全局字体族。空串 = 跟随系统默认中文字体。
+    final family = UiPrefs.fontFamily;
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
+      fontFamily: family.isEmpty ? null : family,
       colorScheme: ColorScheme.fromSeed(
         seedColor: primaryColor,
         brightness: brightness,
       ),
       scaffoldBackgroundColor: isDark
-          ? const Color(0xFF121212)
+          ? (backgroundDarkNotifier.value ?? scaffoldDark)
           : (backgroundNotifier.value ?? backgroundColor),
       // 2026-10-20：选择类弹窗统一纯白底（M3 默认会叠一层 surfaceTint，看起来发灰）
       dialogTheme: DialogTheme(
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          // v1.0.9：原来是写死的 20（= radiusLgRaw 的初始值，被抄成了常量）。
+          // 圆角调到最小时弹窗仍是大圆角，与全 App 的风格对着干，而且重启也不变。
+          borderRadius: BorderRadius.circular(radiusLg),
         ),
+      ),
+      // 🔴 2026-11-03 新增：全局 SnackBar 规范。
+      //
+      // 加它之前全库有 **11 份各写一遍的 `_toast()`**，行为分三种：
+      //   · 底部贴边（grade_query / my_study 等，最简版什么都没设）
+      //   · 悬浮 + margin(20,0,20,80) + 2s（home_page）
+      //   · 悬浮 + margin(20,0,20,80) + 1600ms（home_todo_list）
+      // 同一个 App 里同一条提示出现在三种位置，是「质感不一致」里最刺眼的一类。
+      // 这里定死一种：**悬浮、距底部 24、2 秒、圆角 14、不吃满宽度**。
+      // 注意不能设 margin 里的 bottom 太大 —— 底部导航高 56，24 刚好在它上方。
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: isDark
+            ? const Color(0xFF2C2C2C)
+            : const Color(0xFF1F2937),
+        contentTextStyle: const TextStyle(
+          fontSize: fontBody,
+          height: lineBody,
+          color: Colors.white,
+        ),
+        actionTextColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusMd),
+        ),
+        insetPadding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        elevation: 4,
+        showCloseIcon: false,
       ),
       appBarTheme: AppBarTheme(
         centerTitle: true,
@@ -368,13 +458,67 @@ class AppTheme {
     );
   }
 
-  static List<BoxShadow> get cardShadow => [
+  /// 卡片阴影（2026-11-03 改多层，替代 1px 硬边框）。
+  ///
+  /// 🔴 **为什么要改**：原来是单层 `alpha 0.04 / blur 20` —— 在浅色背景上
+  /// 几乎不可见，等于「没有纵深」；而 `AppCard` 同时又画了 1px
+  /// `borderColor`（浅色 `#E5E7EB`），那是一道硬线，等于「不轻盈」。
+  /// 两个都想占，结果两头不占：卡片既没有浮起来的层次，又有生硬的框。
+  ///
+  /// 现在按「隐形描边 + 双层纵深」来：
+  /// 1. `spreadRadius: 1 / blur 0` 做 6% 黑的一圈「隐形描边」，替代硬边框
+  ///    —— 它比 `Border.all` 柔和，且随圆角走，不会在深色下变脏。
+  /// 2. `0 1 2 -1` 贴边微影，负责「卡片有一点点厚度」。
+  /// 3. `0 2 4` 柔和外扩，负责「离开背景」。
+  ///
+  /// 深色模式下黑色阴影天然不可见，所以改用更深的黑 + 更大 blur，
+  /// 靠 `cardShadowFor(context.isDark)` 区分。
+  static List<BoxShadow> get cardShadow => cardShadowFor(false);
+
+  /// 🔴 2026-11-03 修「多处边框出现消失部分边线」：描边必须画在**内侧**。
+  ///
+  /// 上一版把「隐形描边」做成了 `BoxShadow(blurRadius: 0, spreadRadius: 1)`,
+  /// 也就是**盒子外侧扩 1px 的黑圈**。它有两个必坏场景：
+  /// 1. 父级有裁剪（`ListView` 默认 `clipBehavior: Clip.hardEdge`、
+  ///    `ClipRRect`、`Clip.hardEdge`）：外扩那 1px 直接被切掉 ——
+  ///    于是卡片「上边有、下边没」「左边有、右边没」，正是用户看到的样子。
+  /// 2. 相邻卡片贴得近时，两圈外扩阴影互相覆盖，中间那道边时有时无。
+  ///
+  /// `Border.all` 画在盒子**内侧**，无论父级怎么裁剪都不会丢。
+  /// 所以：**轮廓回退到 `Border.all`，阴影只负责纵深**。
+  /// 颜色不用 `borderColor`（那道硬线太脏），改用 6% 黑 / 深色 55% 黑，
+  /// 观感与上一版想要的「隐形描边」一致，但永远不丢边。
+  static Color cardStrokeColor(bool isDark) => isDark
+      ? Colors.black.withValues(alpha: 0.55)
+      : Colors.black.withValues(alpha: 0.06);
+
+  /// 按明暗返回卡片阴影（**只做纵深，不做描边**，描边见 [cardStrokeColor]）。
+  static List<BoxShadow> cardShadowFor(bool isDark) {
+    if (isDark) {
+      return [
         BoxShadow(
-          color: Colors.black.withValues(alpha: 0.04),
-          blurRadius: 20,
-          offset: const Offset(0, 4),
+          color: Colors.black.withValues(alpha: 0.30),
+          blurRadius: 6,
+          offset: const Offset(0, 2),
         ),
       ];
+    }
+    return [
+      // 贴边微影：-1 的 spread 让它只落在下沿，不会把四边都描黑。
+      BoxShadow(
+        color: Colors.black.withValues(alpha: 0.06),
+        blurRadius: 2,
+        spreadRadius: -1,
+        offset: const Offset(0, 1),
+      ),
+      // 柔和外扩：卡片「离开背景」的那点纵深。
+      BoxShadow(
+        color: Colors.black.withValues(alpha: 0.04),
+        blurRadius: 4,
+        offset: const Offset(0, 2),
+      ),
+    ];
+  }
 }
 
 /// 主题便捷读取（v1.0.0）。
@@ -393,11 +537,13 @@ extension AppThemeContext on BuildContext {
   /// 全库 50 处 `isDark ? const Color(0xFF1E1E1E) : Colors.white` 时读起来更贴切。
   Color get cardColor => surfaceColor;
 
-  /// 页面底色：暗色固定 0xFF121212；亮色跟随用户的「背景色」设置
-  /// （v1.6.3 修复：此前亮色硬编码 [AppTheme.backgroundColor]，导致换背景色
-  ///  只有首页生效 —— 现在全 App 的页面底色统一走这里）。
+  /// 页面底色：暗色默认 0xFF121212、亮色默认 [AppTheme.backgroundColor]，
+  /// 用户设了背景色就用用户的（2026-11-03 起**深色也生效**）。
+  ///
+  /// 约束：深色下如果用户挑的是浅色背景，页面会变成亮底 + 深字，
+  /// 那是用户自己的选择（设置页给的是深色系预设，正常不会撞上）。
   Color get scaffoldColor => isDark
-      ? AppTheme.scaffoldDark
+      ? (AppTheme.backgroundDarkNotifier.value ?? AppTheme.scaffoldDark)
       : (AppTheme.backgroundNotifier.value ?? AppTheme.backgroundColor);
 
   /// 主文字色：暗色白，亮色 0xFF1F2937。
@@ -411,4 +557,38 @@ extension AppThemeContext on BuildContext {
 
   /// 描边色：暗色 0xFF2A2A2A，亮色 0xFFE5E7EB。
   Color get borderColor => isDark ? AppTheme.borderDark : AppTheme.borderLight;
+
+  // ---- 语义色（2026-11-03 新增） ----------------------------------------
+  //
+  // 加这四个 getter 之前，想用一个「红/黄/绿/蓝」就得自己写
+  // `isDark ? const Color(0xFF...) : const Color(0xFF...)`，于是全库沉淀了
+  // 356 处硬编码 `Color(0xFF........)`，其中最高频的 6 个色**全都已有令牌**：
+  //   0xFF9CA3AF ×31 = textTertiaryLight
+  //   0xFF6B7280 ×31 = textSecondaryLight
+  //   0xFFEF4444 ×21 = danger
+  //   0xFFF59E0B ×15 = warning
+  //   0xFFE5E7EB ×14 = borderLight
+  //   0xFF10B981 ×13 = success
+  // 硬编码的原因不是不知道有令牌，而是**令牌只有亮色值、暗色要自己调**。
+  // 这四个 getter 把「暗色该怎么调」也一并定死，才谈得上收敛。
+  //
+  // 调法：亮色直接用原值；暗色提亮一档（暗背景上原来那档会发闷），
+  // 只有 `danger` 在暗色下略微降饱和 —— 纯 #EF4444 在黑底上刺眼。
+  Color get successColor =>
+      isDark ? const Color(0xFF34D399) : AppTheme.success;
+
+  Color get warningColor =>
+      isDark ? const Color(0xFFFBBF24) : AppTheme.warning;
+
+  Color get dangerColor =>
+      isDark ? const Color(0xFFF87171) : AppTheme.danger;
+
+  Color get infoColor => isDark ? const Color(0xFF60A5FA) : AppTheme.info;
+
+  /// 服务/工具图标底：主题色 10%（亮）/ 20%（暗）—— 全库最高频的一处手写。
+  Color get iconTintBg =>
+      AppTheme.primaryColor.withValues(alpha: isDark ? 0.20 : 0.10);
+
+  /// 卡片/弹窗里第二层的浅底色（比 [cardColor] 再深一档）。
+  Color get subtleFill => isDark ? AppTheme.borderDark : AppTheme.fillLight;
 }

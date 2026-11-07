@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:xiyuan_pocket/models/todo.dart';
 import 'package:xiyuan_pocket/pages/add_todo_dialog.dart';
 
 /// 新增待办的默认时刻。
@@ -158,6 +159,60 @@ void main() {
           now: now,
         ),
         isTrue,
+      );
+    });
+  });
+
+  group('课程待办不写自己的提醒时间（防重复响铃与误拦编辑）', () {
+    final dueAt = DateTime(2026, 11, 2, 8, 0);
+
+    Todo todo(String id) => Todo(
+          id: id,
+          title: '【课程】高等数学',
+          date: DateTime(2026, 11, 2),
+          dueAt: dueAt,
+        );
+
+    test('新建普通待办 → 带准点提醒', () {
+      expect(
+        AddTodoDialog.submitReminder(dueAt: dueAt, editTodo: null),
+        dueAt,
+      );
+    });
+
+    test('编辑普通待办 → 仍带准点提醒', () {
+      expect(
+        AddTodoDialog.submitReminder(
+          dueAt: dueAt,
+          editTodo: todo('1730000000000000'),
+        ),
+        dueAt,
+      );
+    });
+
+    test('🔴 编辑课程待办 → 不带提醒（上课提醒由 CourseReminderService 排）', () {
+      expect(
+        AddTodoDialog.submitReminder(
+          dueAt: dueAt,
+          editTodo: todo('course_5_20261102'),
+        ),
+        isNull,
+      );
+    });
+
+    test('🔴 课程待办且上课时刻已过 → 守卫不拦（改错别字可保存）', () {
+      // 课程待办的 reminderTime 留空，守卫遇到 null 直接放行。
+      expect(
+        AddTodoDialog.shouldBlockPastReminder(
+          reminder: AddTodoDialog.submitReminder(
+            dueAt: DateTime(2026, 11, 2, 8, 0),
+            editTodo: todo('course_5_20261102'),
+          ),
+          isEdit: true,
+          originalReminder: null,
+          now: DateTime(2026, 11, 2, 12, 0),
+        ),
+        isFalse,
       );
     });
   });

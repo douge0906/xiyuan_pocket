@@ -9,8 +9,6 @@ import android.net.Uri
 import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
-import es.antonborri.home_widget.HomeWidgetLaunchIntent
-import icu.wxxydouge.wxxy_pocket.MainActivity
 import icu.wxxydouge.wxxy_pocket.R
 
 /**
@@ -116,7 +114,19 @@ object TodayWidgetRenderer {
         }
         val ids = manager.getAppWidgetIds(ComponentName(context, providerClass))
         if (ids.isEmpty()) return
-        val data = WidgetDataStore.read(context)
+        // 2026-11-04 晚：这里原来是 `val data = WidgetDataStore.read(context)`。
+        // `WidgetDataStore.read` 内部只 catch `Exception`，一旦抛的是 `Error`
+        // （`NoSuchMethodError` / `ExceptionInInitializerError` 这类在
+        // 反序列化路径上很常见的家伙），异常会直接冲出本函数，
+        // 连下面逐个 id 的 try/catch 都轮不到 —— 表现就是桌面永远停在
+        // initialLayout 的默认文字，而 App 内自检看起来一切正常。
+        val data = try {
+            WidgetDataStore.read(context)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "WidgetDataStore.read($size)", t)
+            null
+        }
+        var applied = 0
         for (id in ids) {
             // 拿真实高度来渲染 —— 桌面格子多高就放几门课。
             // 以前写死条数，格子矮的时候后面的课程会被裁掉（用户反馈过），
@@ -127,15 +137,51 @@ object TodayWidgetRenderer {
             } catch (_: Exception) {
                 defaultHeightDp(size)
             }
-            manager.updateAppWidget(id, build(context, data, size, heightDp))
+            // 2026-11-04（用户 m20455 #7）：逐个 id 兜底。
+            // 一个组件渲染失败不能连带其它组件一起不刷新，
+            // 更不能把异常抛给 Provider 让 App 闪退。
+            try {
+                manager.updateAppWidget(id, build(context, data, size, heightDp))
+                applied++
+            } catch (t: Throwable) {
+                WidgetDiagnostics.recordError(context, "updateAppWidget($size, id=$id)", t)
+                // 2026-11-04 晚：build() 抛异常时，`updateAppWidget` 根本轮不到执行，
+                // 桌面会一动不动地停在 initialLayout 的默认文字上 —— 用户看到的是
+                // 「不显示、点不了」，我们这边只有一条没人会去看的日志。
+                // 这里改推一份**只写文字**的兜底视图：不用 setInt、不挂 PendingIntent，
+                // 全是 RemoteViews 最基础的 setTextViewText，几乎不可能再失败。
+                // 这样桌面本身会把错误原话打出来，不用打开 App 也能定位。
+                try {
+                    manager.updateAppWidget(id, buildFallback(context, size, t))
+                } catch (_: Throwable) {
+                    // 连兜底都失败就只能靠日志了
+                }
+            }
         }
+        // 把「真的调成功了几个」也记下来（2026-11-04 晚）。
+        // 自检页原来只有「实例数」，看到 3 个实例也无法判断 updateAppWidget
+        // 到底调通没调通 —— 这两件事失败时用户看到的画面完全一样。
+        WidgetDiagnostics.recordApplied(context, size.name, applied, ids.size)
     }
 
     /** 更新全部三个尺寸的小部件（App 启动 / 数据变更时调用）。 */
     fun updateAll(context: Context) {
-        updateAll(context, Size.SMALL)
-        updateAll(context, Size.MEDIUM)
-        updateAll(context, Size.LARGE)
+        // 三个尺寸各自兜底：某一类组件的数据脏了不该让另外两类也不刷新。
+        try {
+            updateAll(context, Size.SMALL)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "updateAll(SMALL)", t)
+        }
+        try {
+            updateAll(context, Size.MEDIUM)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "updateAll(MEDIUM)", t)
+        }
+        try {
+            updateAll(context, Size.LARGE)
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(context, "updateAll(LARGE)", t)
+        }
         try {
             WidgetAlarmScheduler.scheduleNext(context)
         } catch (_: Exception) {
@@ -161,20 +207,53 @@ object TodayWidgetRenderer {
         }
     }
 
-    /// 点击小组件 → **直达课表页**（2026-10-12）。
+    /// 点击小组件 → **直达课表页**（2026-10-12；2026-11-05 换成独立 requestCode）。
     ///
-    /// 走 home_widget 的 launch intent：Dart 侧用
-    /// `HomeWidget.initiallyLaunchedFromHomeWidget()` / `widgetClicked` 拿到
-    /// 这个 URI，再导航到课表页。以前是打开 App 首页，用户还得自己点进去。
+    /// 2026-11-05（用户 m24210）改走 [LaunchIntents.schedule]：
+    /// 插件的 `HomeWidgetLaunchIntent.getActivity` 的 `requestCode` 恒为 0，
+    /// 三种课表尺寸 + 考试 + 校园卡 + 倒数日共用同一个 PendingIntent，
+    /// `FLAG_UPDATE_CURRENT` 让后创建者覆盖先创建者。改成每类独立 requestCode
+    /// 之后互不覆盖，且带 `FLAG_ACTIVITY_NEW_TASK/CLEAR_TOP/SINGLE_TOP`
+    /// 与 Android 14+ 的后台启动许可。
     private fun pendingOpenApp(context: Context): PendingIntent {
-        return HomeWidgetLaunchIntent.getActivity(
-            context,
-            MainActivity::class.java,
-            Uri.parse("homewidget://course"),
-        )
+        return LaunchIntents.schedule(context)
     }
 
     // ---------------- 皮肤 / 字号 / 显示开关 ----------------
+
+    /// 逐个兜底的反射调用（2026-11-04 晚，用户 m21701 截图取证）。
+    ///
+    /// 为什么必须这样：`buildSmall/buildMedium/buildLarge` 原来把
+    /// `setOnClickPendingIntent` / `applySkin` / `setColorFilter` 全排在
+    /// **写文字之前**，其中任何一项抛异常，`updateAll` 里的 try/catch 会把
+    /// **整份 RemoteViews 一起丢掉** —— 文字、点击、皮肤统统没写上去，
+    /// 桌面就永远停在 layout XML 的 `android:text` 默认值。
+    /// 用户看到的就是「不闪退、不显示数据、点也没反应」。
+    ///
+    /// 现在每个特性单独兜底：失败了只丢那一个，文字一定画得上去。
+    private inline fun safe(label: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            WidgetDiagnostics.recordError(lastContext.get(), "build.$label", t)
+        }
+    }
+
+    /// 最近一次 build 用的 Context，仅给 [safe] 报错用（build 是同步调用，无并发）。
+    private val lastContext = ThreadLocal<Context>()
+
+    /// 包一层记 Context，再跑 [block]。
+    ///
+    /// 必须是 `inline`：三个 build 函数体里大量 `return views`（空态 / stale 分支），
+    /// 非 inline 的 lambda 里 `return` 是非局部返回，编译不过。
+    private inline fun <T> withContext(context: Context, block: () -> T): T {
+        lastContext.set(context)
+        try {
+            return block()
+        } finally {
+            lastContext.remove()
+        }
+    }
 
     /// 卡片底 + 标题/正文颜色 + 主题色图标，一次性套上。
     private fun applySkin(views: RemoteViews, dark: Boolean) {
@@ -182,6 +261,41 @@ object TodayWidgetRenderer {
     }
 
     private fun scaled(prefs: WidgetPrefs, base: Float): Float = base * prefs.fontScale
+
+    /// **只写文字**的兜底视图：`build()` 抛异常时顶上去。
+    ///
+    /// 刻意只用 `setTextViewText`（RemoteViews 里最基础、从未出问题的一个方法），
+    /// 不用 `setInt` 反射、不挂 `PendingIntent`、不改背景。
+    /// 目的是让错误信息直接出现在桌面上，而不是埋在 SharedPreferences 里没人看。
+    private fun buildFallback(context: Context, size: Size, error: Throwable): RemoteViews {
+        val brief = "${error.javaClass.simpleName}: ${error.message}".take(80)
+        val v = when (size) {
+            Size.SMALL -> {
+                val x = RemoteViews(context.packageName, R.layout.widget_small)
+                x.setTextViewText(R.id.widget_next, "组件渲染失败")
+                x.setTextViewText(R.id.widget_next_time, brief)
+                x.setTextViewText(R.id.widget_next_place, "点我打开 App")
+                x
+            }
+            else -> {
+                val layout = if (size == Size.MEDIUM) R.layout.widget_medium else R.layout.widget_large
+                val x = RemoteViews(context.packageName, layout)
+                x.setTextViewText(R.id.widget_title, "组件渲染失败")
+                x.setTextViewText(R.id.widget_empty, "$brief · 点我打开 App")
+                x
+            }
+        }
+        // 2026-11-05（用户 m24210）：兜底视图**也要能点**。
+        // 原来这里完全不挂点击 → 渲染失败的那个组件除了显示一行错误，
+        // 连「点一下打开 App」都做不到，用户被困在桌面上看一行错误文字。
+        // 单独 try：PendingIntent 若也构造不出来，至少保证文字还在。
+        try {
+            v.setOnClickPendingIntent(R.id.widget_root, pendingOpenApp(context))
+        } catch (_: Throwable) {
+            // 连 PendingIntent 都建不出来时，只能保证错误文字可见
+        }
+        return v
+    }
 
     private fun setSize(views: RemoteViews, id: Int, sp: Float) {
         views.setTextViewTextSize(id, TypedValue.COMPLEX_UNIT_SP, sp)
@@ -204,12 +318,17 @@ object TodayWidgetRenderer {
 
     // ---------------- SMALL：下一节课（三行）----------------
 
-    private fun buildSmall(context: Context, data: WidgetTodayData?): RemoteViews {
+    private fun buildSmall(context: Context, data: WidgetTodayData?): RemoteViews = withContext(context) {
         val prefs = prefsOf(data)
         val dark = prefs.useDark(context)
         val views = RemoteViews(context.packageName, R.layout.widget_small)
+        // 🔴 2026-11-05（用户 m24210）：**点击不能兜在 safe 里**。
+        //   它一旦抛异常，「文字正常显示但点了没反应」就是用户看到的画面 ——
+        //   数据是好的，所以自检也查不出来。点击是本组件的基本功能，
+        //   必须让它失败时直接走 updateAll 里的兜底视图，而不是静默吞掉。
         views.setOnClickPendingIntent(R.id.widget_root, pendingOpenApp(context))
-        applySkin(views, dark)
+        // 皮肤是「有更好、没有也能看」的增强，兜住，别连累文字。
+        safe("skin") { applySkin(views, dark) }
 
         val weekTitle = if (prefs.showWeek) buildTitle(data) else ""
         val inkC = ink(dark)
@@ -222,7 +341,7 @@ object TodayWidgetRenderer {
         //（属「假设置」）。现在给左上角图标着色，选了就看得见。
         // 深色皮肤下要提亮：默认主题色是墨黑（#1F2937），落在深色卡片（#1E1E1E）
         // 上几乎看不见；用户选的彩色（蓝/绿/紫…）亮度够就保持原样。
-        views.setInt(R.id.widget_icon, "setColorFilter", iconTint(prefs, dark))
+        safe("iconTint") { views.setInt(R.id.widget_icon, "setColorFilter", iconTint(prefs, dark)) }
         setSize(views, R.id.widget_next, scaled(prefs, 12f))
         setSize(views, R.id.widget_next_time, scaled(prefs, 9.5f))
         setSize(views, R.id.widget_next_place, scaled(prefs, 9.5f))
@@ -283,12 +402,14 @@ object TodayWidgetRenderer {
 
     // ---------------- MEDIUM：单列列表 ----------------
 
-    private fun buildMedium(context: Context, data: WidgetTodayData?, heightDp: Int): RemoteViews {
+    private fun buildMedium(context: Context, data: WidgetTodayData?, heightDp: Int): RemoteViews = withContext(context) {
         val prefs = prefsOf(data)
         val dark = prefs.useDark(context)
         val views = RemoteViews(context.packageName, R.layout.widget_medium)
+        // 点击与皮肤都是「有更好、没有也能看」的增强，先兜住，别连累文字。
+        // 见 buildSmall 同处：点击不兜 safe，失败就走兜底视图。
         views.setOnClickPendingIntent(R.id.widget_root, pendingOpenApp(context))
-        applySkin(views, dark)
+        safe("skin") { applySkin(views, dark) }
         views.setTextColor(R.id.widget_title, ink(dark))
         views.setTextColor(R.id.widget_more, moreText(dark))
         views.setTextColor(R.id.widget_empty, subText(dark))
@@ -351,12 +472,14 @@ object TodayWidgetRenderer {
 
     // ---------------- LARGE：三列列表 ----------------
 
-    private fun buildLarge(context: Context, data: WidgetTodayData?, heightDp: Int): RemoteViews {
+    private fun buildLarge(context: Context, data: WidgetTodayData?, heightDp: Int): RemoteViews = withContext(context) {
         val prefs = prefsOf(data)
         val dark = prefs.useDark(context)
         val views = RemoteViews(context.packageName, R.layout.widget_large)
+        // 点击与皮肤都是「有更好、没有也能看」的增强，先兜住，别连累文字。
+        // 见 buildSmall 同处：点击不兜 safe，失败就走兜底视图。
         views.setOnClickPendingIntent(R.id.widget_root, pendingOpenApp(context))
-        applySkin(views, dark)
+        safe("skin") { applySkin(views, dark) }
         views.setTextColor(R.id.widget_title, ink(dark))
         views.setTextColor(R.id.widget_more, moreText(dark))
         views.setTextColor(R.id.widget_empty, subText(dark))

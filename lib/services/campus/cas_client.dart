@@ -50,6 +50,11 @@ class CasClient {
   static const String captchaFailed = 'captcha_failed';
   /// 账号被临时锁定 / 尝试次数过多（不能重试，重试只会延长锁定）
   static const String locked = 'locked';
+
+  /// 本地节流拦下的（8 秒内同账号重复登录）。**不是网络错误** ——
+  /// 归到 [networkError] 会让调用方无法区分「等几秒再来」和「网断了」，
+  /// `dorm_service` 还会把它说成「登录失败(账号)」。
+  static const String throttled = 'throttled';
   static const String networkError = 'network_error';
 
   /// CAS 登录并拿到 TGT。返回 (状态, TGT 或 null, 说明)。
@@ -71,7 +76,7 @@ class CasClient {
     if (username == _throttleUser &&
         startedAt.difference(_throttleAt) < const Duration(seconds: 8)) {
       return const CasLoginResult(
-          networkError, null, '登录操作过于频繁，请等几秒再试');
+          throttled, null, '登录操作过于频繁，请等几秒再试');
     }
     _throttleUser = username;
     _throttleAt = startedAt;
@@ -185,10 +190,16 @@ class CasClient {
     // service 本身可能带 query（WebVPN 的 `login?cas_login=true`），
     // 此时必须用 `&` 追加，否则会拼出两个 `?`、ticket 丢失。
     final sep = service.contains('?') ? '&' : '?';
-    await session.get(
+    final landing = await session.get(
       '$service${sep}ticket=${Uri.encodeComponent(st)}',
       headers: {'Referer': '$casBase/'},
     );
+    // 🔴 必须校验 SSO 落地页，此前这里直接 `return true`。
+    // 后果链：教务 302 回登录页 / 500 时 `_sendRaw` 仍正常收尾（url 里带 login），
+    // 但 `_doLogin` 会把这套**没登录成功的 cookie** 存进 secure storage；
+    // 之后任何业务页都抛 needRelogin → 重登 → 又走这一段 → 又假成功。
+    // 用户看到的是「登录成功，但功能区永远说过期，重登也没用」，且没有恢复路径。
+    if (!landing.ok || landing.looksLikeLogin) return false;
     return true;
   }
 

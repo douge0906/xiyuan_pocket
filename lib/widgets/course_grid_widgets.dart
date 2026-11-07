@@ -188,18 +188,26 @@ class CourseTimeCell extends StatelessWidget {
             //          字号变大后文字撑破格子（用户反馈的课表溢出）。恢复 11 并显式写行高。
             // v1.4.0：三行文字统一 maxLines:1 —— 系统字号放大时「08:00」可能换行撑破
             //         格子（widget 测试实测 Ahem 宽字体下溢出 23px），单行裁剪更稳。
+            // 🔴 2026-11-04 审查 P1：`maxLines: 1` 只阻止换行、**不限制高度**，
+            //    而 `Text` 默认跟随全局 textScaler（设置里 14~24 档 → 0.78~1.33）。
+            //    三行内容高 3×14+2 = 44px，行高被「日期栏拉到 88」或「字号放大」
+            //    压到 44 以下时，每行都会画黄黑 overflow 条纹。时间列是**布局
+            //    固定尺寸**，不该跟随字号缩放 —— 显式关掉 textScaler。
             maxLines: 1,
+            textScaler: TextScaler.noScaling,
             style: TextStyle(fontSize: AppTheme.fontCaption, fontWeight: FontWeight.w600, color: fg, height: 14 / 11),
           ),
           const SizedBox(height: 2),
           Text(
             start,
             maxLines: 1,
+            textScaler: TextScaler.noScaling,
             style: TextStyle(fontSize: AppTheme.fontCaption, color: fg, height: 14 / 11),
           ),
           Text(
             end,
             maxLines: 1,
+            textScaler: TextScaler.noScaling,
             style: TextStyle(fontSize: AppTheme.fontCaption, color: subFg, height: 14 / 11),
           ),
         ],
@@ -317,6 +325,19 @@ class CourseNumberChip extends StatelessWidget {
   }
 }
 
+/// 把「第 N 节」映射到时段块列表里的下标。
+///
+/// 🔴 v1.0.9：此前课表用 `blocks.indexWhere((b) => b.start == startSlot)` +
+/// `blocks.lastIndexWhere((b) => b.end == endSlot)` 精确匹配首尾。用户把时段块
+/// 改成 `[1-4]` 这类合并块后，`startSlot=2` 的课永远找不到 → 整门课静默消失。
+/// 改成**区间命中**：起始取第一个覆盖它的块，结束取最后一个覆盖它的块。
+int _indexForSlot(List<CourseBlock> blocks, int slot, {required bool isEnd}) {
+  if (isEnd) {
+    return blocks.lastIndexWhere((b) => b.start <= slot && slot <= b.end);
+  }
+  return blocks.indexWhere((b) => b.start <= slot && slot <= b.end);
+}
+
 class CourseWeekGrid extends StatelessWidget {
   final List<CourseBlock> blocks;
   final int todayWeekday;
@@ -382,14 +403,25 @@ class CourseWeekGrid extends StatelessWidget {
         // —— 聚成「冲突组」：组内轮播显示 + 点击进解决弹窗。按星期收集后，
         // 组内按节次区间重叠合并（含完全重叠：同起止的两门）。
         final byWeekday = <int,
-            List<({Course course, int startIdx, int endIdx})>>{};
+            List<({Course course, int startIdx, int endIdx, bool active})>>{};
         for (final course in courses) {
           // v1.1.0：「显示非本周课程」开启时不再直接跳过非本周课程，改为淡化显示
           final activeThisWeek = course.isActiveOnWeek(selectedWeek);
           if (!activeThisWeek && !CourseStorage.showOtherWeeksCache) continue;
-          final startIdx = blocks.indexWhere((b) => b.start == course.startSlot);
-          final endIdx = blocks.lastIndexWhere((b) => b.end == course.endSlot);
-          if (startIdx == -1 || endIdx == -1 || endIdx < startIdx) continue;
+          // v1.0.9：改成**区间命中**而不是「首尾精确等于」。自定义时段块可以被
+          // 用户改成 [1-4] 这种合并块，此时 startSlot=2 的课用 `b.start == 2`
+          // 永远找不到 → 整门课静默从表上消失（历史事故的同一类）。
+          final startIdx = _indexForSlot(blocks, course.startSlot, isEnd: false);
+          final endIdx = _indexForSlot(blocks, course.endSlot, isEnd: true);
+          if (startIdx == -1 || endIdx == -1 || endIdx < startIdx) {
+            // 越界数据不再一声不响地丢掉：调试期打日志，便于定位脏数据来源。
+            assert(() {
+              debugPrint('[course-grid] 丢弃越界课程 ${course.id} '
+                  '${course.name} slot=${course.startSlot}-${course.endSlot}');
+              return true;
+            }());
+            continue;
+          }
 
           // 🔴 统一走 [Course.occursOn]：它是「某门课在第 N 周的星期 W 是否上课」
           //    的**唯一真相源**（课表渲染 / 提醒 / 待办 / 小组件共用）。
@@ -397,27 +429,66 @@ class CourseWeekGrid extends StatelessWidget {
           //    之前这里自己解析 weekday 哨兵（0=每天 / -1=工作日），而课程表单
           //    保存时会把哨兵改写成 1（pattern 却是 daily/workday）→
           //    网格只画周一，而提醒按 7 天算 → 同一门课「表上 1 天、提醒 7 天」。
+          // 🔴 2026-11-04（用户 m20455 #1）：非本周课程必须单独取星期。
+          //    `occursOn` 内部**第一行就卡 `isActiveOnWeek(week)`**，非本周课程
+          //    恒返回 false → weekdays 为空 → 这门课压根不进 byWeekday。
+          //    于是「显示非本周课程」开关即使打开也什么都不会出现，
+          //    预览里更是永远只有本周课。这里按 pattern 直接取候选星期。
           final weekdays = <int>[];
-          for (var wd = 1; wd <= 7; wd++) {
-            if (course.occursOn(wd, selectedWeek)) weekdays.add(wd);
+          if (activeThisWeek) {
+            for (var wd = 1; wd <= 7; wd++) {
+              if (course.occursOn(wd, selectedWeek)) weekdays.add(wd);
+            }
+          } else {
+            switch (course.pattern) {
+              case CoursePattern.fixed:
+                if (course.weekday >= 1 && course.weekday <= 7) {
+                  weekdays.add(course.weekday);
+                }
+              case CoursePattern.daily:
+                weekdays.addAll(const [1, 2, 3, 4, 5, 6, 7]);
+              case CoursePattern.workday:
+                weekdays.addAll(const [1, 2, 3, 4, 5]);
+            }
           }
           for (final wd in weekdays) {
-            byWeekday
-                .putIfAbsent(wd, () => [])
-                .add((course: course, startIdx: startIdx, endIdx: endIdx));
+            byWeekday.putIfAbsent(wd, () => []).add((
+              course: course,
+              startIdx: startIdx,
+              endIdx: endIdx,
+              active: activeThisWeek,
+            ));
           }
         }
         for (final entry in byWeekday.entries) {
           final wd = entry.key;
           final items = entry.value..sort((a, b) => a.startIdx - b.startIdx);
-          final groups =
-              <List<({Course course, int startIdx, int endIdx})>>[];
+          // 🔴 2026-11-04（用户 m20950 #4）：「显示的非本周课程无法触发冲突切换」。
+          //    上一轮为了让非本周课不参与冲突判定，把它们**各自单独成组** →
+          //    与本周课同格时两张卡上下叠死（后面的盖住前面的），既轮播不了
+          //    也点不到下面那张，看起来就是「卡在那里、点不动」。
+          //    现在改为：同一时段的所有课（含非本周）**统一参与分组**，
+          //    同格多门就走 ConflictCell 轮播 —— 用户能逐门切换查看。
+          //    为免误删，冲突弹窗里给非本周课单独打「非本周」标签（见
+          //    `course_table_home_page.dart` 的 `_conflictGroup`）。
+          final groups = <List<
+              ({Course course, int startIdx, int endIdx, bool active})>>[];
           for (final it in items) {
-            if (groups.isNotEmpty && it.startIdx <= groups.last.last.endIdx) {
-              groups.last.add(it);
-            } else {
-              groups.add([it]);
+            // 合并判据必须用「组内最大 endIdx」，不能用「组内最后一项的 endIdx」：
+            // A(节1-4) C(节2) D(节3) 按 startIdx 排序后是 [A,C]，最后一项 C 的
+            // endIdx=1，于是 D 的 2 <= 1 判为不重叠 → D 另起一组，与 A 实际
+            // 重叠 → 两张卡片上下叠死，且 D 那组漏在冲突弹窗之外。
+            if (groups.isNotEmpty) {
+              var maxEnd = -1;
+              for (final e in groups.last) {
+                if (e.endIdx > maxEnd) maxEnd = e.endIdx;
+              }
+              if (it.startIdx <= maxEnd) {
+                groups.last.add(it);
+                continue;
+              }
             }
+            groups.add([it]);
           }
           for (final g in groups) {
             final top = g.first.startIdx * (rowHeight + dividerHeight);
@@ -426,6 +497,9 @@ class CourseWeekGrid extends StatelessWidget {
                 (maxEnd - g.first.startIdx) * dividerHeight;
             final cellCourses = g.map((e) => e.course).toList();
             overlays.add(Positioned(
+              // 加 key：组增删/重排时避免 State 串到别的格子（轮播停在别人的 _i）
+              key: ValueKey('cell-$wd-${g.first.startIdx}-${g.first.endIdx}-'
+                  '${cellCourses.first.id}'),
               top: top,
               left: timeColW + (wd - 1) * dayWidth,
               width: dayWidth,
@@ -439,6 +513,10 @@ class CourseWeekGrid extends StatelessWidget {
                   : ConflictCell(
                       courses: cellCourses,
                       selectedWeek: selectedWeek,
+                      // 点击先看详情（用户以为是卡片）；解决冲突走长按，
+                      // 避免「想看一眼是什么课，结果直接被问要不要删掉」。
+                      // 2026-11-04：传**当前轮播到的那门**，不是恒取 first。
+                      onOpenDetailOf: (c) => onOpenDetail(c),
                       onResolve: () => onResolveConflict(cellCourses),
                     ),
             ));
@@ -533,6 +611,9 @@ class CourseCardWidget extends StatelessWidget {
   final Course course;
   final VoidCallback? onTap;
 
+  /// 长按（v1.0.9）：冲突格里长按 = 解决冲突，点击 = 看详情。
+  final VoidCallback? onLongPress;
+
   /// 是否为「非本周课程」（v1.1.0）：淡化显示，仅在设置里开启「显示非本周课程」时出现。
   final bool dimmed;
 
@@ -540,6 +621,7 @@ class CourseCardWidget extends StatelessWidget {
     super.key,
     required this.course,
     this.onTap,
+    this.onLongPress,
     this.dimmed = false,
   });
 
@@ -569,8 +651,17 @@ class CourseCardWidget extends StatelessWidget {
     var surface = dimmed
         ? otherWeekGrayFor(bg, CourseStorage.otherWeeksDimCache, isDark)
         : bg;
+    // 🔴 2026-11-04 审查 P2：文字色必须按**实际看到的颜色**选。
+    //    原来直接把带 alpha 的 `surface` 丢给 `textOnColor`，而它只读
+    //    `.r/.g/.b`（忽略 alpha）→ 半透明卡片按「纯色」取字色，实际叠在
+    //    页面背景上可能整体更暗/更亮，出现白字压浅底。
+    //    先按卡片透明度合成到页面底色上，再据此选字色。
+    final pageBg = context.scaffoldColor;
+    final solid = surface.a < 1.0
+        ? Color.alphaBlend(surface, pageBg)
+        : surface;
+    final fg = textOnColor(solid);
     if (opacity < 1.0) surface = surface.withValues(alpha: opacity);
-    final fg = textOnColor(surface);
 
     Widget card = Container(
       width: double.infinity,
@@ -612,8 +703,13 @@ class CourseCardWidget extends StatelessWidget {
                 final availH =
                     box.maxHeight.isFinite ? box.maxHeight : 240.0;
                 final scale = CourseStorage.cardFontScaleCache;
-                final nameLineH = 11.5 * scale * 1.25;
-                final subLineH = 10.5 * scale * 1.2;
+                // 🔴 2026-11-04（用户 m20128 #1）：课程块是**固定尺寸的格子**，
+                //    里面每一行 Text 都显式 `TextScaler.noScaling`，所以行高估算
+                //    绝不能乘全局 textScaler —— 上一版乘了，估算比实际高，
+                //    收缩循环先把教室行砍成 0（「科教中心313」两行直接消失）。
+                //    估算与实际渲染必须同一口径：字号 × 行高系数，不乘缩放。
+                final nameLineH = AppTheme.fontSmall * scale * 1.25;
+                final subLineH = AppTheme.fontCaption * scale * 1.2;
                 const gap = 1.5;
                 final overflow = switch (CourseStorage.cardOverflowCache) {
                   'clip' => TextOverflow.clip,
@@ -713,6 +809,8 @@ class CourseCardWidget extends StatelessWidget {
                           height: 1.25),
                       maxLines: lines,
                       overflow: overflow,
+                      // 固定格子：不跟随系统字号缩放，否则估算了也控制不住
+                      textScaler: TextScaler.noScaling,
                     ));
                   } else if (key == 'classroom') {
                     children.add(Text(
@@ -722,6 +820,7 @@ class CourseCardWidget extends StatelessWidget {
                       // 行数按实际文本换行计算，不设固定 2 行上限。
                       maxLines: lines,
                       overflow: overflow,
+                      textScaler: TextScaler.noScaling,
                     ));
                   } else {
                     children.add(Text(
@@ -730,14 +829,22 @@ class CourseCardWidget extends StatelessWidget {
                           fontSize: AppTheme.fontCaption * scale, color: fg, height: 1.2),
                       maxLines: lines,
                       overflow: overflow,
+                      textScaler: TextScaler.noScaling,
                     ));
                   }
                 }
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  children: children,
+                // 🔴 2026-11-04 审查 P2：上面的 `break` 用尽所有收缩档后，
+                //    若 `usedHeight()` 仍大于 `availH`（行高很小 / blockPad
+                //    拉满 / 字号放大），直接返回 Column 会画出卡片边界，再被
+                //    外层 `ClipRRect` 硬切半行 —— 表现为「课程名下半截被削掉」。
+                //    包一层 ClipRect 保证最多只丢整行，不越界绘制。
+                return ClipRect(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    children: children,
+                  ),
                 );
               },
             ),
@@ -763,6 +870,7 @@ class CourseCardWidget extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         margin: EdgeInsets.all(outerMargin),
         child: card,
@@ -876,12 +984,23 @@ class ConflictCell extends StatefulWidget {
     super.key,
     required this.courses,
     required this.selectedWeek,
+    required this.onOpenDetailOf,
     required this.onResolve,
   });
 
   /// 该时段重叠的课程（>=2 门，可能混合「教务 + 手动」两种来源）。
   final List<Course> courses;
   final int selectedWeek;
+
+  /// 点击卡片 → 看**当前轮播到的这门**的详情。
+  ///
+  /// 🔴 2026-11-04 审查 P1：原来这里是无参 `VoidCallback`，调用点传的是
+  ///    `() => onOpenDetail(cellCourses.first)` —— 而卡片每 3 秒轮播一门，
+  ///    用户看到的是 B 的课名和教室，点开却是 A 的详情；若接着在详情里
+  ///    点「删除」，删的是 A。必须把轮播到的那门传出去。
+  final void Function(Course course) onOpenDetailOf;
+
+  /// 长按卡片 → 打开冲突解决弹窗。
   final VoidCallback onResolve;
 
   @override
@@ -908,11 +1027,41 @@ class _ConflictCellState extends State<ConflictCell>
   void initState() {
     super.initState();
     _tick.forward();
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
     _timer = Timer.periodic(_period, (_) {
       if (!mounted) return;
+      if (widget.courses.isEmpty) return;
+      // 🔴 2026-11-04 审查 P2：`IndexedStack` 会把已访问过的页全部留在树里，
+      //    只是不绘制。定时器照样每 3 秒 setState → 整棵不可见子树重排重布局，
+      //    在后台白耗电。`TickerMode` 只停 Ticker（动画），停不了 `Timer`，
+      //    所以这里主动查一次：页面不在前台就跳过这一拍（定时器保留，
+      //    回到前台后自然接着轮播）。
+      if (!TickerMode.of(context)) return;
       setState(() => _i = (_i + 1) % widget.courses.length);
       _tick.forward(from: 0); // 进度条重置，与下一次切换对齐
     });
+  }
+
+  /// 🔴 v1.0.9：组内的课被删掉后（用户在冲突弹窗里删一门），State 会被复用，
+  ///    `_i` 可能已经越界 → 下一帧 build 直接抛
+  ///    `RangeError (index): Invalid value: Not in inclusive range 0..1`。
+  ///    这是子智能体审查抓到的 P0：3 门删成 2 门时必崩。
+  @override
+  void didUpdateWidget(covariant ConflictCell old) {
+    super.didUpdateWidget(old);
+    if (widget.courses.isEmpty) {
+      _i = 0;
+      return;
+    }
+    if (_i >= widget.courses.length) _i = 0;
+    if (old.courses.length != widget.courses.length) {
+      _startTimer();
+      _tick.forward(from: 0);
+    }
   }
 
   @override
@@ -924,17 +1073,38 @@ class _ConflictCellState extends State<ConflictCell>
 
   @override
   Widget build(BuildContext context) {
-    final course = widget.courses[_i];
+    if (widget.courses.isEmpty) return const SizedBox.shrink();
+    // 双保险：即便 didUpdateWidget 尚未跑到，也保证下标不越界。
+    final course = widget.courses[_i % widget.courses.length];
+    // 进度条与圆点：用「卡片底色的加深版」。
+    //
+    // 🔴 2026-11-04（第二次修正）：上一版用 `textOnColor(卡片底色)` 取对比色 ——
+    //    coursePalette 24 色全浅 → textOnColor 一律返回 textPrimaryLight(#1F2937)，
+    //    于是在浅色课程卡上画出了一条**近黑色**的进度条，用户反馈
+    //    「冲突加载进度条也是黑的」（2026-11-04 m18409 #2）。
+    //    改成叠 32% 黑：同色相、深一档，看得清但不抢眼。
+    final cardBase =
+        courseColorFor(course.colorValue, CourseStorage.schemeCache);
+    final trackFg = Color.alphaBlend(Colors.black.withValues(alpha: 0.32), cardBase);
     return Stack(
       children: [
         Positioned.fill(
           child: CourseCardWidget(
             course: course,
-            onTap: widget.onResolve,
+            // v1.0.9：点击看详情、长按才解决冲突 —— 此前整格都是「解决冲突」，
+            // 用户想看是什么课，却直接拿到删除入口。
+            // 2026-11-04：把**轮播到的那门**传出去，不再恒为 first。
+            onTap: () => widget.onOpenDetailOf(course),
+            onLongPress: widget.onResolve,
             dimmed: !course.isActiveOnWeek(widget.selectedWeek),
           ),
         ),
         // 顶部倒计时进度条（当前门的剩余停留时间）
+        //
+        // 🔴 2026-11-04 审查 P2：原来写死纯白。课程卡底色来自
+        //    `coursePalette`（24 色**全浅**），白条叠在浅色卡上对比度约
+        //    1.1:1，几乎看不见 —— 用户只觉得「冲突格在闪但不知道为什么」。
+        //    改按卡片实际底色的对比色绘制。
         Positioned(
           top: 0,
           left: 0,
@@ -945,9 +1115,9 @@ class _ConflictCellState extends State<ConflictCell>
               builder: (_, __) => LinearProgressIndicator(
                 value: _tick.value,
                 minHeight: 3,
-                backgroundColor: Colors.white.withValues(alpha: 0.25),
+                backgroundColor: trackFg.withValues(alpha: 0.25),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                    Colors.white.withValues(alpha: 0.95)),
+                    trackFg.withValues(alpha: 0.95)),
               ),
             ),
           ),
@@ -958,23 +1128,47 @@ class _ConflictCellState extends State<ConflictCell>
           right: 0,
           bottom: 4,
           child: IgnorePointer(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (int i = 0; i < widget.courses.length; i++)
-                  Container(
-                    width: 6,
-                    height: 6,
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: i == _i
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.45),
+            // 🔴 2026-11-04 审查 P2：每颗圆点占 6+2×2 = 10px，而格子可用宽度
+            //    约 45px（360dp 屏、默认 48 时间列）→ **7 门及以上必然
+            //    RenderFlex overflow**，冲突格本身允许任意门数。
+            //    超过 5 门时改成「3/7」文字，宽高都受控。
+            child: widget.courses.length > 5
+                ? Center(
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: trackFg.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '${_i + 1}/${widget.courses.length}',
+                        textScaler: TextScaler.noScaling,
+                        style: TextStyle(
+                            fontSize: 9,
+                            height: 1.1,
+                            fontWeight: FontWeight.w600,
+                            color: trackFg),
+                      ),
                     ),
+                  )
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (int i = 0; i < widget.courses.length; i++)
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.symmetric(horizontal: 2),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i == _i
+                                ? trackFg
+                                : trackFg.withValues(alpha: 0.45),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
           ),
         ),
       ],

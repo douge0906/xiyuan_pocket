@@ -9,6 +9,8 @@ import '../pages/tools/resource_center_page.dart';
 import '../pages/tools/xyl_calendar_page.dart';
 import '../pages/tools/textbook_page.dart';
 import '../pages/tools/campus_map_page.dart';
+import '../pages/tools/handbook_page.dart';
+import '../pages/countdown_page.dart';
 
 /// 全 App 共用的工具跳转逻辑（服务页复用）。
 class ToolNavigator {
@@ -27,6 +29,9 @@ class ToolNavigator {
     BuildContext context,
     String toolId, {
     bool isCloud = false,
+    // 2026-11-05（用户 m24495 #3）：倒数日组件点某一格时把槽位序号带进来。
+    // 其余工具用不到，保持可选、默认 null，老调用点一行不用改。
+    Object? arguments,
   }) async {
     // ① 需要登录的先过闸门：未登录 → 下方弹横条「请登录后才能使用」，**不跳转**
     if (loginRequired.contains(toolId)) {
@@ -67,6 +72,22 @@ class ToolNavigator {
       case 'campus_map':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const CampusMapPage()));
+        break;
+      // 锡院学生手册：纯内置数据，不需要登录、不联网、不拨号。
+      case 'student_handbook':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const HandbookPage()));
+        break;
+      // 2026-11-05：补倒数日分支。原来这里没有 case 'countdown'，
+      // 桌面倒数日组件点击会落到 default 弹「该工具正在开发中」——
+      // 用户从来没从组件真正进过倒数日页（用户 m24495 #3 报的
+      // 「载入窗口小组件时出现问题」就是这个）。
+      case 'countdown':
+        Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CountdownPage(
+            initialSlot: arguments is int ? arguments : -1,
+          ),
+        ));
         break;
       default:
         ScaffoldMessenger.of(context).showSnackBar(

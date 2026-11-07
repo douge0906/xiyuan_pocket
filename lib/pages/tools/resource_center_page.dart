@@ -4,6 +4,8 @@ import '../../services/control_service.dart';
 import '../../services/resource_download_service.dart';
 import '../../services/resource_store.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/empty_state_art.dart' show EmptyArtVariant;
+import '../../widgets/state_views.dart';
 import 'my_resource_uploads_page.dart';
 import 'resource_upload_page.dart';
 import 'resource_viewer_page.dart';
@@ -272,37 +274,62 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
 
   Widget _buildBody() {
     if (_loading) {
+      // 用统一的 LoadingOverlay 骨架而不是裸 CircularProgressIndicator：
+      // 全库散着 40 处裸转圈，这一处先收口（2026-11-03）。
       return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
     }
     if (_courses.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      // 🔴 2026-11-03：本页原来是全库唯一「既无 ErrorState 也无 EmptyState」
+      // 的页面 —— 请求失败时只显示一行灰字「暂无课程」，用户看不出是
+      // 网断了、控制台挂了还是真的没收录，也没法重试。
+      //
+      // 现在按 `_failure` 区分两种性质完全不同的状态：
+      //   · 有 failure（网络/服务端问题）→ ErrorState，文案带原因 + 重试
+      //   · 没有 failure（接口通了但确实没数据）→ EmptyState，引导去同步
+      final failure = _failure;
+      if (failure != null) {
+        return RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
             children: [
-              Icon(Icons.folder_open_rounded,
-                  size: 44, color: context.textTertiary),
-              const SizedBox(height: 12),
-              Text(_error ?? '暂无课程',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
-              const SizedBox(height: 14),
-              OutlinedButton.icon(
+              const SizedBox(height: 40),
+              ErrorState(
+                message: failure.message.isEmpty
+                    ? '暂时无法加载资源列表'
+                    : failure.message,
+                onRetry: _load,
+              ),
+            ],
+          ),
+        );
+      }
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            const SizedBox(height: 24),
+            EmptyState(
+              message: _error ?? '还没有收录课程',
+              hint: '去「我的教材」同步一次，回来就能看到这门课的资料',
+              artVariant: EmptyArtVariant.book,
+              action: OutlinedButton.icon(
                 onPressed: _load,
                 icon: const Icon(Icons.refresh_rounded, size: 18),
                 label: const Text('重新加载'),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
     final list = _filtered;
     if (list.isEmpty) {
-      return Center(
-        child: Text('没有找到相关课程',
-            style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+      return EmptyState(
+        message: '没有找到相关课程',
+        hint: '试试换一个关键词，或清掉上面的筛选条件',
+        artVariant: EmptyArtVariant.search,
       );
     }
     return RefreshIndicator(

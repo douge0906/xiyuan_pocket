@@ -1,5 +1,6 @@
 import 'auth_gate.dart';
 import 'campus/campus_store.dart';
+import 'campus/sygl_client.dart';
 import 'dorm_service.dart';
 import 'storage_service.dart';
 import 'widget_sync_service.dart';
@@ -161,5 +162,17 @@ class ApiService {
     final data = await LocalCampusService.queryTextbooks(
         c.username, c.password, xnm, xqm);
     return {'data': data};
+  }
+
+  /// 从实验管理系统（sygl.cwxu.edu.cn）读取实验课安排。
+  ///
+  /// 与其他方法不同，这里**不包 `{'data': ...}`**：调用方要的是
+  /// 「解析到几条 + 站点到底回了什么栏目」，直接返回结果对象更清楚。
+  static Future<SyglLabFetchResult> fetchLabs({
+    String username = '',
+    String password = '',
+  }) async {
+    final c = await _resolveCredential(username, password);
+    return LocalCampusService.fetchLabs(c.username, c.password);
   }
 }

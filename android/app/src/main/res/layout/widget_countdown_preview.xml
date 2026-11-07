@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  倒数日组件在「小组件选择器」里的预览布局（2026-11-04 新增）。
+  Android 12+ 用 previewLayout 渲染选择器里的示例，数值必须与
+  widget_countdown.xml 保持一致，否则用户看到的示范图和装上后不是一回事
+  （1.0.8 之前那批预览图就是这么错的）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="180dp"
+    android:layout_height="180dp"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:background="@drawable/widget_card_bg_light">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="倒数日"
+            android:textSize="11.5sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:textColor="#667085" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="还有 2 个"
+            android:textSize="10sp"
+            android:singleLine="true"
+            android:textColor="#98A2B3" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="期末考试"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#1F2937" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="12月25日"
+                android:textSize="10sp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#667085" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="还有 51 天"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:textColor="#1F2937" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="寒假开始"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#1F2937" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="1月12日"
+                android:textSize="10sp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#667085" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="还有 69 天"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:textColor="#1F2937" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="生日"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#1F2937" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="3月8日"
+                android:textSize="10sp"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#667085" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="还有 124 天"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:singleLine="true"
+            android:textColor="#1F2937" />
+    </LinearLayout>
+</LinearLayout>

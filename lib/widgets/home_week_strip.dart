@@ -99,7 +99,7 @@ class _HomeWeekStripState extends State<HomeWeekStrip> {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: ink,
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                       boxShadow: [
                         BoxShadow(
                           color: Colors.black.withValues(alpha: isDark ? .18 : .12),

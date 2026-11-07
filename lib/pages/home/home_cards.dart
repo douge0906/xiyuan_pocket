@@ -59,9 +59,11 @@ class HomeTodayOverview extends StatelessWidget {
         decoration: BoxDecoration(
           color: surface,
           borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          boxShadow: AppTheme.cardShadow,
-          // v2.4.3：补灰线边框，与「服务」页卡片观感统一
-          border: Border.all(color: context.borderColor, width: 1),
+          // v2.4.3：与「服务」页卡片观感统一。
+          // 2026-11-03：轮廓用 6% 黑的内侧 Border.all（画在盒子内侧，
+          // 父级裁剪也切不掉），阴影只负责纵深。
+          border: Border.all(color: AppTheme.cardStrokeColor(context.isDark)),
+          boxShadow: AppTheme.cardShadowFor(context.isDark),
         ),
         child: Row(
           children: [

@@ -1,9 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -84,7 +81,11 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
 
   /// 哪些板块是展开的（2026-10-13 v1.3.0：外观两组默认展开 —— 常调的就是它们；
   /// 其余默认收起，点标题可以随时展开/折叠）。
-  final Set<String> _expanded = {'grid', 'layout', 'blocks'};
+  ///
+  /// 2026-11-03：加上 `card`（课程卡内容）。原来看板把「课程卡内容」也收起了，
+  /// 但它是这一页**最常被调**的一组（显示不显示老师/教室/名字、字号、行数），
+  /// 每次进来都要点开一次。三个纯外观组 + 一个内容组，正好一屏。
+  final Set<String> _expanded = {'grid', 'layout', 'blocks', 'card'};
 
   /// 课程预览默认收起，点标题或下滑展开。
   bool _previewExpanded = true;
@@ -126,6 +127,19 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   double get _rowHeight => _asDouble('rowHeight', 0);
   double get _timeColWidth => _asDouble('timeColWidth', 48);
   double get _dateRowHeight => _asDouble('dateRowHeight', 56);
+
+  /// 显示周数（2026-11-04 用户 m19892 #4）。
+  ///
+  /// 原话：「默认的周数是 25 周，我目前没找到地方调？一般来说，我校每学期的
+  /// 周数是 19-21 周。如果能对照校历自动匹配是最好，如果有些困难的话，
+  /// 可以设置一个手动调整？」
+  ///
+  /// 校历接口没有稳定的周数来源（各校字段不统一），所以先给手动调节：
+  /// 16~25 周，默认 20。硬上限仍是 [kMaxCourseWeeks]（周次解析要用它做越界保护），
+  /// 这里只控制「网格页数 / 周次列表 / 表单 chip 到第几周为止」。
+  int get _weekCount => _asDouble('weekCount', kDefaultWeekCount.toDouble())
+      .round()
+      .clamp(CourseStorage.minWeekCount, CourseStorage.maxWeekCount);
   bool get _showTeacherOnCard => _display['showTeacherOnCard'] != false;
   bool get _showClassroomOnCard => _display['showClassroomOnCard'] != false;
   bool get _hideSectionTime => _display['hideSectionTime'] == true;
@@ -206,14 +220,16 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     var next = CourseStorage.switchScheme(_display, s);
     // 「方案二」= 紧凑淡蓝套装：窄时间栏 + 窄日期栏 + 淡蓝底 + 无网格线
     // （2026-10-26 用户指定；其余方案仍只换配色，不碰布局）
+    // 2026-11-04（m18409 #4）：用户**主动点过**色卡才打这个标记。
+    // `loadDisplaySettings` 用它区分「用户选过方案」与「字段是被默认值写进去的」，
+    // 否则默认方案二会被老版本写入存储的方案一覆盖。
+    next = {...next, 'schemeUserPicked': true};
     if (s == CourseColorScheme.soft) {
       next = {
         ...next,
-        'timeColWidth': 40.0,
-        'dateRowHeight': 42.0,
-        'backgroundColor': 0xFFE8F1FB,
-        'backgroundImage': '',
-        'showGridLines': false,
+        // 2026-11-04（m20128 #2）：与 `loadDisplaySettings` 的首次迁移同值。
+        'backgroundColor': 0xFFC6DDF7,
+        ...CourseStorage.softSchemePatch(),
       };
     }
     CourseStorage.applyDisplayToCache(next);
@@ -295,62 +311,6 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     _toast('已删除「$name」');
   }
 
-  Future<void> _exportAppearance() async {
-    try {
-      final data = <String, dynamic>{
-        'version': 1,
-        'appearance': CourseStorage.appearanceOfDisplay(_display),
-        'presets': _presets,
-      };
-      final path = await FilePicker.platform.saveFile(
-        dialogTitle: '导出外观方案',
-        fileName: 'xiyuan_appearance.json',
-        bytes: Uint8List.fromList(utf8.encode(
-            const JsonEncoder.withIndent('  ').convert(data))),
-      );
-      if (path != null) _toast('外观方案已导出');
-    } catch (e) {
-      debugPrint('[CourseTableSettings] 导出外观方案失败: $e');
-      _toast('导出失败，请稍后重试');
-    }
-  }
-
-  Future<void> _importAppearance() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) return;
-      final file = result.files.single;
-      final bytes = file.bytes ??
-          (file.path != null ? await File(file.path!).readAsBytes() : null);
-      if (bytes == null) return;
-      final decoded = jsonDecode(utf8.decode(bytes));
-      if (decoded is! Map) throw const FormatException('不是有效的外观方案');
-      final appearance = decoded['appearance'];
-      if (appearance is Map) {
-        await _applyAppearancePatch(Map<String, dynamic>.from(appearance));
-      }
-      final presets = decoded['presets'];
-      if (presets is Map) {
-        final merged = <String, Map<String, dynamic>>{..._presets};
-        presets.forEach((key, value) {
-          if (value is Map) {
-            merged[key.toString()] = Map<String, dynamic>.from(value);
-          }
-        });
-        await CourseStorage.saveAppearancePresets(merged);
-        if (mounted) setState(() => _presets = merged);
-      }
-      if (mounted) _toast('外观方案已导入');
-    } catch (e) {
-      debugPrint('[CourseTableSettings] 导入外观方案失败: $e');
-      _toast('导入失败，请确认文件来自掌上锡院');
-    }
-  }
-
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -361,24 +321,51 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       ));
   }
 
-  Future<void> _exportCourseTables() async {
+  /// 导出「完整方案」：课表 + 外观 + 已存外观方案，一个文件全带走。
+  /// 只导出课表（不含外观）。
+  Future<void> _exportTablesOnly() async {
     try {
       final count = await CourseTransferService.exportTables();
       _toast('已准备 $count 份课表，选择保存位置');
     } catch (e) {
-      debugPrint('[CourseTableSettings] 导出课表方案失败: $e');
-      _toast('导出失败，请稍后重试');
+      debugPrint('[CourseTableSettings] 导出课表失败: $e');
+      _toast('导出失败：$e');
     }
   }
 
-  Future<void> _importCourseTables() async {
+  /// 只导出外观（不含课表）。
+  Future<void> _exportAppearanceOnly() async {
     try {
-      final count = await CourseTransferService.importTables();
-      if (count <= 0) return;
-      _toast('已导入 $count 份课表');
+      final n = await CourseTransferService.exportAppearance();
+      _toast(n > 0 ? '已准备外观方案（$n 项设置），选择保存位置' : '已准备外观方案，选择保存位置');
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导出外观失败: $e');
+      _toast('导出失败：$e');
+    }
+  }
+
+  /// 导入「完整方案」；也兼容只有课表的旧文件。
+  Future<void> _importBundle() async {
+    try {
+      final r = await CourseTransferService.importBundle();
+      // 2026-11-04（用户 m20455 #3）：仅外观的文件没有课表，但依然是成功的导入。
+      if (r.tables <= 0 && !r.appearance) return;
+      // 外观可能改了主题色/方案，页面要重读一遍
+      final fresh = await CourseStorage.loadDisplaySettings();
+      if (mounted) {
+        setState(() {
+          _display = fresh;
+          _future = Future<Map<String, dynamic>>.value(fresh);
+        });
+      }
+      _toast(r.tables <= 0
+          ? '已导入外观设置'
+          : (r.appearance
+              ? '已导入 ${r.tables} 份课表与外观设置'
+              : '已导入 ${r.tables} 份课表（文件里没有外观设置）'));
       widget.onTablesChanged?.call();
     } catch (e) {
-      debugPrint('[CourseTableSettings] 导入课表方案失败: $e');
+      debugPrint('[CourseTableSettings] 导入完整方案失败: $e');
       _toast('导入失败，请确认文件来自掌上锡院');
     }
   }
@@ -625,6 +612,24 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                           onChanged: (v) => _liveSlider('dateRowHeight', v),
                           onChangeEnd: _commitSliders,
                         ),
+                        _sliderTile(
+                          icon: Icons.date_range_rounded,
+                          title: '显示周数',
+                          value: _weekCount.toDouble(),
+                          min: CourseStorage.minWeekCount.toDouble(),
+                          max: CourseStorage.maxWeekCount.toDouble(),
+                          divisions: CourseStorage.maxWeekCount -
+                              CourseStorage.minWeekCount,
+                          format: (v) => '${v.round()} 周',
+                          onChanged: (v) => _liveSlider(
+                              'weekCount', v.roundToDouble()),
+                          onChangeEnd: () async {
+                            await _commitSliders();
+                            // 周数变了，桌面组件里「今天第几周」与课程可见性
+                            // 都要跟着重算一次。
+                            unawaited(WidgetSyncService.syncTodayCourses());
+                          },
+                        ),
                       ],
                     ),
                     if (_tab == 2)
@@ -840,24 +845,36 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
                         ),
                       ],
                     ),
+                    // 2026-11-04（用户 m20128 #2）：**课表方案与外观方案合并成一份**。
+                    // 原先是两组、两个文件、两次操作，各带走一半 —— 用户换手机
+                    // 得导两次，还容易只导一半。现在统一到「完整方案」：一个文件
+                    // 同时带课表、当前外观、已存外观方案。
                     if (_tab == 3)
                       _collapsible(
                         key: 'transfer',
-                      icon: Icons.swap_vert_rounded,
-                      title: '课表方案',
-                      children: [
-                        _actionTile(
-                          icon: Icons.upload_file_rounded,
-                          title: '导出课表方案',
-                          onTap: _exportCourseTables,
-                        ),
-                        _actionTile(
-                          icon: Icons.download_rounded,
-                          title: '导入课表方案',
-                          onTap: _importCourseTables,
-                        ),
-                      ],
-                    ),
+                        icon: Icons.swap_vert_rounded,
+                        title: '完整方案（课表 + 外观）',
+                        children: [
+                          // 2026-11-04（用户 m20455 #3）：「导出方案功能改为
+                          // 导出课表 / 仅导出外观」——导出侧拆成两路，
+                          // 导入侧仍是一路（三种 schema 全认，用户不用先判断文件类型）。
+                          _actionTile(
+                            icon: Icons.table_chart_rounded,
+                            title: '导出课表',
+                            onTap: _exportTablesOnly,
+                          ),
+                          _actionTile(
+                            icon: Icons.palette_outlined,
+                            title: '仅导出外观',
+                            onTap: _exportAppearanceOnly,
+                          ),
+                          _actionTile(
+                            icon: Icons.download_rounded,
+                            title: '导入方案',
+                            onTap: _importBundle,
+                          ),
+                        ],
+                      ),
                     if (_tab == 3)
                       userCard(
                         context,
@@ -1125,12 +1142,13 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setModal) {
         return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppTheme.radiusLg)),
           title: const Text('已忽略的冲突课程',
               style: TextStyle(fontSize: AppTheme.fontTitle, fontWeight: FontWeight.bold)),
           content: SizedBox(
-            width: 320,
+            width: (MediaQuery.of(context).size.width - 80).clamp(0.0, 320.0).toDouble(),
             child: keys.isEmpty
                 ? const Text('没有已忽略的课程',
                     style: TextStyle(fontSize: AppTheme.fontBody))
@@ -1303,16 +1321,8 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           title: '保存当前外观',
           onTap: _saveAppearancePreset,
         ),
-        _actionTile(
-          icon: Icons.upload_file_rounded,
-          title: '导出外观方案',
-          onTap: _exportAppearance,
-        ),
-        _actionTile(
-          icon: Icons.download_rounded,
-          title: '导入外观方案',
-          onTap: _importAppearance,
-        ),
+        // 2026-11-04（m20128 #2）：导出/导入并进「完整方案」——只留这一个
+        // 能全量控制各项参数的入口，避免两个位置各带走一半。
         if (_presets.isEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),

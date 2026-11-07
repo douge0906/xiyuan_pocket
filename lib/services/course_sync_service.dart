@@ -255,18 +255,34 @@ class CourseSyncService {
     if (wd == null) return null;
     final (start, end) = parseSlots(m['slots'], m['start_slot'], m['end_slot']);
     final name = (m['name'] ?? '').toString().trim();
+    final weeks = (m['weeks'] ?? '').toString().trim();
     return Course(
-      id: '${prefix}_${name}_$wd-$start',
+      // 🔴 id 必须把周次也算进去。同一门课同一星期同一节次、但上的周次不同
+      //   是真实现象（教务把一门课按周段拆成两行，例：工程电磁场
+      //   `1-3周,6-11周` 与 `12-16周` 都是周三 3-4 节）。此前 id 只有
+      //   `name + 星期 + 起始节`，两行撞同一个 id → `upsert` 后一行覆盖另一行，
+      //   用户只看到其中一个周段的课，另一个凭空消失。
+      id: '${prefix}_${name}_$wd-$start${weeks.isEmpty ? '' : '_${_weeksTag(weeks)}'}',
       name: name.isEmpty ? '未命名' : name,
       teacher: (m['teacher'] ?? '').toString().trim(),
       classroom: (m['classroom'] ?? '').toString().trim(),
       weekday: wd,
       startSlot: start,
       endSlot: end,
-      weeks: (m['weeks'] ?? '').toString().trim(),
+      weeks: weeks,
       colorValue: colorForName(name),
       source: CourseSource.server,
     );
+  }
+
+  /// 把周次文案压成一个可以放进 id 的短标签。
+  ///
+  /// 只做字符替换、不做语义解析 —— id 只需要「同课同星期同节次、不同周次能区分开」，
+  /// 不要求人能读懂。中文/标点统一换成 `_`，避免 id 里出现奇怪字符影响日志与调试。
+  static String _weeksTag(String weeks) {
+    final s = weeks.replaceAll(RegExp(r'[^0-9A-Za-z]+'), '_');
+    final trimmed = s.replaceAll(RegExp(r'^_+|_+$'), '');
+    return trimmed.isEmpty ? weeks.hashCode.toRadixString(16) : trimmed;
   }
 
   /// 星期：抓取器给的是字符串（"1".."7"，个别版本会是「周一」），统一转成 1..7。

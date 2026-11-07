@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件选择器预览 · 下一节课（静态示范） -->
+<!-- 小组件选择器预览 · 下一节课 2×1（静态示范）
+     ⚠️ 必须与 widget_small.xml + TodayWidgetRenderer.buildSmall 保持一致：
+     内边距 6dp、图标 16dp、三行 12sp/9.5sp/9.5sp，三行分别是
+     「课程名」「倒计时或时间」「教室」。以前这里是 8dp/18dp/13sp/10sp/10sp
+     且把时间与教室并成一行，装上后用户看到的和预览对不上。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:background="@drawable/widget_card_bg_light"
-    android:padding="8dp">
+    android:padding="6dp">
 
     <ImageView
-        android:layout_width="18dp"
-        android:layout_height="18dp"
-        android:layout_marginEnd="8dp"
+        android:layout_width="16dp"
+        android:layout_height="16dp"
+        android:layout_marginEnd="6dp"
         android:src="@drawable/widget_icon_dark"
         android:contentDescription="掌上锡院" />
 
@@ -24,7 +28,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold"
             android:maxLines="1"
             android:ellipsize="end"
@@ -35,20 +39,20 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="1dp"
-            android:textSize="10sp"
+            android:textSize="9.5sp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textColor="#667085"
-            android:text="08:00-09:40 · A301" />
+            android:text="还有 18 分钟上课" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="1dp"
-            android:textSize="10sp"
+            android:textSize="9.5sp"
             android:maxLines="1"
             android:ellipsize="end"
             android:textColor="#667085"
-            android:text="还有 18 分钟 · 第3周" />
+            android:text="A301" />
     </LinearLayout>
 </LinearLayout>

@@ -6,6 +6,7 @@ import '../../widgets/state_views.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../models/academic_term.dart';
 import '../../services/api_service.dart';
 import '../../services/exam_storage.dart';
 import '../../services/widget_sync_service.dart';
@@ -73,26 +74,19 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     super.dispose();
   }
 
-  /// 可选学期：当前学期往前共 6 个（3 学年）。
+  /// 可选学期：当前学期往前共 8 个（4 学年）。
+  ///
+  /// 学期码唯一真源见 `models/academic_term.dart` —— 原来这里 `month >= 8` 的
+  /// 写法在 1 月会把寒假算成「第二学期」，查出来是空的。
   static List<({String xnm, String xqm, String label})> _semesterOptions() {
-    final now = DateTime.now();
-    var year = now.month >= 8 ? now.year : now.year - 1;
-    var term = now.month >= 8 ? 3 : 12; // 8 月及以后 = 本学年第一学期
-    final list = <({String xnm, String xqm, String label})>[];
-    for (var i = 0; i < 8; i++) {
-      list.add((
-        xnm: '$year',
-        xqm: '$term',
-        label: '$year-${year + 1} 第${term == 3 ? 1 : 2}学期',
-      ));
-      if (term == 3) {
-        year -= 1;
-        term = 12;
-      } else {
-        term = 3;
-      }
-    }
-    return list;
+    return [
+      for (final t in recentAcademicTerms(8))
+        (
+          xnm: t.xnm,
+          xqm: t.xqm,
+          label: shortTermLabel(t),
+        ),
+    ];
   }
 
   String get _selectedLabel {

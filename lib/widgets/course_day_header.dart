@@ -5,7 +5,10 @@ import '../theme/app_theme.dart';
 import 'course_date_picker.dart';
 
 /// 课表页表头：周次选择 + 一周日期行（v2.3.1 自 course_table_home_page 拆出）。
-const double kCourseTimeColWidth = 48.0;
+///
+/// 2026-11-04 审查 P3：删掉死常量 `kCourseTimeColWidth`（48.0）——
+/// 全仓只有它自己的定义和一句历史注释引用它，真正生效的是下面的
+/// [activeTimeColWidth]。留着会让人以为改常量能调列宽。
 
 /// 运行时的时间列宽：设置里开了「隐藏节次时间」就归零（2026-10-13）；
 /// 否则读「课表布局 → 时间列宽度」滑杆（v1.6.4，默认 48）。
@@ -40,32 +43,31 @@ class CourseDayHeader extends StatelessWidget {
     // 日期栏要和时间栏一样透出全屏背景，否则顶部留一条实色（2026-10-26）
     final hasFullBg = CourseStorage.backgroundImageCache.isNotEmpty ||
         CourseStorage.backgroundColorCache != null;
+    // 🔴 2026-11-04 审查 P1：设置里开启「隐藏节次时间」后 `activeTimeColWidth`
+    //    变成 0.0，而「第 N 周 ▾」原本正好放在这个宽度为 0 的盒子��� ——
+    //    命中区归零、再也点不到。而 `_pickWeek` 里的「调整」按钮是 App 内
+    //    **唯一**能改开学日期的入口（另一个调用者只由它触发）。用户一旦打开
+    //    这个开关又没记住路径，就永远无法纠正开学日期。
+    //    现在：时间列隐藏时把周次按钮浮到日期栏左上角（44 宽、带底色），
+    //    不占布局空间，也不会与下面的网格错位。
+    final thumbWidth = activeTimeColWidth;
+    final floatingWeek = thumbWidth <= 0;
 
-    return Container(
-      // v1.6.4：日期栏高度可调（课表布局滑杆，默认 56）
-      height: CourseStorage.dateRowHeightCache,
-      decoration: BoxDecoration(
-        color: hasFullBg ? Colors.transparent : surfaceColor,
-        border: Border(bottom: BorderSide(color: context.borderColor)),
-      ),
-      child: Row(
-        children: [
+    // 🔴 2026-11-04 审查 P2：日期栏文字色原来只看 `isDark`。
+    //    但用户可以在**深色模式**下把课表背景设成浅色（背景与明暗是
+    //    两套独立设置）→ 深灰字压在浅色背景上，几乎看不见。
+    //    有自定义背景色时改按**背景实际亮度**取字色。
+    final bgColor = CourseStorage.backgroundColorCache;
+    final onLightBg = bgColor != null
+        ? Color(bgColor).computeLuminance() > 0.55
+        : !isDark;
+
+    final row = Row(
+      children: [
+        if (!floatingWeek)
           SizedBox(
-            width: activeTimeColWidth,
-            child: InkWell(
-              onTap: () => _pickWeek(context),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '第$selectedWeek周',
-                    style:  TextStyle(fontSize: AppTheme.fontCaption, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
-                    textAlign: TextAlign.center,
-                  ),
-                   Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppTheme.primaryColor),
-                ],
-              ),
-            ),
+            width: thumbWidth,
+            child: _weekButton(context),
           ),
           for (int i = 0; i < 7; i++)
             Expanded(
@@ -87,9 +89,9 @@ class CourseDayHeader extends StatelessWidget {
                               : FontWeight.w500,
                           color: i + 1 == todayWeekday
                               ? AppTheme.primaryColor
-                              : (isDark
-                                  ? Colors.grey.shade400
-                                  : const Color(0xFF6B7280)),
+                              : (onLightBg
+                                  ? const Color(0xFF6B7280)
+                                  : Colors.grey.shade400),
                         ),
                       ),
                       // 2026-10-13：设置里可隐藏「月/日」（只留周几）
@@ -101,9 +103,9 @@ class CourseDayHeader extends StatelessWidget {
                             fontSize: AppTheme.fontCaption,
                             color: i + 1 == todayWeekday
                                 ? AppTheme.primaryColor.withValues(alpha: 0.85)
-                                : (isDark
-                                    ? Colors.grey.shade600
-                                    : Colors.grey.shade500),
+                                : (onLightBg
+                                    ? Colors.grey.shade500
+                                    : Colors.grey.shade600),
                           ),
                         ),
                       ],
@@ -112,6 +114,60 @@ class CourseDayHeader extends StatelessWidget {
                 ),
               ),
             ),
+      ],
+    );
+
+    return Container(
+      // v1.6.4：日期栏高度可调（课表布局滑杆，默认 56）
+      height: CourseStorage.dateRowHeightCache,
+      decoration: BoxDecoration(
+        color: hasFullBg ? Colors.transparent : surfaceColor,
+        border: Border(bottom: BorderSide(color: context.borderColor)),
+      ),
+      child: floatingWeek
+          ? Stack(
+              children: [
+                row,
+                // 时间列隐藏时，周次按钮浮在日期栏左上角：44 宽命中区，
+                // 带半透明底色以免与「周一」文字糊在一起。
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 44,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: surfaceColor.withValues(alpha: hasFullBg ? 0.72 : 1),
+                    ),
+                    child: _weekButton(context),
+                  ),
+                ),
+              ],
+            )
+          : row,
+    );
+  }
+
+  /// 「第 N 周 ▾」按钮（点击打开周次 / 开学日期面板）。
+  Widget _weekButton(BuildContext context) {
+    return InkWell(
+      onTap: () => _pickWeek(context),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '第$selectedWeek周',
+              style: TextStyle(
+                  fontSize: AppTheme.fontCaption,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.primaryColor),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          Icon(Icons.keyboard_arrow_down_rounded,
+              size: 16, color: AppTheme.primaryColor),
         ],
       ),
     );
@@ -132,7 +188,7 @@ class CourseDayHeader extends StatelessWidget {
         backgroundColor: Colors.white,
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
           side: const BorderSide(color: Color(0xFFE8E8EE)),
         ),
         child: ConstrainedBox(
@@ -232,7 +288,9 @@ class CourseDayHeader extends StatelessWidget {
                 SizedBox(
                   height: 260,
                   child: ListView.builder(
-                    itemCount: 25,
+                    // 2026-11-04 审查 P3：原来写死 25，与表单的
+                    // kMaxCourseWeeks 各写一份；调整上限时两边会分叉。
+                    itemCount: CourseStorage.weekCountCache,
                     itemBuilder: (_, i) {
                       final week = i + 1;
                       final isCurrent = week == currentWeek;

@@ -4,6 +4,7 @@ import '../services/widget_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'widget_info_page.dart';
 import 'widget_settings_page.dart';
+import 'countdown_page.dart';
 
 /// 桌面小组件总入口：怎么添加 + 当前组件列表。
 class WidgetHubPage extends StatefulWidget {
@@ -24,7 +25,11 @@ class _WidgetHubPageState extends State<WidgetHubPage> {
 
   Future<void> _refresh() async {
     final kinds = await WidgetSyncService.installedComponents();
-    if (mounted) setState(() => _installed = kinds);
+    if (mounted) {
+      setState(() {
+        _installed = kinds;
+      });
+    }
   }
 
   @override
@@ -76,6 +81,18 @@ class _WidgetHubPageState extends State<WidgetHubPage> {
                   installed: _installed.contains(WidgetComponent.card),
                   onTap: () => _open(
                       const WidgetInfoPage(kind: WidgetInfoKind.card)),
+                ),
+                Divider(height: 1, color: context.borderColor),
+                // 2026-11-04：倒数日（用户需求第 6 条）。
+                // 点进去是「管理页」，不是组件参数页 —— 用户要先加日子，
+                // 才谈得上调组件；把新增入口藏进组件设置是反直觉的。
+                _item(
+                  icon: Icons.hourglass_bottom_rounded,
+                  title: '倒数日',
+                  desc: '离重要日子还有几天 · 2×2',
+                  installed: _installed.contains(WidgetComponent.countdown),
+                  onTap: () => _open(
+                      const CountdownPage()),
                 ),
               ],
             ),
@@ -182,7 +199,7 @@ class _WidgetHubPageState extends State<WidgetHubPage> {
               decoration: BoxDecoration(
                 color: (installed ? const Color(0xFF10B981) : Colors.grey)
                     .withValues(alpha: .10),
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
               ),
               child: Text(
                 installed ? '已添加' : '未添加',

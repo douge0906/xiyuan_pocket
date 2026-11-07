@@ -101,12 +101,26 @@ class NetMode {
     }
   }
 
-  /// 能拿到任何 HTTP 响应（2xx/401/302 都算）就认为内网可达。
+  /// 能拿到「像我们服务的」HTTP 响应（2xx / 3xx / 401）就认为内网可达。
+  ///
+  /// 🔴 2026-11-04 审查 P1：判据原来是 `statusCode > 0 && statusCode < 500`，
+  ///    把 400 / 403 / 404 / 429 也算成「可达」。校外时运营商或公共 Wi-Fi 的
+  ///    强制门户（captive portal）经常把 `http://10.3.100.110/...` 劫持并返回
+  ///    200 登录页 / 403 / 404 —— 于是被判成「在校园网内」，后续所有内网请求
+  ///    直连一个根本不可达的地址，全部失败，而 UI 只会说「暂不可用 /
+  ///    更新失败，请检查网络」，**从不说「未连接校园网」**。
+  ///    现在只认 2xx / 3xx / 401（401 说明请求真的到了业务服务、只是要鉴权），
+  ///    403/404/429 一律当作不可达。
+  ///
+  ///    注意：仍然**不看响应内容** —— 曾经用 `body.contains('"code":200')` 判，
+  ///    平台 JSON 多一个空格就判失败（2026-10-26「无卡账号」事故）。
   static Future<bool> _reachable(String url) async {
     final s = CampusSession(timeout: const Duration(seconds: 3));
     try {
       final r = await s.get(url);
-      return r.statusCode > 0 && r.statusCode < 500;
+      final code = r.statusCode;
+      if (code == 401) return true;
+      return code >= 200 && code < 400;
     } catch (_) {
       return false;
     } finally {

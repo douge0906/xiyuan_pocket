@@ -182,10 +182,11 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         title: Text('「$className」 ${courses.length} 门课',
             style: const TextStyle(fontSize: AppTheme.fontTitle)),
         content: SizedBox(
-          width: 340,
+          width: (MediaQuery.of(context).size.width - 80).clamp(0.0, 340.0).toDouble(),
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
