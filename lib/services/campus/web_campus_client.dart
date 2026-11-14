@@ -92,6 +92,26 @@ class WebCampusProxy {
     );
   }
 
+  /// 探活：本地留存的 sid 是否仍是就绪会话。
+  ///
+  /// 就绪返回 true；不存在 / 过期 / 网络异常一律返回 false，由上层走两步登录。
+  static Future<bool> ping(String sessionId) async {
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('$_base/api/v1/campus/session/ping'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({'session_id': sessionId}),
+          )
+          .timeout(_timeout);
+      if (resp.statusCode == 401) return false;
+      final data = _decode(resp);
+      return data['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 注销服务端会话（不调学校 CAS 登出，只清服务端内存罐）。
   static Future<void> logout(String sessionId) async {
     try {

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'campus_session.dart';
 import 'cas_client.dart';
@@ -89,6 +90,29 @@ class LocalCampusService {
   /// [_webSid] 就绪会话；[_webPendingSid] 待回填验证码的 pending 会话。
   static String? _webSid;
   static String? _webPendingSid;
+  static String? _webSidUser;
+
+  // ---- Web sid 本地持久化（刷新 / 重开浏览器后免重登，服务端罐未过期前提下）----
+  static const String _kWebSid = 'web_campus_sid';
+  static const String _kWebSidUser = 'web_campus_sid_user';
+  static const String _kWebSidAt = 'web_campus_sid_at';
+
+  /// 本地留存兜底上限：真正有效性以服务端 ping 为准；这里只避免长期挂死旧 sid。
+  static const Duration _webSidLocalTtl = Duration(hours: 12);
+
+  static Future<void> _persistWebSid(String sid, String username) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_kWebSid, sid);
+    await p.setString(_kWebSidUser, username);
+    await p.setString(_kWebSidAt, DateTime.now().toIso8601String());
+  }
+
+  static Future<void> _clearPersistedWebSid() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_kWebSid);
+    await p.remove(_kWebSidUser);
+    await p.remove(_kWebSidAt);
+  }
 
   /// 一期 Web 暂不接入的子系统（门户余额 / sygl 实验课）仍在此兜底拦截，
   /// 避免触达 dart:io 抛未捕获异常白屏；入口 UI 不隐藏，与安卓保持一致。
@@ -111,6 +135,9 @@ class LocalCampusService {
     if (_webSid != null) WebCampusProxy.logout(_webSid!);
     _webSid = null;
     _webPendingSid = null;
+    _webSidUser = null;
+    // 退出登录同步清掉本地留存的 sid，避免下次换账号复用上一个会话。
+    _clearPersistedWebSid();
   }
 
   /// Web 第一步：提交账密、取验证码图，建立 pending 会话。
@@ -119,6 +146,7 @@ class LocalCampusService {
       String username, String password) async {
     final start = await WebCampusProxy.startLogin(username, password);
     _webPendingSid = start.sessionId;
+    _webSidUser = username;
     return start;
   }
 
@@ -131,10 +159,38 @@ class LocalCampusService {
     await WebCampusProxy.submitCaptcha(sid, code);
     _webSid = sid;
     _webPendingSid = null;
+    // 落盘 sid + 归属人 + 时间戳：刷新 / 重开浏览器后先探活复用。
+    await _persistWebSid(sid, _webSidUser ?? '');
+  }
+
+  /// 启动后尝试用本地留存的 sid 恢复 Web 会话（归属人匹配 + 本地兜底 TTL 内，
+  /// 再向服务端探活）。探活通过则置回内存；失败清本地，留给两步登录。
+  static Future<void> restoreWebSession(String username) async {
+    if (_webSid != null) return;
+    final p = await SharedPreferences.getInstance();
+    final sid = p.getString(_kWebSid);
+    final owner = p.getString(_kWebSidUser);
+    final at = p.getString(_kWebSidAt);
+    if (sid == null || sid.isEmpty || owner != username) return;
+    if (at != null) {
+      final t = DateTime.tryParse(at);
+      if (t == null || DateTime.now().difference(t) > _webSidLocalTtl) {
+        await _clearPersistedWebSid();
+        return;
+      }
+    }
+    final ok = await WebCampusProxy.ping(sid);
+    if (ok) {
+      _webSid = sid;
+      _webSidUser = username;
+    } else {
+      await _clearPersistedWebSid();
+    }
   }
 
   /// 取 Web 就绪会话；未登录 / 已过期则抛 needRelogin，由界面引导重新登录。
-  static CampusSessionBase _ensureWeb() {
+  static Future<CampusSessionBase> _ensureWeb(String username) async {
+    if (_webSid == null) await restoreWebSession(username);
     final sid = _webSid;
     if (sid == null) {
       throw CampusException('登录已过期，请重新登录', needRelogin: true);
@@ -180,12 +236,14 @@ class LocalCampusService {
   ) async {
     // Web：走服务端有状态代理会话；会话失效由界面重新走两步登录。
     if (kIsWeb) {
-      final s = _ensureWeb();
+      final s = await _ensureWeb(username);
       try {
         return await run(s);
       } on CampusException catch (e) {
         if (!e.needRelogin) rethrow;
         _webSid = null;
+        _webSidUser = null;
+        await _clearPersistedWebSid();
         rethrow;
       }
     }
@@ -343,7 +401,11 @@ class LocalCampusService {
   ///   且余额查询本身低频），每次查询重新 CAS 登录建立。
   static Future<Map<String, dynamic>> fetchCardBalance(
       String username, String password) async {
-    _guardWeb();
+    // Web：复用代理会话隧道访问融合门户（门户 cookie 罐由服务端持有）。
+    if (kIsWeb) {
+      final s = await _ensureWeb(username);
+      return await CardBalanceClient.fetch(s, username, password);
+    }
     if (_portalSession != null && _portalUser == username) {
       try {
         return await CardBalanceClient.fetch(
