@@ -81,8 +81,9 @@ class HomePageState extends ConsumerState<HomePage>
   bool _overviewLoaded = false;
   /// 校园网状态：优先取服务内静态缓存（Tab 切走再切回时 State 重建，
   /// 用上次结果直显而不重新探测），冷启动无缓存则显示「检测中」。
-  CampusNetStatus _campusNetStatus =
-      CampusNetService.lastStatus ?? CampusNetStatus.unknown;
+  CampusNetStatus _campusNetStatus = kIsWeb
+      ? CampusNetStatus.offCampus
+      : CampusNetService.lastStatus ?? CampusNetStatus.unknown;
   bool _campusDetecting = false; // 避免并发重测
   final Map<String, _DaySnapshot> _dayStats = <String, _DaySnapshot>{};
   int _refreshTick = 0;

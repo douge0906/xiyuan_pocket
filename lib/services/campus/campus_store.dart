@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'campus_session.dart';
@@ -82,6 +83,15 @@ class LocalCampusService {
   static CampusSession? _portalSession;
   static String? _portalUser;
 
+  /// Web 端降级：带 cookie 的 CAS 教务会话依赖 dart:io HttpClient，浏览器不支持；
+  /// 一期不做服务端有状态会话代理。这里在入口统一拦成可读中文提示，
+  /// 避免触达 dart:io 抛未捕获异常白屏。入口 UI 不隐藏，与安卓保持一致。
+  static void _guardWeb() {
+    if (kIsWeb) {
+      throw CampusException('网页版暂不支持统一认证登录与教务查询，请使用安卓 App');
+    }
+  }
+
   /// 上一次登录说明（成功尝试次数 / 失败原因），便于排查
   static String lastLoginNote = '';
 
@@ -130,6 +140,7 @@ class LocalCampusService {
     String password,
     Future<T> Function(CampusSession) run,
   ) async {
+    _guardWeb();
     var s = await _ensure(username, password);
     try {
       return await run(s);
@@ -166,6 +177,7 @@ class LocalCampusService {
   /// 会误判为登录成功。成功后 [_session] 被设好，后续查询直接复用，不用再过验证码。
   /// 失败抛 [CampusException]，message 已是中文可读文案。
   static Future<void> verifyLogin(String username, String password) async {
+    _guardWeb();
     final session = CampusSession();
 
     // ① 只做**一步**校验：CAS 登录拿到 TGT 即证明账密正确。
@@ -255,6 +267,7 @@ class LocalCampusService {
   /// ⚠️ sygl **只开 80 端口**，必须走 http（`CampusSession` 里有白名单放行）。
   static Future<SyglLabFetchResult> fetchLabs(
       String username, String password) async {
+    _guardWeb();
     Future<SyglLabFetchResult> once() async {
       final s = CampusSession();
       try {
@@ -282,6 +295,7 @@ class LocalCampusService {
   ///   且余额查询本身低频），每次查询重新 CAS 登录建立。
   static Future<Map<String, dynamic>> fetchCardBalance(
       String username, String password) async {
+    _guardWeb();
     if (_portalSession != null && _portalUser == username) {
       try {
         return await CardBalanceClient.fetch(
