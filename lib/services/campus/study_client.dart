@@ -126,7 +126,7 @@ class StudyClient {
   /// [fallbackXnm] / [fallbackXqm] 仅在 Mode B 需要查课表时使用
   /// （传当前学年与学期码，`xqm` 用教务的 `3`=第1学期 / `12`=第2学期）。
   static Future<StudyArchive> fetch(
-    CampusSession session, {
+    CampusSessionBase session, {
     String fallbackXnm = '',
     String fallbackXqm = '',
   }) async {
@@ -246,7 +246,7 @@ class StudyClient {
 
   /// 逐节点拉课程。**表单只能这三个字段**，多一个就返回 HTML 错误页。
   static Future<List<Map<String, dynamic>>> _fetchCourses(
-    CampusSession session,
+    CampusSessionBase session,
     String csrf,
     String nodeId,
   ) async {
@@ -344,7 +344,7 @@ class StudyClient {
   /// 状态只能按「有成绩且≥60 → 已修 / <60 → 未过 / 无成绩 → 在读」推，
   /// 且 `stateFromServer = false`，UI 会据此标注「客户端推导」。
   static Future<StudyArchive> _buildDegraded(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm, {
     String studentName = '',

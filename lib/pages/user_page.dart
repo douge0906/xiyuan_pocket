@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -408,8 +410,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     });
 
     try {
-      // ① 走一次真实 CAS 登录 —— 账密不对这里就抛错，不会把错误账密存下来
-      await ApiService.verifyLogin(u, p);
+      // ① 走一次真实 CAS 登录 —— 账密不对这里就抛错，不会把错误账密存下来。
+      //    Web 走服务端代理两步登录（验证码人工回填）；原生走一步 CAS 直连。
+      await _authenticate(u, p);
       if (!mounted) return;
 
       // ② 落盘（唯一真相源 = StorageService；同时通知其它页刷新）
@@ -473,6 +476,59 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       await _saveLoginFails(_loginFails + 1);
       if (_loginFails >= 3 && mounted) await _showLoginHelp();
     }
+  }
+
+  /// 登录校验：原生一步 CAS 直连；Web 走服务端代理两步（取验证码图 → 人工回填）。
+  Future<void> _authenticate(String u, String p) async {
+    if (!kIsWeb) {
+      await ApiService.verifyLogin(u, p);
+      return;
+    }
+    final start = await ApiService.beginWebLogin(u, p);
+    if (!mounted) return;
+    final code = await _showCaptchaDialog(start.captchaB64);
+    if (code == null || code.isEmpty) {
+      throw Exception('已取消登录');
+    }
+    await ApiService.submitWebCaptcha(code);
+  }
+
+  /// Web 验证码回填弹窗：展示代理取回的验证码图，用户识别后回填。
+  Future<String?> _showCaptchaDialog(String captchaB64) {
+    final ctl = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('输入验证码'),
+        content: StatefulBuilder(
+          builder: (ctx, setDlg) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (captchaB64.isNotEmpty)
+                Image.memory(base64Decode(captchaB64), height: 64),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctl,
+                decoration: const InputDecoration(labelText: '验证码'),
+                textAlign: TextAlign.center,
+                autofocus: true,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(ctl.text.trim()),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 补学生姓名（**登录后静默进行，拿不到就算**）：来自教务成绩查询的学生信息。

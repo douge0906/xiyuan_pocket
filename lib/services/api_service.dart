@@ -1,6 +1,7 @@
 import 'auth_gate.dart';
 import 'campus/campus_store.dart';
 import 'campus/sygl_client.dart';
+import 'campus/web_campus_client.dart';
 import 'dorm_service.dart';
 import 'storage_service.dart';
 import 'widget_sync_service.dart';
@@ -41,6 +42,14 @@ class ApiService {
   /// 失败抛 `CampusException`，其 message 已是中文可读文案。
   static Future<void> verifyLogin(String username, String password) =>
       LocalCampusService.verifyLogin(username, password);
+
+  /// Web 两步登录 · 第一步：取验证码图，建立待提交会话。
+  static Future<WebLoginStart> beginWebLogin(String username, String password) =>
+      LocalCampusService.beginWebLogin(username, password);
+
+  /// Web 两步登录 · 第二步：回填人工识别的验证码，完成 CAS 登录。
+  static Future<void> submitWebCaptcha(String code) =>
+      LocalCampusService.submitWebCaptcha(code);
 
   /// 取学生信息（姓名 / 学号 / 专业 / 学院 / 年级）。
   ///

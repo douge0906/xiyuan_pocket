@@ -10,6 +10,8 @@ import 'course_fetcher.dart';
 import 'jwgl_client.dart';
 import 'study_client.dart';
 import 'sygl_client.dart';
+import 'web_campus_client.dart';
+import 'web_campus_session.dart';
 import '../../models/study_models.dart';
 
 /// 教务会话缓存（本地版：把「登录一次」的成果存下来，避免每次查询都过验证码）。
@@ -83,12 +85,16 @@ class LocalCampusService {
   static CampusSession? _portalSession;
   static String? _portalUser;
 
-  /// Web 端降级：带 cookie 的 CAS 教务会话依赖 dart:io HttpClient，浏览器不支持；
-  /// 一期不做服务端有状态会话代理。这里在入口统一拦成可读中文提示，
-  /// 避免触达 dart:io 抛未捕获异常白屏。入口 UI 不隐藏，与安卓保持一致。
+  /// Web 代理会话：服务端按 sessionId 持有 cookie 罐，本地只存凭证。
+  /// [_webSid] 就绪会话；[_webPendingSid] 待回填验证码的 pending 会话。
+  static String? _webSid;
+  static String? _webPendingSid;
+
+  /// 一期 Web 暂不接入的子系统（门户余额 / sygl 实验课）仍在此兜底拦截，
+  /// 避免触达 dart:io 抛未捕获异常白屏；入口 UI 不隐藏，与安卓保持一致。
   static void _guardWeb() {
     if (kIsWeb) {
-      throw CampusException('网页版暂不支持统一认证登录与教务查询，请使用安卓 App');
+      throw CampusException('网页版暂不支持该功能，请使用安卓 App');
     }
   }
 
@@ -102,6 +108,38 @@ class LocalCampusService {
     _portalSession?.close();
     _portalSession = null;
     _portalUser = null;
+    if (_webSid != null) WebCampusProxy.logout(_webSid!);
+    _webSid = null;
+    _webPendingSid = null;
+  }
+
+  /// Web 第一步：提交账密、取验证码图，建立 pending 会话。
+  /// 验证码由用户在浏览器识别后调 [submitWebCaptcha] 回填。
+  static Future<WebLoginStart> beginWebLogin(
+      String username, String password) async {
+    final start = await WebCampusProxy.startLogin(username, password);
+    _webPendingSid = start.sessionId;
+    return start;
+  }
+
+  /// Web 第二步：回填验证码，完成 CAS 登录并建立教务会话。
+  static Future<void> submitWebCaptcha(String code) async {
+    final sid = _webPendingSid;
+    if (sid == null) {
+      throw CampusException('登录会话已失效，请重新登录');
+    }
+    await WebCampusProxy.submitCaptcha(sid, code);
+    _webSid = sid;
+    _webPendingSid = null;
+  }
+
+  /// 取 Web 就绪会话；未登录 / 已过期则抛 needRelogin，由界面引导重新登录。
+  static CampusSessionBase _ensureWeb() {
+    final sid = _webSid;
+    if (sid == null) {
+      throw CampusException('登录已过期，请重新登录', needRelogin: true);
+    }
+    return WebCampusSession(sid);
   }
 
   static Future<CampusSession> _ensure(
@@ -138,9 +176,19 @@ class LocalCampusService {
   static Future<T> _withRelogin<T>(
     String username,
     String password,
-    Future<T> Function(CampusSession) run,
+    Future<T> Function(CampusSessionBase) run,
   ) async {
-    _guardWeb();
+    // Web：走服务端有状态代理会话；会话失效由界面重新走两步登录。
+    if (kIsWeb) {
+      final s = _ensureWeb();
+      try {
+        return await run(s);
+      } on CampusException catch (e) {
+        if (!e.needRelogin) rethrow;
+        _webSid = null;
+        rethrow;
+      }
+    }
     var s = await _ensure(username, password);
     try {
       return await run(s);

@@ -29,7 +29,7 @@ class JwglClient {
   /// 先查「全部学期」，再补查最近 10 个学期；每个查询按 500/页翻页，
   /// 防止成绩行数超过 500 时后面的学期被截断。
   static Future<Map<String, dynamic>> fetchGrades(
-    CampusSession session, {
+    CampusSessionBase session, {
     int rows = 500,
   }) async {
     final csrf = await _openPage(session, _gradePage);
@@ -115,7 +115,7 @@ class JwglClient {
 
   /// 成绩查询有两个常见入口，按顺序尝试；任一入口有数据即返回。
   static Future<List<Map<String, dynamic>>> _queryGrade(
-    CampusSession session,
+    CampusSessionBase session,
     Map<String, String> form, {
     required int pageSize,
   }) async {
@@ -142,7 +142,7 @@ class JwglClient {
 
   /// 逐页拉取某个学期；服务端不认 page 时通过「没有新增行」停止。
   static Future<List<Map<String, dynamic>>> _queryAll(
-    CampusSession session,
+    CampusSessionBase session,
     String apiUrl,
     Map<String, String> form, {
     required int pageSize,
@@ -321,7 +321,7 @@ class JwglClient {
 
   /// 查询某学期考试安排。**该学期没有考试时返回空列表**（不是失败）。
   static Future<Map<String, dynamic>> queryExams(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
   ) async {
@@ -393,7 +393,7 @@ class JwglClient {
   /// 返回 `{success, message, semester, books:[...], count}`。
   /// **该学期没有教材时返回空列表**（合法响应），不算失败。
   static Future<Map<String, dynamic>> queryTextbooks(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
   ) async {
@@ -471,7 +471,7 @@ class JwglClient {
   /// 教材预订单 | 学年 | 学期 | 课程名称 | 上课教师 | 课程性质 |
   /// 教材信息 | 上课地点 | 选课时间 | 征订状态 | 预订时间
   static Future<List<Map<String, dynamic>>> _queryBooksFromHtml(
-    CampusSession session,
+    CampusSessionBase session,
     String pageUrl,
   ) async {
     final r = await session.get(pageUrl, headers: {
@@ -597,7 +597,7 @@ class JwglClient {
   // ---------------- 通用 ----------------
 
   /// 打开业务页：拿 csrftoken，并判断会话是否失效
-  static Future<String> _openPage(CampusSession session, String pageUrl) async {
+  static Future<String> _openPage(CampusSessionBase session, String pageUrl) async {
     final r = await session.get(pageUrl, headers: {
       'Referer': '$_base/jwglxt/xtgl/index_initMenu.html',
     });
@@ -608,7 +608,7 @@ class JwglClient {
   }
 
   static Future<List<Map<String, dynamic>>> _query(
-    CampusSession session,
+    CampusSessionBase session,
     String apiUrl,
     Map<String, String> form, {
     bool emptyMeansEmpty = false,

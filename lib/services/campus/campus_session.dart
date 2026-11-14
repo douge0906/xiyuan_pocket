@@ -39,6 +39,52 @@ class CampusResponse {
   bool get looksLikeLogin => url.toLowerCase().contains('login');
 }
 
+/// 会话抽象基类：原生 [CampusSession]（dart:io 直连）与 Web 代理适配器
+/// （经控制台有状态会话隧道）实现同一组方法，业务解析 client 只依赖本基类。
+///
+/// 为什么抽这一层：浏览器里 `dart:io HttpClient` 不可用，Web 会话改由服务端
+/// 持有 cookie 罐；解析层（成绩 / 考试 / 学业 / 课表）希望原样复用，不重复写一遍。
+abstract class CampusSessionBase {
+  /// 会话 cookie 罐（原生端本地持有；Web 端由服务端持有，本地仅空镜像）。
+  Map<String, String> get cookies;
+
+  /// 每一跳实际发出的 URL 改写（WebVPN 用；Web 代理端为 null）。
+  String Function(String url)? get urlRewrite;
+
+  Future<CampusResponse> get(
+    String url, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  });
+
+  Future<CampusResponse> postRaw(
+    String url,
+    String body, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  });
+
+  Future<CampusResponse> postForm(
+    String url,
+    Map<String, String> form, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  });
+
+  Future<CampusResponse> postJson(
+    String url,
+    Object data, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  });
+
+  void close();
+
+  Map<String, String> exportCookies();
+
+  void importCookies(Map<String, String> saved);
+}
+
 /// 从业务页 HTML 里取 `csrftoken` —— **全项目唯一实现**。
 ///
 /// 页面给的是 `<uuid>,<uuid去横线>` 这种两段式，业务接口只认**逗号前**那一段。
@@ -62,12 +108,13 @@ const Set<String> httpsOnlyExclusions = <String>{
   'sygl.cwxu.edu.cn',
 };
 
-class CampusSession {
+class CampusSession extends CampusSessionBase {
   static const String defaultUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   final HttpClient _client;
+  @override
   final Map<String, String> cookies = {};
 
   /// 每一跳实际发出的 URL 改写（WebVPN 用）。
@@ -77,6 +124,7 @@ class CampusSession {
   /// 直接连内网、必然超时 —— 平台票也就拿不到。放在这里能覆盖「起始 URL + 每一跳」。
   ///
   /// 约定：实现必须**幂等**（已改写过的 URL 再传进来要原样返回），因为每跳都会调用。
+  @override
   final String Function(String url)? urlRewrite;
 
   /// **单跳**超时：每一跳（连接 / 发送 / 读响应体）各自计时，互不累加。
@@ -95,12 +143,15 @@ class CampusSession {
     _client.findProxy = (uri) => 'DIRECT';
   }
 
+  @override
   void close() => _client.close(force: true);
 
   /// 导出 cookie（用于持久化会话复用）
+  @override
   Map<String, String> exportCookies() => Map<String, String>.from(cookies);
 
   /// 导入 cookie（恢复上次会话）
+  @override
   void importCookies(Map<String, String> saved) {
     cookies
       ..clear()
@@ -259,6 +310,7 @@ class CampusSession {
           '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}')
       .join('&');
 
+  @override
   Future<CampusResponse> get(
     String url, {
     Map<String, String>? headers,
@@ -270,6 +322,7 @@ class CampusSession {
   ///
   /// 实验课旧 ASMX 的正文是 `{kzJson:'…'}` 这种 JS 字面量，不是合法 JSON。
   /// 用 [postJson] 会多包一层 JSON 字符串引号；本方法按原样发送。
+  @override
   Future<CampusResponse> postRaw(
     String url,
     String body, {
@@ -279,6 +332,7 @@ class CampusSession {
       _send('POST', url,
           body: body, headers: headers, followRedirects: followRedirects);
 
+  @override
   Future<CampusResponse> postForm(
     String url,
     Map<String, String> form, {
@@ -289,6 +343,7 @@ class CampusSession {
           form: form, headers: headers, followRedirects: followRedirects);
 
   /// JSON POST（个别接口必须 JSON body，如取消订单）。
+  @override
   Future<CampusResponse> postJson(
     String url,
     Object data, {
