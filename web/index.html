@@ -30,8 +30,67 @@
 
   <title>掌上锡院</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* 首屏加载占位：Flutter 引擎就绪前展示，首帧后由脚本移除。
+       纯内联 HTML/CSS，不引外部资源，仅 Web 构建使用，不影响安卓端。 */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #1F2937;
+    }
+    #app-loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background: #1F2937;
+      z-index: 99999;
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .loader-ring {
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(255, 255, 255, 0.18);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: app-loader-spin 0.9s linear infinite;
+    }
+    .loader-title {
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 2px;
+    }
+    .loader-sub {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+    @keyframes app-loader-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-loading">
+    <div class="loader-ring"></div>
+    <div class="loader-title">掌上锡院</div>
+    <div class="loader-sub">正在加载…</div>
+  </div>
+  <script>
+    // 首帧渲染后移除占位；兜底 10 秒强制移除，避免异常时卡死白屏。
+    (function () {
+      var el = document.getElementById('app-loading');
+      function hide() { if (el) { el.remove(); el = null; } }
+      window.addEventListener('flutter-first-frame', hide, { once: true });
+      setTimeout(hide, 10000);
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
