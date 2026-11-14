@@ -1,5 +1,6 @@
-import 'dart:io';
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,7 +22,7 @@ class AppUpdateService {
   static const String _kPromptedVersion = 'app_update_prompted_version_v1';
 
   static Future<void> checkAndPrompt(BuildContext context) async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     final release = await ControlService.fetchAppRelease();
     if (release == null) return;
 
@@ -98,8 +99,8 @@ class AppUpdateService {
   /// 三种结果都必须给反馈：有新版本（弹窗）/ 已是最新（提示）/ 查不到
   /// （提示网络问题），不能静默返回。
   static Future<void> checkManually(BuildContext context) async {
-    if (!Platform.isAndroid) {
-      _toast(context, '当前平台不支持检查更新');
+    if (kIsWeb || !Platform.isAndroid) {
+      if (!kIsWeb) _toast(context, '当前平台不支持检查更新');
       return;
     }
     final release = await ControlService.fetchAppRelease();

@@ -1,5 +1,9 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+
+import '../../constants/control_config.dart';
 
 /// 抓取失败信号 —— **爬虫必须用它把"失败"和"没有内容"分开**。
 ///
@@ -42,8 +46,13 @@ class CampusHttpFetcher {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   /// 抓一个页面（返回 UTF-8 文本）。失败返回 null。
+  ///
+  /// Web 浏览器受同源策略限制，直连无 CORS 头的校园站点会被拦截；
+  /// 这里改走控制台标准化代抓代理（`/api/v1/webproxy/fetch`）。
+  /// 原生端仍直连，行为不变。
   static Future<String?> get(String url, [Map<String, String>? headers]) async {
     try {
+      if (kIsWeb) return _getViaProxy(url, headers);
       final resp = await http.get(
         Uri.parse(url),
         headers: {
@@ -60,6 +69,34 @@ class CampusHttpFetcher {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Web 端经控制台代理代抓一次公开页面（无状态、不带会话 cookie）。
+  static Future<String?> _getViaProxy(
+    String url,
+    Map<String, String>? headers,
+  ) async {
+    final resp = await http
+        .post(
+          Uri.parse('${ControlConfig.baseUrl}/api/v1/webproxy/fetch'),
+          headers: {'content-type': 'application/json'},
+          body: jsonEncode({
+            'url': url,
+            'method': 'GET',
+            'headers': headers ?? const <String, String>{},
+            'body_b64': null,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (resp.statusCode != 200) return null;
+    final data = jsonDecode(resp.body);
+    if (data is! Map) return null;
+    if ((data['status'] as num?) != 200) return null;
+    final b64 = data['body_b64'] as String? ?? '';
+    if (b64.isEmpty) return '';
+    final bytes = base64Decode(b64);
+    return utf8.decode(bytes, allowMalformed: true);
   }
 
   /// 供爬虫注入的 fetcher 形态（`(url, headers) async => body`）。

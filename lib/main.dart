@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -42,9 +43,10 @@ final RouteObserver<ModalRoute> routeObserver = RouteObserver<ModalRoute>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 本地通知初始化（时区数据库 / 通知渠道）。
-  // ⚠️ 2026-10-20 审查：原注释声称"v1.4.0 全局错误上报"，但全库没有任何
-  // 错误处理器（FlutterError.onError / runZonedGuarded 均无）——已改为实话。
-  await NotificationService.init();
+  // Web 端无本地通知插件，整段跳过，避免 MissingPluginException 挡住启动。
+  if (!kIsWeb) {
+    await NotificationService.init();
+  }
   // 首次启动把**内置的爬取快照**写进本地缓存 → 消息页首次打开秒出内容。
   // 只在首次运行写一次，之后照常走「缓存 + 刷新」流程。
   // 🔴 顺序不能反：先把老键的缓存迁到新档案键，再让种子补缺位。
@@ -65,13 +67,15 @@ void main() async {
   //    每次冷启动都会先看到一帧**纯白 + 墨黑主题色 + 默认字号 + 中文**，
   //    然后整树跳变到真实主题 —— 夜间启动非常刺眼。
   await loadAppearance();
-  // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
-  WidgetSyncService.syncTodayCourses();
-  // 信息型组件：考试倒计时 / 校园卡余额（本地缓存）
-  WidgetSyncService.syncInfoWidgets();
-  // v2.2.14 外部打开 App（冷启动）使用次数 +1（静默，失败不影响）
-  // v2.2.21 上课提醒：启动时重排未来 7 天课程提醒（后台执行，不阻塞启动）
-  CourseReminderService.rescheduleAll();
+  // 桌面小组件 / 上课提醒均为安卓专属能力，Web 端无对应插件，整段跳过。
+  if (!kIsWeb) {
+    // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
+    WidgetSyncService.syncTodayCourses();
+    // 信息型组件：考试倒计时 / 校园卡余额（本地缓存）
+    WidgetSyncService.syncInfoWidgets();
+    // v2.2.21 上课提醒：启动时重排未来 7 天课程提醒（后台执行，不阻塞启动）
+    CourseReminderService.rescheduleAll();
+  }
   // 🔴 2026-11-04 审查 P0：冷装用户的上课提醒一条都不会响。
   //    `CourseReminderService.isEnabled()` 默认 `true`，UI 一路绿灯，
   //    但启动路径**从未申请过** POST_NOTIFICATIONS（targetSdk 35 →
@@ -80,14 +84,16 @@ void main() async {
   //    修法：首帧后一次性申请（`ensureFirstRunPermission` 内部有
   //    `hasAskedPermission()` 去重，不会每次启动都弹）；申请到就立刻
   //    重排，让第一批提醒真正落地。
-  WidgetsBinding.instance.addPostFrameCallback((_) async {
-    try {
-      final granted = await NotificationService.ensureFirstRunPermission();
-      if (granted) await CourseReminderService.rescheduleAll();
-    } catch (_) {
-      // 权限申请失败不能影响启动
-    }
-  });
+  if (!kIsWeb) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final granted = await NotificationService.ensureFirstRunPermission();
+        if (granted) await CourseReminderService.rescheduleAll();
+      } catch (_) {
+        // 权限申请失败不能影响启动
+      }
+    });
+  }
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -98,12 +104,15 @@ void main() async {
   //    后者知道，前者永远按 121212/白 画。现在统一收口到 AppTheme，
   //    这一行只是先按当前模式铺一次初始值。
   AppTheme.refreshSystemOverlay();
-  // 校园网状态改为全局监控：重连后 60s 内自动更新
-  CampusNetMonitor.instance.start();
-  // 内网路径探测：**进 App 探一次**（直连 / 校外网关 / 都不通），
-  // 不 await —— 探测最多几秒，不能挡住首屏。结果由 NetMode.notifier 广播。
-  NetMode.bind(); // 全局监听校园网变化（不依赖首页卡片是否挂载）
-  NetMode.probe();
+  // 校园网监控 / 内网路径探测依赖 dart:io Socket，Web 端不可用，整段跳过。
+  if (!kIsWeb) {
+    // 校园网状态改为全局监控：重连后 60s 内自动更新
+    CampusNetMonitor.instance.start();
+    // 内网路径探测：**进 App 探一次**（直连 / 校外网关 / 都不通），
+    // 不 await —— 探测最多几秒，不能挡住首屏。结果由 NetMode.notifier 广播。
+    NetMode.bind(); // 全局监听校园网变化（不依赖首页卡片是否挂载）
+    NetMode.probe();
+  }
   // 控制台预热：未登录统一认证时整段空转，一次请求都不发。
   unawaited(ControlService.warmUp());
   runApp(const ProviderScope(child: XiYuanToolboxApp()));
@@ -211,16 +220,10 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // v2.2.13：从后台回到前台时刷新桌面小组件（跨天/课程变更场景）
     if (state == AppLifecycleState.resumed) {
-      WidgetSyncService.syncTodayCourses();
+      if (!kIsWeb) WidgetSyncService.syncTodayCourses();
       unawaited(ControlService.warmUp());
-      // 🔴 2026-10-31：回前台时**重排全部本地提醒**。
-      //
-      //    很多国产 ROM 的「后台清理 / 一键清理」会连 AlarmManager 里的
-      //    定时闹钟一起清掉（不只是杀进程）→ 用户回前台后闹钟已经没了，
-      //    表现就是「清除后台后收不到提醒」。
-      //    这里在回前台时重排一次，把被清掉的闹钟补回来
-      //    （重排幂等：会先取消再按当前数据重建，不会重复通知）。
-      unawaited(_rescheduleAllReminders());
+      // 本地提醒重排为安卓专属，Web 端跳过。
+      if (!kIsWeb) unawaited(_rescheduleAllReminders());
     }
   }
 

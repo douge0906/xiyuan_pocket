@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'home/home_cards.dart';
 import '../widgets/home_week_strip.dart';
@@ -1011,6 +1012,9 @@ class HomePageState extends ConsumerState<HomePage>
   /// 检测校园网（隐式刷新）：不置「检测中」、不打断显示，
   /// 结束后仅当结果与当前不同才更新 UI。
   Future<void> _refreshCampusNet() async {
+    // Web 端不做校园网/内网探测（dart:io HttpClient 不可用，且浏览器受
+    // Mixed Content 限制），静默跳过，状态保持 unknown。
+    if (kIsWeb) return;
     if (_campusDetecting) return;
     _campusDetecting = true;
     try {

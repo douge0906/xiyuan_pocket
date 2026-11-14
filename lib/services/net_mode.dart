@@ -61,6 +61,7 @@ class NetMode {
   /// 之前只有首页卡片监听 WiFi 变化 —— 用户停在别的 tab 时切了网络，
   /// 探测不会重跑，于是「明明连了校园网还在走 WebVPN」（2026-10-26 反馈）。
   static void bind() {
+    if (kIsWeb) return; // Web 端不监听校园 WiFi 状态
     if (_bound) return;
     _bound = true;
     CampusNetMonitor.instance.status.addListener(() {
@@ -81,6 +82,12 @@ class NetMode {
   /// 探测一次。`force=false` 且已探过时直接返回缓存结果；
   /// 已有探测在跑时返回同一个 Future（不做重复请求，也不会提前返回旧值）。
   static Future<CampusNetMode> probe({bool force = false}) {
+    if (kIsWeb) {
+      // 浏览器无法直连内网（10.3.100.110），也不走原生会话探测；
+      // 内网/电费/一卡通相关功能在 Web 端按不可用处理。
+      notifier.value = CampusNetMode.offline;
+      return Future<CampusNetMode>.value(CampusNetMode.offline);
+    }
     if (_probed && !force) return Future<CampusNetMode>.value(current);
     final running = _inflight;
     if (running != null) return running;

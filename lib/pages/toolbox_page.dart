@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../app.dart';
 import '../models/tool_model.dart';
@@ -187,8 +188,9 @@ class _ToolboxPageState extends State<ToolboxPage> {
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), // v1.7.1 统一页面边距：原 18
                 itemCount: tools.isEmpty ? 2 : tools.length + 1,
                 itemBuilder: (context, index) {
-                  // 第 0 项：一卡通 / 电费余额（由「我的」页移到这里，查看更顺手）
+                  // 第 0 项：一卡通 / 电费余额（内网 10.3.100.110 专属，Web 端不可用，隐藏）
                   if (index == 0) {
+                    if (kIsWeb) return const SizedBox.shrink();
                     return const Padding(
                       padding: EdgeInsets.only(bottom: 14),
                       child: BalanceCardsSection(),

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -891,27 +892,28 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  _sectionTitle('桌面小组件'),
-                  _card(
-                    child: Builder(builder: (context) {
-                      final added = (_widgetInstalled == true ? 1 : 0) +
-                          (_examWidgetInstalled == true ? 1 : 0) +
-                          (_cardWidgetInstalled == true ? 1 : 0);
-                      return _widgetEntry(
-                        icon: Icons.widgets_rounded,
-                        title: '桌面小组件',
-                        subtitle: '小组件总入口 · 已添加 $added/3',
-                        installed: added > 0,
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const WidgetHubPage(),
+                  if (!kIsWeb) const SizedBox(height: 8),
+                  if (!kIsWeb) _sectionTitle('桌面小组件'),
+                  if (!kIsWeb)
+                    _card(
+                      child: Builder(builder: (context) {
+                        final added = (_widgetInstalled == true ? 1 : 0) +
+                            (_examWidgetInstalled == true ? 1 : 0) +
+                            (_cardWidgetInstalled == true ? 1 : 0);
+                        return _widgetEntry(
+                          icon: Icons.widgets_rounded,
+                          title: '桌面小组件',
+                          subtitle: '小组件总入口 · 已添加 $added/3',
+                          installed: added > 0,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const WidgetHubPage(),
+                            ),
                           ),
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 8),
+                        );
+                      }),
+                    ),
+                  if (!kIsWeb) const SizedBox(height: 8),
                   _sectionTitle('关于'),
                   _card(
                     child: Column(
