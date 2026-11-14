@@ -33,12 +33,13 @@
 
   <style>
     /* 首屏加载占位：Flutter 引擎就绪前展示，首帧后由脚本移除。
-       纯内联 HTML/CSS，不引外部资源，仅 Web 构建使用，不影响安卓端。 */
+       配色对齐安卓启动页（launch_bg #F8F9FC + 主色 #1F2937），避免首帧深浅跳变。
+       纯内联 HTML/CSS，仅 Web 构建使用，不影响安卓端。 */
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
-      background: #1F2937;
+      background: #F8F9FC;
     }
     #app-loading {
       position: fixed;
@@ -47,37 +48,49 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 18px;
-      background: #1F2937;
+      gap: 20px;
+      background: #F8F9FC;
       z-index: 99999;
       font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      animation: app-loader-fade-in 0.25s ease-out;
+    }
+    .loader-logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      box-shadow: 0 6px 20px rgba(31, 41, 55, 0.12);
     }
     .loader-ring {
-      width: 44px;
-      height: 44px;
-      border: 3px solid rgba(255, 255, 255, 0.18);
-      border-top-color: #ffffff;
+      width: 34px;
+      height: 34px;
+      border: 3px solid #E5E7EB;
+      border-top-color: #1F2937;
       border-radius: 50%;
       animation: app-loader-spin 0.9s linear infinite;
     }
     .loader-title {
-      color: #ffffff;
+      color: #1F2937;
       font-size: 18px;
       font-weight: 600;
       letter-spacing: 2px;
     }
     .loader-sub {
-      color: rgba(255, 255, 255, 0.6);
+      color: #6B7280;
       font-size: 13px;
       letter-spacing: 1px;
     }
     @keyframes app-loader-spin {
       to { transform: rotate(360deg); }
     }
+    @keyframes app-loader-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
   </style>
 </head>
 <body>
   <div id="app-loading">
+    <img class="loader-logo" src="icons/Icon-192.png" alt="">
     <div class="loader-ring"></div>
     <div class="loader-title">掌上锡院</div>
     <div class="loader-sub">正在加载…</div>
