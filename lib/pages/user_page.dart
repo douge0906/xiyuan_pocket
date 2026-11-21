@@ -1026,7 +1026,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                       return _widgetEntry(
                         icon: Icons.widgets_rounded,
                         title: '桌面小组件',
-                        subtitle: '小组件总入口 · 已添加 $added/3',
                         installed: added > 0,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -1043,7 +1042,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     child: _widgetEntry(
                       icon: Icons.people_alt_rounded,
                       title: '邀请同学',
-                      subtitle: '每邀请 1 人，资源中心每日下载额度 +10 次',
                       installed: null,
                       onTap: () => _openInvite(context),
                     ),
@@ -1121,7 +1119,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   Widget _widgetEntry({
     required IconData icon,
     required String title,
-    required String subtitle,
+    String? subtitle,
     required bool? installed,
     required VoidCallback onTap,
   }) {
@@ -1151,11 +1149,13 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                           fontSize: AppTheme.fontBody,
                           fontWeight: FontWeight.w600,
                           color: context.textPrimary)),
-                  const SizedBox(height: 3),
-                  Text(subtitle,
-                      style: TextStyle(
-                          fontSize: AppTheme.fontSmall,
-                          color: context.textTertiary)),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 3),
+                    Text(subtitle,
+                        style: TextStyle(
+                            fontSize: AppTheme.fontSmall,
+                            color: context.textTertiary)),
+                  ],
                 ],
               ),
             ),

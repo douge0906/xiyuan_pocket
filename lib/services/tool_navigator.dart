@@ -19,12 +19,15 @@ class ToolNavigator {
   ///
   /// 校历与地图不在此列 —— 前者是纯离线数据，后者是纯内置 3D 白模（离线单文件）。
   /// 教材要登录（走教务「选课 → 教材预订」，未登录拿不到数据）。
+  /// 资源服务（原控制台）也要登录：未登录进去只有空列表和被拒的请求，
+  /// 不如在入口就拦下，少一层「进去了又什么都不能点」的困惑。
   static const Set<String> loginRequired = {
     'grade_push',
     'exam_query',
     'empty_classroom',
     'textbook',
     'my_study',
+    'library',
   };
 
   static Future<void> open(

@@ -51,10 +51,9 @@ class _ImageImportDialogState extends State<ImageImportDialog> {
   void initState() {
     super.initState();
     _items = [for (final c in widget.courses) c.copy()];
-    _picked = {
-      for (final c in _items)
-        if (c.isReadyToImport) _key(c),
-    };
+    // 默认一个都不选：识别结果有可能整段错位（例如把表头当课程名），
+    // 全选默认会把错课程直接写进课表。让用户自己逐条确认。
+    _picked = <String>{};
   }
 
   String _sessionLine(RecognizedCourse c) {
@@ -192,6 +191,35 @@ class _ImageImportDialogState extends State<ImageImportDialog> {
                           '点「编辑」可改。'
                       : '勾选要添加的课程；点「编辑」可修改识别结果。',
                   style: TextStyle(fontSize: AppTheme.fontSmall, color: sub)),
+              const SizedBox(height: 8),
+              // 识别结果可能整段错位（把表头当课程名）或漏读周次/节次，
+              // 导入前必须让用户知道要逐条核对，不能默认信任。
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: context.warningColor.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  border: Border.all(
+                      color: context.warningColor.withValues(alpha: .35)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline_rounded,
+                        size: 16, color: context.warningColor),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '识别结果有出错风险，请仔细校对后再勾选本班级的实验课。',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontSmall,
+                            height: 1.4,
+                            color: context.warningColor),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -316,16 +344,6 @@ class _ImageImportDialogState extends State<ImageImportDialog> {
                               style: TextStyle(
                                   fontSize: AppTheme.fontCaption,
                                   color: AppTheme.primaryColor)),
-                        ),
-                      if (c.academicYear.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            '学年：${c.academicYear}'
-                            '${c.academicTerm.isEmpty ? '' : ' ${c.academicTerm}'}',
-                            style: TextStyle(
-                                fontSize: AppTheme.fontCaption, color: sub),
-                          ),
                         ),
                       if (c.classroom.isNotEmpty)
                         Padding(

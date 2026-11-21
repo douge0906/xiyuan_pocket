@@ -642,15 +642,35 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
   Future<void> _importFromImage() async {
     if (_syncing) return;
     setState(() => _syncing = true);
+    // OCR 走服务端识别，正常要几秒（上传 + 识别 + 解析），光靠顶栏图标转圈
+    // 用户很容易以为点了没反应，所以识别期间盖一个明确的等待弹窗。
+    var busyShown = false;
+    void closeBusy() {
+      if (!busyShown) return;
+      busyShown = false;
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
+
     try {
       final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
       if (picked == null || !mounted) return;
 
+      final bytes = await picked.readAsBytes();
+      if (!mounted) return;
+
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const _OcrBusyDialog(),
+      );
+      busyShown = true;
+
       // 压缩与上传都在 recognizeImageBytes 里完成，这里只把原图读成字节
       final recognition = await recognizeImageBytes(
-        await picked.readAsBytes(),
+        bytes,
         filename: picked.name,
       );
+      closeBusy();
       if (!mounted) return;
       if (!recognition.supported) {
         _toast(recognition.message ?? '当前环境暂不支持图片识别');
@@ -743,6 +763,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         await _load();
       }
     } finally {
+      closeBusy();
       if (mounted) setState(() => _syncing = false);
     }
   }
@@ -3047,3 +3068,47 @@ String _stableTextHash(String source) {
 
 String _courseBase(String name, String className, String year, String term) =>
     '${name.trim()}|${className.trim()}|${year.trim()}|${term.trim()}';
+
+/// 图片识别进行中的等待弹窗。
+///
+/// 识别走服务端（上传 → 识别 → 解析），正常要几秒；期间如果只靠顶栏小圈转，
+/// 用户容易以为没点上。这里给一句明确的「正在识别」并把交互挡住。
+class _OcrBusyDialog extends StatelessWidget {
+  const _OcrBusyDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        backgroundColor: context.cardColor,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: AppTheme.cardStrokeColor(context.isDark)),
+        ),
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                valueColor: AlwaysStoppedAnimation(AppTheme.primaryColor),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Flexible(
+              child: Text(
+                '正在识别课表，请不要离开',
+                style: TextStyle(
+                    fontSize: AppTheme.fontBody, color: context.textPrimary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
