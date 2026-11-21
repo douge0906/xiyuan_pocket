@@ -22,7 +22,8 @@ class WebCampusProxy {
   static String get _base => ControlConfig.baseUrl;
   static const Duration _timeout = Duration(seconds: 20);
 
-  /// 启动登录。返回会话 id 与验证码图片 base64（不含 `data:` 前缀）。
+  /// 启动登录。服务端会自动识别验证码，识别成功直接返回 `loggedIn: true`
+  /// （`captchaB64` 为空，前端不该再弹验证码）；识别不出来才回传图片交人工。
   static Future<WebLoginStart> startLogin(
     String username,
     String password, {
@@ -45,7 +46,11 @@ class WebCampusProxy {
     if (sid.isEmpty) {
       throw CampusException('登录会话建立失败，请稍后重试');
     }
-    return WebLoginStart(sessionId: sid, captchaB64: captcha);
+    return WebLoginStart(
+      sessionId: sid,
+      captchaB64: captcha,
+      loggedIn: data['ok'] == true || captcha.isEmpty,
+    );
   }
 
   /// 回填验证码，完成 CAS 登录并建立教务会话。
@@ -112,6 +117,31 @@ class WebCampusProxy {
     }
   }
 
+  /// 探活 + 静默续期。
+  ///
+  /// 服务端会先用一次 GET 探上游教务罐：还活着就只滑动续期；死了就用登录时
+  /// 留下的 TGT 免验证码重建 cookie 罐。**整个过程不需要用户再填验证码**，
+  /// 这是对齐 h5「重进不用重新登录」体验的关键。
+  ///
+  /// 返回：true = 会话可用（可能已静默重建）；false = TGT 也失效，必须重新登录。
+  static Future<bool> refresh(String sessionId) async {
+    try {
+      final resp = await http
+          .post(
+            Uri.parse('$_base/api/v1/campus/session/refresh'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({'session_id': sessionId}),
+          )
+          .timeout(_timeout);
+      if (resp.statusCode == 401) return false;
+      if (resp.statusCode >= 500) return false;
+      final data = _decode(resp);
+      return data['ok'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 注销服务端会话（不调学校 CAS 登出，只清服务端内存罐）。
   static Future<void> logout(String sessionId) async {
     try {
@@ -163,10 +193,18 @@ class WebCampusProxy {
 
 /// [WebCampusProxy.startLogin] 的返回。
 class WebLoginStart {
-  const WebLoginStart({required this.sessionId, required this.captchaB64});
+  const WebLoginStart({
+    required this.sessionId,
+    required this.captchaB64,
+    this.loggedIn = false,
+  });
 
   final String sessionId;
   final String captchaB64;
+
+  /// 服务端已自动识别验证码并完成登录时 true —— 调用方直接进已登录态，
+  /// 不再弹验证码对话框。
+  final bool loggedIn;
 }
 
 /// 代理代取的响应，字段对齐安卓 `CampusResponse`。

@@ -8,8 +8,9 @@ class ControlConfig {
 
   /// 控制端根地址。
   ///
-  /// 只用于「内容下发」：版本检查、公告、校历、试卷库、设备登记。
-  /// 教务/一卡通等数据**不经过这里**，仍由客户端直连学校系统。
+  /// 用于「内容下发 + 账号断言」：版本检查、公告、校历、试卷库、设备登记。
+  /// 账号断言只上传本地算出的伪名（SHA-256），**不上传原始学号**；
+  /// 教务/一卡通等数据仍由客户端直连学校系统，密码不经过这里。
   static const String baseUrl = 'https://con.wxxydouge.icu';
 
   /// 控制端是否启用（地址为空即关闭）。
@@ -41,7 +42,13 @@ class ControlConfig {
 
   // ---- 签名规范化前缀（与服务端 security.py 一致）----
   static const String deviceSignPrefix = 'xiyuan-control-device';
+  /// v1 兼容前缀：旧客户端把学号一起签进去，服务端仍保留校验路径。
   static const String loginSignPrefix = 'xiyuan-control-login';
+  /// v2：只签本地伪名，原始学号不再进入请求。
+  static const String loginSignPrefixV2 = 'xiyuan-control-login-v2';
+
+  /// 当前登录断言版本。1 = 旧协议（带学号），2 = 只带伪名。
+  static const int assertionVersion = 2;
 
   // ---- 接口路径（集中一处，便于服务端对拍）----
   static const String pathDeviceRegister = '/api/v1/devices/register';

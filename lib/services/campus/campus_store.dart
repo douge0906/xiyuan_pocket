@@ -140,13 +140,20 @@ class LocalCampusService {
     _clearPersistedWebSid();
   }
 
-  /// Web 第一步：提交账密、取验证码图，建立 pending 会话。
-  /// 验证码由用户在浏览器识别后调 [submitWebCaptcha] 回填。
+  /// Web 第一步：提交账密。服务端会自动识别验证码，识别成功就直接是已登录态
+  /// （[WebLoginStart.loggedIn] 为 true，不再弹验证码）；失败才把图交人工回填。
   static Future<WebLoginStart> beginWebLogin(
       String username, String password) async {
     final start = await WebCampusProxy.startLogin(username, password);
-    _webPendingSid = start.sessionId;
     _webSidUser = username;
+    if (start.loggedIn) {
+      // 服务端已经替我们完成 CAS 登录，直接进就绪态并落盘，刷新后免重登。
+      _webSid = start.sessionId;
+      _webPendingSid = null;
+      await _persistWebSid(start.sessionId, username);
+    } else {
+      _webPendingSid = start.sessionId;
+    }
     return start;
   }
 
@@ -234,13 +241,19 @@ class LocalCampusService {
     String password,
     Future<T> Function(CampusSessionBase) run,
   ) async {
-    // Web：走服务端有状态代理会话；会话失效由界面重新走两步登录。
+    // Web：走服务端有状态代理会话。教务罐在服务端过期时，先用留存的 TGT
+    // **免验证码**静默重建（这是对齐 h5「重进不用重新登录」的体验），
+    // 重建失败才清本地 sid，让界面走两步登录。
     if (kIsWeb) {
       final s = await _ensureWeb(username);
       try {
         return await run(s);
       } on CampusException catch (e) {
         if (!e.needRelogin) rethrow;
+        final sid = _webSid;
+        if (sid != null && await WebCampusProxy.refresh(sid)) {
+          return await run(WebCampusSession(sid));
+        }
         _webSid = null;
         _webSidUser = null;
         await _clearPersistedWebSid();
@@ -402,9 +415,10 @@ class LocalCampusService {
   static Future<Map<String, dynamic>> fetchCardBalance(
       String username, String password) async {
     // Web：复用代理会话隧道访问融合门户（门户 cookie 罐由服务端持有）。
+    // 走 _withRelogin 是为了共享「会话失效 → 静默续期 → 原地重试」这一条路径。
     if (kIsWeb) {
-      final s = await _ensureWeb(username);
-      return await CardBalanceClient.fetch(s, username, password);
+      return _withRelogin(username, password,
+          (s) => CardBalanceClient.fetch(s, username, password));
     }
     if (_portalSession != null && _portalUser == username) {
       try {

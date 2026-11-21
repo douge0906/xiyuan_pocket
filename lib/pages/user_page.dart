@@ -478,7 +478,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     }
   }
 
-  /// 登录校验：原生一步 CAS 直连；Web 走服务端代理两步（取验证码图 → 人工回填）。
+  /// 登录校验：原生一步 CAS 直连；Web 走服务端代理（服务端自动识别验证码，
+  /// 识别成功就直接登录成功，只有三轮都失败才弹人工回填）。
   Future<void> _authenticate(String u, String p) async {
     if (!kIsWeb) {
       await ApiService.verifyLogin(u, p);
@@ -486,6 +487,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     }
     final start = await ApiService.beginWebLogin(u, p);
     if (!mounted) return;
+    if (start.loggedIn) return;
     final code = await _showCaptchaDialog(start.captchaB64);
     if (code == null || code.isEmpty) {
       throw Exception('已取消登录');

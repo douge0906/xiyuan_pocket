@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xiyuan_pocket/constants/control_config.dart';
 import 'package:xiyuan_pocket/services/device_identity.dart';
 
 /// 伪名算法必须与服务端一致，否则断言登录会被判 `invalid_alias`。
@@ -17,5 +20,14 @@ void main() {
     final alias = DeviceIdentity.studentAlias('2026123456');
     expect(alias.length, 64);
     expect(RegExp(r'^[0-9a-f]+$').hasMatch(alias), isTrue);
+  });
+
+  test('v2 断言只签伪名，请求体不再出现原始学号', () {
+    expect(ControlConfig.assertionVersion, 2);
+    expect(ControlConfig.loginSignPrefixV2, 'xiyuan-control-login-v2');
+    final source =
+        File('lib/services/control_service.dart').readAsStringSync();
+    expect(source.contains("'student_id':"), isFalse);
+    expect(source.contains('ControlConfig.loginSignPrefixV2'), isTrue);
   });
 }

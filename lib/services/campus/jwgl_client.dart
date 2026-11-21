@@ -38,25 +38,27 @@ class JwglClient {
     Object? lastError;
     var failed = 0;
 
+    Map<String, String> formFor(String xnm, String xqm) => {
+          'xnm': xnm,
+          'xqm': xqm,
+          '_search': 'false',
+          'nd': '${DateTime.now().millisecondsSinceEpoch}',
+          'page': '1',
+          'rows': '$rows',
+          'queryModel.showCount': '$rows',
+          'queryModel.currentPage': '1',
+          'queryModel.sortName': '',
+          'queryModel.sortOrder': 'asc',
+          'sidx': '',
+          'sord': 'asc',
+          if (csrf.isNotEmpty) 'csrftoken': csrf,
+        };
+
     Future<void> addTerm(List<String> t) async {
       try {
         final items = await _queryGrade(
           session,
-          {
-            'xnm': t[0],
-            'xqm': t[1],
-            '_search': 'false',
-            'nd': '${DateTime.now().millisecondsSinceEpoch}',
-            'page': '1',
-            'rows': '$rows',
-            'queryModel.showCount': '$rows',
-            'queryModel.currentPage': '1',
-            'queryModel.sortName': '',
-            'queryModel.sortOrder': 'asc',
-            'sidx': '',
-            'sord': 'asc',
-            if (csrf.isNotEmpty) 'csrftoken': csrf,
-          },
+          formFor(t[0], t[1]),
           pageSize: rows,
         );
         all.addAll(items);
@@ -65,14 +67,18 @@ class JwglClient {
         lastError = e;
         failed++;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 120));
     }
 
-    // 先查「全部学期」，再补查最近 10 个学期。即使某个学期已出现，
-    // 也仍然查询补漏：全部学期接口可能只返回该学期的一部分行。
+    // 先查「全部学期」，再补查最近 10 个学期兜底（全部学期接口可能只
+    // 返回部分行）。补查按 4 路有限并行，避免 10 个学期纯串行排队；
+    // 兜底语义与去重逻辑不变。
     await addTerm(['', '']);
-    for (final t in _recentTerms(10)) {
-      await addTerm(t);
+    final terms = _recentTerms(10);
+    const concurrency = 4;
+    for (var i = 0; i < terms.length; i += concurrency) {
+      final end =
+          (i + concurrency < terms.length) ? i + concurrency : terms.length;
+      await Future.wait(terms.sublist(i, end).map(addTerm));
     }
 
     if (all.isEmpty && lastError != null) {
@@ -120,7 +126,6 @@ class JwglClient {
     required int pageSize,
   }) async {
     Object? lastError;
-    var responded = false;
     for (final url in [
       _gradeApi,
       '$_gradePage?doType=query&gnmkdm=N305005',
@@ -128,14 +133,15 @@ class JwglClient {
       try {
         final items =
             await _queryAll(session, url, form, pageSize: pageSize);
-        responded = true;
-        if (items.isNotEmpty) return items;
+        // 该入口正常响应即以此为准：有数据返回，空结果也直接返回空，
+        // 不再为「空」重复打第二个入口（空学期请求减半）；只有抛错才
+        // 换下一个入口兜底。
+        return items;
       } catch (e) {
         if (e is CampusException && e.needRelogin) rethrow;
         lastError = e;
       }
     }
-    if (responded) return const [];
     if (lastError != null) throw lastError;
     return const [];
   }

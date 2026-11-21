@@ -77,7 +77,7 @@ class ControlService {
 
   /// 冷启动/回前台预热：设备登记 → 必要时断言登录 → 版本探测。
   ///
-  /// 未登录统一认证时整段空转 —— 一次 DNS 都不会发。
+  /// 未登录学校统一认证时仍会做设备登记与版本检查，但不会发送学号伪名。
   /// 默认 6 小时内不重复（[force] 可绕过，登录成功后用）。
   static Future<void> warmUp({bool force = false}) async {
     final last = _lastWarmUp;
@@ -165,7 +165,8 @@ class ControlService {
 
   /// 断言登录：拿一次性挑战 → 用设备私钥签名 → 换会话令牌。
   ///
-  /// 只在完成本机统一认证登录后调用；学号会先转成伪名再上传。
+  /// 只在完成本机统一认证登录后调用；原始学号只在本机参与伪名计算，
+  /// 请求与签名里都不再出现。
   static Future<bool> loginWithStudentId(
     String studentId, {
     String displayName = '',
@@ -189,11 +190,10 @@ class ControlService {
     final alias = DeviceIdentity.studentAlias(studentId);
     final assertedAt = isoTimestamp();
     final signature = identity.signLines([
-      ControlConfig.loginSignPrefix,
+      ControlConfig.loginSignPrefixV2,
       challengeId,
       challenge,
       serial,
-      studentId,
       alias,
       displayName,
       assertedAt,
@@ -202,10 +202,10 @@ class ControlService {
     final res = await ControlApi.postJson(
       ControlConfig.pathAssertions,
       {
+        'assertion_version': ControlConfig.assertionVersion,
         'challenge_id': challengeId,
         'challenge': challenge,
         'device_serial': serial,
-        'student_id': studentId,
         'student_alias': alias,
         'display_name': displayName,
         'asserted_at': assertedAt,

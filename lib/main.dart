@@ -113,7 +113,7 @@ void main() async {
     NetMode.bind(); // 全局监听校园网变化（不依赖首页卡片是否挂载）
     NetMode.probe();
   }
-  // 控制台预热：未登录统一认证时整段空转，一次请求都不发。
+  // 控制台预热：启动后先做设备登记与版本检查；完成学校登录后才会发送学号伪名、建立账号会话。
   unawaited(ControlService.warmUp());
   runApp(const ProviderScope(child: XiYuanToolboxApp()));
 }

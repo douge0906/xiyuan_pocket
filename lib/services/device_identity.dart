@@ -162,7 +162,8 @@ class DeviceIdentity {
 
   /// 学号伪名：SHA-256("xiyuan-control|student|" + 学号)，小写十六进制。
   ///
-  /// 服务端只保存这个伪名与学号哈希，不接触学号明文。
+  /// 只在本机计算；服务端收到后立即用服务端密钥做 HMAC，数据库不保存
+  /// 这个可枚举的伪名，更不保存原始学号。
   static String studentAlias(String studentId) {
     final digest = SHA256Digest().process(
       Uint8List.fromList(utf8.encode('xiyuan-control|student|$studentId')),
