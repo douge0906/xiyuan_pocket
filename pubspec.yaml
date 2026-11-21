@@ -83,9 +83,8 @@ flutter:
     - assets/seed/app_seed.json
     # 锡院学生手册（2026 版·完全版，见 pages/tools/handbook_page.dart）
     - assets/seed/handbook_2026.json
-    # 校园地图（内置图片，见 pages/tools/campus_map_page.dart）
-    - assets/images/campus_map.jpg
-    - assets/images/campus_map_illustrated.png
+    # 校园地图（3D 白模单文件，离线自包含，见 pages/tools/campus_map_page.dart）
+    - assets/map/campus3d.html
     # 法务文本（隐私政策 / 用户协议）
     - assets/legal/privacy_policy.md
     - assets/legal/user_agreement.md

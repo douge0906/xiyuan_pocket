@@ -17,7 +17,7 @@ import '../pages/countdown_page.dart';
 class ToolNavigator {
   /// **需要登录**（本机已存统一认证账号）才能使用的工具。
   ///
-  /// 校历与地图不在此列 —— 前者是纯离线数据，后者是纯内置图片。
+  /// 校历与地图不在此列 —— 前者是纯离线数据，后者是纯内置 3D 白模（离线单文件）。
   /// 教材要登录（走教务「选课 → 教材预订」，未登录拿不到数据）。
   static const Set<String> loginRequired = {
     'grade_push',
@@ -70,7 +70,7 @@ class ToolNavigator {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ResourceCenterPage()));
         break;
-      // 地图不需要登录（纯内置图片）；教材已在上面过闸门
+      // 地图不需要登录（纯内置 3D 白模，离线单文件）；教材已在上面过闸门
       case 'textbook':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const TextbookPage()));

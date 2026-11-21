@@ -554,7 +554,21 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('输入验证码'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            const Expanded(child: Text('输入验证码')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.of(ctx).pop(),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
         content: StatefulBuilder(
           builder: (ctx, setDlg) => Column(
             mainAxisSize: MainAxisSize.min,

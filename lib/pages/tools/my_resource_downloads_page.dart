@@ -102,7 +102,21 @@ class _MyResourceDownloadsPageState extends State<MyResourceDownloadsPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除本地文件？'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            const Expanded(child: Text('删除本地文件？')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.pop(ctx, false),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
         content: Text(item.name,
             maxLines: 2, overflow: TextOverflow.ellipsis),
         actions: [

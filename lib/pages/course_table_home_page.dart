@@ -604,6 +604,12 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                 child: Text('导入成功',
                     style: TextStyle(fontSize: AppTheme.fontTitle)),
               ),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(ctx).pop(),
+                icon: Icon(Icons.close_rounded,
+                    size: 20, color: context.textTertiary),
+              ),
             ],
           ),
           content: const Text(

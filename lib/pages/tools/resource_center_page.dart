@@ -556,7 +556,21 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('暂不支持在线预览'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(color: context.borderColor),
+          ),
+          title: Row(
+            children: [
+              const Expanded(child: Text('暂不支持在线预览')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.pop(ctx),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+            ],
+          ),
           content: Text(
             '${entry.name}\n\n旧版 .doc 文件需要下载后用 Word / WPS 打开。',
             style: const TextStyle(fontSize: AppTheme.fontSmall),
@@ -624,8 +638,31 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
           builder: (ctx, setStateDialog) {
             setDialog = setStateDialog;
             return AlertDialog(
-              title: Text(save ? '正在保存' : '正在打开',
-                  style: const TextStyle(fontSize: AppTheme.fontTitle)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                side: BorderSide(color: context.borderColor),
+              ),
+              title: Row(
+                children: [
+                  Expanded(
+                    child: Text(save ? '正在保存' : '正在打开',
+                        style: const TextStyle(fontSize: AppTheme.fontTitle)),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    // 进度框不能点外部关，但右上角 × 就是「取消」的同义入口，
+                    // 与 R8「点 × 或保存/取消才关闭」一致。
+                    onPressed: cancelling
+                        ? null
+                        : () {
+                            cancelToken.cancel();
+                            setDialog?.call(() => cancelling = true);
+                          },
+                    icon: Icon(Icons.close_rounded,
+                        size: 20, color: context.textTertiary),
+                  ),
+                ],
+              ),
               content: SizedBox(
                 width: 260,
                 child: Column(
@@ -865,7 +902,21 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
     final submitted = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('反馈：${labels[reason] ?? '资源问题'}'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            Expanded(child: Text('反馈：${labels[reason] ?? '资源问题'}')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.pop(ctx, false),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,

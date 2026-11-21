@@ -317,7 +317,21 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialog) => AlertDialog(
-          title: const Text('手动添加考试'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(color: context.borderColor),
+          ),
+          title: Row(
+            children: [
+              const Expanded(child: Text('手动添加考试')),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(ctx).pop(false),
+                icon: Icon(Icons.close_rounded,
+                    size: 20, color: context.textTertiary),
+              ),
+            ],
+          ),
           content: SizedBox(
             width: double.maxFinite,
             child: Column(
@@ -400,7 +414,21 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除考试'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            const Expanded(child: Text('删除考试')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.of(ctx).pop(false),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
         content: Text('确定要删除「$name」吗？'),
         actions: [
           TextButton(

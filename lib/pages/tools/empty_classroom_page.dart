@@ -799,6 +799,7 @@ class _MultiPickerDialogState extends State<_MultiPickerDialog> {
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
       shape: RoundedRectangleBorder(
         borderRadius: AppTheme.radiusLgAll,
+        side: BorderSide(color: context.borderColor),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360, maxHeight: 560),
@@ -912,7 +913,10 @@ class _SectionPickerDialogState extends State<_SectionPickerDialog> {
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      shape: RoundedRectangleBorder(borderRadius: AppTheme.radiusLgAll),
+      shape: RoundedRectangleBorder(
+        borderRadius: AppTheme.radiusLgAll,
+        side: BorderSide(color: context.borderColor),
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360, maxHeight: 560),
         child: Column(
@@ -1057,7 +1061,10 @@ class _BuildingPickerDialogState extends State<_BuildingPickerDialog> {
 
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      shape: RoundedRectangleBorder(borderRadius: AppTheme.radiusLgAll),
+      shape: RoundedRectangleBorder(
+        borderRadius: AppTheme.radiusLgAll,
+        side: BorderSide(color: context.borderColor),
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360, maxHeight: 560),
         child: Column(

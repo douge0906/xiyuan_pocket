@@ -113,6 +113,14 @@ class _AppRatingDialogState extends State<AppRatingDialog> {
                             fontWeight: FontWeight.w600,
                             color: context.textPrimary)),
                   ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: _going
+                        ? null
+                        : () => Navigator.of(context).pop(_submitted),
+                    icon: Icon(Icons.close_rounded,
+                        size: 20, color: context.textTertiary),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
