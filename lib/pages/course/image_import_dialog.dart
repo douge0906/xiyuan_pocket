@@ -345,6 +345,15 @@ class _ImageImportDialogState extends State<ImageImportDialog> {
                                   fontSize: AppTheme.fontCaption,
                                   color: AppTheme.primaryColor)),
                         ),
+                      if (c.academicYear.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text('学年：${c.academicYear}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontCaption, color: sub)),
+                        ),
                       if (c.classroom.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 3),
