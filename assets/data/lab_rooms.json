@@ -1,0 +1,899 @@
+{
+ "version": "2026-11-15",
+ "source": "无锡学院实验室_机器可读.csv",
+ "note": "实验室名称 → 楼栋+房间号。房间号缺失的条目不参与自动替换；多房间实验室取对照表首个房号。",
+ "buildings": [
+  "尚善楼",
+  "尚真楼",
+  "尚美楼",
+  "尚诚楼",
+  "思源楼",
+  "思贤楼",
+  "思齐楼",
+  "笃学楼"
+ ],
+ "entries": [
+  {
+   "name": "现代计算机组成原理实验室",
+   "building": "思源楼",
+   "room": "213",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "软件工程实验室",
+   "building": "思源楼",
+   "room": "310",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "物联网技术实践创新中心",
+   "building": "思源楼",
+   "room": "505",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "网络集成工程实验室",
+   "building": "思源楼",
+   "room": "508",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "无线射频识别(RFID)实验室",
+   "building": "思源楼",
+   "room": "202",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "信息安全实验室",
+   "building": "思源楼",
+   "room": "303",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "网络工程综合实验室",
+   "building": "思源楼",
+   "room": "402",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "移动平台开发教学实验室",
+   "building": "思源楼",
+   "room": "307",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "云计算与大数据实验室",
+   "building": "思源楼",
+   "room": "211",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "物联网综合实训室",
+   "building": "思源楼",
+   "room": "406",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "嵌入式物联网系统实验室",
+   "building": "思源楼",
+   "room": "411",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "无线传感网实验室",
+   "building": "思源楼",
+   "room": "409",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "边缘计算与智慧应用教学实验室",
+   "building": "思源楼",
+   "room": "",
+   "college": "物联网工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "电子工艺实验室（2间）",
+   "building": "思贤楼",
+   "room": "101",
+   "college": "电子信息工程学院",
+   "category": "基础实验室"
+  },
+  {
+   "name": "电工技术实验室",
+   "building": "思贤楼",
+   "room": "105",
+   "college": "电子信息工程学院",
+   "category": "基础实验室"
+  },
+  {
+   "name": "电路与电子技术实验室（5间）",
+   "building": "思贤楼",
+   "room": "201",
+   "college": "电子信息工程学院",
+   "category": "基础实验室"
+  },
+  {
+   "name": "微电子基础实验室",
+   "building": "思贤楼",
+   "room": "110",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "机器视觉测量综合实验室",
+   "building": "思贤楼",
+   "room": "207",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "光学虚拟现实实验室",
+   "building": "思贤楼",
+   "room": "210",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "PCB&SMT创新实验室",
+   "building": "思贤楼",
+   "room": "301",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "集成电路测试联合实验室",
+   "building": "思贤楼",
+   "room": "303",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "人工智能与大数据分析实验室",
+   "building": "思贤楼",
+   "room": "305",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "嵌入式电子技术综合实验室（2间）",
+   "building": "思贤楼",
+   "room": "307",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "智能应用系统开放实验室",
+   "building": "思贤楼",
+   "room": "310",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "高频电路与信号处理实验室",
+   "building": "思贤楼",
+   "room": "313",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "集成电路设计实验室",
+   "building": "思贤楼",
+   "room": "313",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "电子技术仿真实验室",
+   "building": "思贤楼",
+   "room": "401",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "软件无线电实验室",
+   "building": "思贤楼",
+   "room": "403",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "通信全网络融合创新实验室",
+   "building": "思贤楼",
+   "room": "405",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "光电信息技术实验室",
+   "building": "思贤楼",
+   "room": "407",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "无线传感网（IPv6）实验室",
+   "building": "思贤楼",
+   "room": "411",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "通信工程实验室",
+   "building": "思贤楼",
+   "room": "413",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "电磁场与微波技术实验室",
+   "building": "思贤楼",
+   "room": "",
+   "college": "电子信息工程学院",
+   "category": "专业实验室"
+  },
+  {
+   "name": "电力系统综合自动化及仿真实验室",
+   "building": "思齐楼",
+   "room": "101",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "新能源发电与微电网控制实验室",
+   "building": "思齐楼",
+   "room": "102",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "电气控制技术实验室",
+   "building": "思齐楼",
+   "room": "201",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "电力系统继电保护实验室",
+   "building": "思齐楼",
+   "room": "203",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "电机控制技术实验室",
+   "building": "思齐楼",
+   "room": "304",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "电力电子实验室",
+   "building": "思齐楼",
+   "room": "306",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "线性运动控制技术实验室",
+   "building": "思齐楼",
+   "room": "205",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "过程控制综合实验实训室",
+   "building": "思齐楼",
+   "room": "207",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "系统化过程控制实验室",
+   "building": "思齐楼",
+   "room": "208",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "自动控制原理实验室",
+   "building": "思齐楼",
+   "room": "210",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "自动控制原理应用技术实验室",
+   "building": "思齐楼",
+   "room": "301",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "PLC应用技术实验室",
+   "building": "思齐楼",
+   "room": "308",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "智能仪器实验与开发平台",
+   "building": "思齐楼",
+   "room": "310",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "测控电子电路综合实验室",
+   "building": "思齐楼",
+   "room": "404",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "测控技术综合设计实验室",
+   "building": "思齐楼",
+   "room": "406",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "工业机器人实践创新中心",
+   "building": "思齐楼",
+   "room": "503",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "高性能电力电子变换器实验室",
+   "building": "思齐楼",
+   "room": "",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "科研实验室"
+  },
+  {
+   "name": "机械加工与工程训练实训室（钻床等）",
+   "building": "尚真楼",
+   "room": "103",
+   "college": "自动化学院（智能制造工程学院）",
+   "category": "工程训练"
+  },
+  {
+   "name": "测绘工程实验室",
+   "building": "尚善楼",
+   "room": "401",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "遥感信息工程实验室",
+   "building": "尚善楼",
+   "room": "403",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "天气预报综合实验室（1/2/3）",
+   "building": "尚善楼",
+   "room": "407",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "气象灾害防御实验室",
+   "building": "尚善楼",
+   "room": "108",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "大气探测实验室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "雷达卫星虚拟实验室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "天气会商模拟实验室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "大气电场实验室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "大气与遥感学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "CTCS调度仿真实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "ZPW-2000A轨道电路综合实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "列车牵引制动系统综合实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "模拟驾驶仿真实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通车站仿真实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通行车组织、运营仿真实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通虚拟仿真实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通牵引供电综合实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "信号基础设备实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通数据网络平台实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通设计及数据优化研究实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "计算机信号联锁综合实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通智创实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "轨道交通智造实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "工程制图测绘实训室",
+   "building": "尚善楼",
+   "room": "",
+   "college": "交通与车辆工程学院",
+   "category": "实训室"
+  },
+  {
+   "name": "无机化学实验室",
+   "building": "尚诚楼",
+   "room": "506",
+   "college": "环境科学与工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "无机及分析化学实验室",
+   "building": "尚诚楼",
+   "room": "",
+   "college": "环境科学与工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "物理化学实验室",
+   "building": "尚诚楼",
+   "room": "",
+   "college": "环境科学与工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "有机化学实验室",
+   "building": "尚诚楼",
+   "room": "",
+   "college": "环境科学与工程学院",
+   "category": "教学实验室"
+  },
+  {
+   "name": "环境专业实验室群（9间）",
+   "building": "尚诚楼",
+   "room": "501",
+   "college": "环境科学与工程学院",
+   "category": "教学/科研实验室"
+  },
+  {
+   "name": "电子竞技馆",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "电竞实训室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "数字摄影棚",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "数字录音棚",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "虚拟演播室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "画室1",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "4K视听室（多媒体视听室）",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "影视后期机房（图形与影视机房）",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "CG机房",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "数字交互实验室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "数字文创工作室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "艺术展馆",
+   "building": "尚美楼",
+   "room": "",
+   "college": "传媒与艺术学院",
+   "category": "实训室"
+  },
+  {
+   "name": "电子商务模拟实验室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "物流仿真模拟实验室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "互联网金融实验室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "会计与财务管理综合实验室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "智慧应急管理情景模拟综合实训室",
+   "building": "尚美楼",
+   "room": "",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "教学实验室"
+  },
+  {
+   "name": "跨境电商实训教室（非实验室）",
+   "building": "尚美楼",
+   "room": "411",
+   "college": "数字经济与管理学院（应急管理学院）",
+   "category": "实训教室"
+  },
+  {
+   "name": "力学实验室（Ⅰ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "力学实验室（Ⅱ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "力学实验室（Ⅲ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "光学实验室（Ⅰ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "光学实验室（Ⅱ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "光学实验室（Ⅲ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "电学实验室（Ⅰ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "电学实验室（Ⅱ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "电学实验室（Ⅲ）",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "大学物理仿真实验室",
+   "building": "笃学楼",
+   "room": "",
+   "college": "理学院·大学物理实验中心",
+   "category": "基础实验室"
+  },
+  {
+   "name": "计算机基础教学实验室1",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室2",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室3",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室4",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室5",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室6",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室7",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "计算机基础教学实验室8",
+   "building": "笃学楼",
+   "room": "",
+   "college": "教务处（计算机基础教学）",
+   "category": "公共机房"
+  },
+  {
+   "name": "数字语音室1",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室4",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室5",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室6",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室7",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室8",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "数字语音室9",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "语音室"
+  },
+  {
+   "name": "外语自主学习室1",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "自主学习室"
+  },
+  {
+   "name": "外语自主学习室2",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "自主学习室"
+  },
+  {
+   "name": "外语自主学习室3",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "自主学习室"
+  },
+  {
+   "name": "外语数码广播电台",
+   "building": "尚真楼",
+   "room": "",
+   "college": "人文法政学院·外语系",
+   "category": "专用场所"
+  }
+ ]
+}

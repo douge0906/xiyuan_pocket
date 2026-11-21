@@ -21,6 +21,13 @@ const List<ToolModel> mainServices = [
     needsNetwork: true,
   ),
   ToolModel(
+    id: 'empty_classroom',
+    name: '空教室查询',
+    icon: Icons.meeting_room_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+  ),
+  ToolModel(
     id: 'my_study',
     name: '我的学业',
     icon: Icons.school_rounded,

@@ -10,27 +10,46 @@ class MyResourceUploadsPage extends StatefulWidget {
   State<MyResourceUploadsPage> createState() => _MyResourceUploadsPageState();
 }
 
-class _MyResourceUploadsPageState extends State<MyResourceUploadsPage> {
+class _MyResourceUploadsPageState extends State<MyResourceUploadsPage>
+    with WidgetsBindingObserver {
   bool _loading = true;
   String? _error;
   int _contributions = 0;
   int _downloads = 0;
   List<Map<String, dynamic>> _items = const [];
+  Map<int, String> _statuses = {};
+  bool _statusesReady = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 审核结果在控制台异步产生；回到前台时静默刷新，不打断当前浏览。
+    if (state == AppLifecycleState.resumed) _load(silent: true);
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     final data = await ControlService.fetchMyUploads();
     if (!mounted) return;
     if (data == null) {
+      if (silent) return;
       setState(() {
         _loading = false;
         _error = '无法连接资源服务：可能无网络或尚未登录';
@@ -39,19 +58,46 @@ class _MyResourceUploadsPageState extends State<MyResourceUploadsPage> {
     }
     final stats = data['stats'];
     final items = data['items'];
+    final nextItems = items is List
+        ? items
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList()
+        : const <Map<String, dynamic>>[];
+    final nextStatuses = <int, String>{
+      for (final item in nextItems)
+        (item['id'] as num?)?.toInt() ?? 0:
+            (item['status'] ?? '').toString(),
+    };
+    final changed = <Map<String, dynamic>>[];
+    if (_statusesReady) {
+      for (final item in nextItems) {
+        final id = (item['id'] as num?)?.toInt() ?? 0;
+        final old = _statuses[id];
+        final now = (item['status'] ?? '').toString();
+        if (old != null && old != now) changed.add(item);
+      }
+    }
     setState(() {
       _contributions =
           stats is Map ? (stats['contributions'] as num?)?.toInt() ?? 0 : 0;
       _downloads =
           stats is Map ? (stats['downloads'] as num?)?.toInt() ?? 0 : 0;
-      _items = items is List
-          ? items
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList()
-          : const [];
+      _items = nextItems;
+      _statuses = nextStatuses;
+      _statusesReady = true;
       _loading = false;
+      _error = null;
     });
+    if (changed.isNotEmpty) {
+      final messages = changed
+          .map((item) =>
+              '${item['courseName'] ?? '资源'}：${_statusLabel((item['status'] ?? '').toString())}')
+          .join('\n');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('审核结果更新\n$messages')),
+      );
+    }
   }
 
   @override
@@ -212,9 +258,10 @@ class _MyResourceUploadsPageState extends State<MyResourceUploadsPage> {
                 style: TextStyle(
                     fontSize: AppTheme.fontSmall, color: context.textSecondary)),
           ],
-          if (status == 'rejected' && reviewNote.isNotEmpty) ...[
+          if ((status == 'rejected' || status == 'removed') &&
+              reviewNote.isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text('拒绝原因：$reviewNote',
+            Text('${status == 'removed' ? '下架原因' : '拒绝原因'}：$reviewNote',
                 style: TextStyle(
                     fontSize: AppTheme.fontSmall,
                     color: Theme.of(context).colorScheme.error)),
@@ -228,6 +275,7 @@ class _MyResourceUploadsPageState extends State<MyResourceUploadsPage> {
     final (text, color) = switch (status) {
       'approved' => ('已通过', Colors.green),
       'rejected' => ('已拒绝', Theme.of(context).colorScheme.error),
+      'removed' => ('已下架', Theme.of(context).colorScheme.error),
       _ => ('待审核', Colors.orange),
     };
     return Container(
@@ -240,6 +288,13 @@ class _MyResourceUploadsPageState extends State<MyResourceUploadsPage> {
           style: TextStyle(fontSize: AppTheme.fontCaption, color: color)),
     );
   }
+
+  String _statusLabel(String status) => switch (status) {
+        'approved' => '已通过',
+        'rejected' => '已拒绝',
+        'removed' => '已下架',
+        _ => '待审核',
+      };
 
   String _areaLabel(String area) => switch (area) {
         'textbook' => '教材 PDF',

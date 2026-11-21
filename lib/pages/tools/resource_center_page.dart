@@ -1,19 +1,29 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../../services/cancel_token.dart';
 import '../../services/control_service.dart';
 import '../../services/resource_download_service.dart';
 import '../../services/resource_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/empty_state_art.dart' show EmptyArtVariant;
 import '../../widgets/state_views.dart';
+import 'my_resource_downloads_page.dart';
 import 'my_resource_uploads_page.dart';
 import 'resource_upload_page.dart';
+import 'resource_text_preview_page.dart';
 import 'resource_viewer_page.dart';
+
+/// 网页版没有本地文件系统：path_provider 没有 Web 实现，dart:io 的
+/// File 在浏览器里只会抛异常。涉及存盘/读盘的入口统一用这句提示。
+const String _kWebFileHint = '网页版暂不支持下载到本机，请用安卓 App 打开';
 
 /// 资源中心（）。
 ///
-/// 只按课程名和教材聚合，不按教师区分 —— 同一门课可能换老师。
-/// 课程内两区：教材 PDF / 试卷（答案绑定在试卷下）。
+/// 按「课程 + 教材」聚合，不按教师区分 —— 同一门课可能换老师、换教材。
+/// 课程内两区：教材 PDF / 试卷（答案绑定在试卷下，未关联答案单列）。
 class ResourceCenterPage extends StatefulWidget {
   const ResourceCenterPage({super.key});
 
@@ -109,7 +119,23 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
     ));
   }
 
+  Future<void> _openMyDownloads() async {
+    if (kIsWeb) {
+      _toast(_kWebFileHint);
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => const MyResourceDownloadsPage(),
+    ));
+  }
+
   Future<void> _upload() async {
+    // 浏览器里 file_picker 返回的 PlatformFile.path 为 null，
+    // 上传会一路走到「没有可上传的文件」—— 不如直接说清楚。
+    if (kIsWeb) {
+      _toast('网页版暂不支持上传文件，请用安卓 App');
+      return;
+    }
     final submitted = await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const ResourceUploadPage()),
     );
@@ -133,11 +159,16 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
     return Scaffold(
       backgroundColor: isDark ? context.scaffoldColor : Colors.white,
       appBar: AppBar(
-        title: const Text('资源中心',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title:
+            const Text('资源中心', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: context.cardColor,
         elevation: 0,
         actions: [
+          IconButton(
+            onPressed: _openMyDownloads,
+            icon: const Icon(Icons.download_for_offline_outlined),
+            tooltip: '我的下载',
+          ),
           IconButton(
             onPressed: _openMyUploads,
             icon: const Icon(Icons.cloud_upload_outlined),
@@ -185,7 +216,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
 
   Widget _buildOfflineBanner() {
     final failure = _failure!;
-    final time = _syncedAt == null ? '暂无本地缓存' : '上次同步 ${_formatDate(_syncedAt!)}';
+    final time =
+        _syncedAt == null ? '暂无本地缓存' : '上次同步 ${_formatDate(_syncedAt!)}';
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -208,7 +240,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
             child: Text(
               '${failure.message} · $time',
               style: TextStyle(
-                  fontSize: AppTheme.fontCaption, color: Colors.orange.shade900),
+                  fontSize: AppTheme.fontCaption,
+                  color: Colors.orange.shade900),
             ),
           ),
           if (failure.canRetry)
@@ -217,7 +250,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
               style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   minimumSize: const Size(0, 28)),
-              child: const Text('重试', style: TextStyle(fontSize: AppTheme.fontCaption)),
+              child: const Text('重试',
+                  style: TextStyle(fontSize: AppTheme.fontCaption)),
             ),
         ],
       ),
@@ -256,8 +290,7 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
             ),
           ),
           TextButton.icon(
-            onPressed: () =>
-                setState(() => _sortRecent = !_sortRecent),
+            onPressed: () => setState(() => _sortRecent = !_sortRecent),
             icon: Icon(
                 _sortRecent
                     ? Icons.schedule_rounded
@@ -295,9 +328,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
             children: [
               const SizedBox(height: 40),
               ErrorState(
-                message: failure.message.isEmpty
-                    ? '暂时无法加载资源列表'
-                    : failure.message,
+                message:
+                    failure.message.isEmpty ? '暂时无法加载资源列表' : failure.message,
                 onRetry: _load,
               ),
             ],
@@ -394,7 +426,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              fontSize: AppTheme.fontSmall, color: context.textSecondary)),
+                              fontSize: AppTheme.fontSmall,
+                              color: context.textSecondary)),
                     ],
                     const SizedBox(height: 4),
                     Wrap(
@@ -415,7 +448,8 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
                     Text(
                       '${_formatDate(course.latestAt)} · ${_formatBytes(course.totalSize)}',
                       style: TextStyle(
-                          fontSize: AppTheme.fontCaption, color: context.textTertiary),
+                          fontSize: AppTheme.fontCaption,
+                          color: context.textTertiary),
                     ),
                   ],
                 ),
@@ -473,14 +507,75 @@ class _CourseResourcesPage extends StatefulWidget {
 
 class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   late final ResourceCourse _course;
+  ResourceQuota? _quota;
+
+  /// 试卷区简易检索关键词（匹配试卷文件名，忽略大小写与空白）。
+  final TextEditingController _paperController = TextEditingController();
+  String _paperQuery = '';
 
   @override
   void initState() {
     super.initState();
     _course = widget.course;
+    _loadQuota();
+  }
+
+  Future<void> _loadQuota() async {
+    final quota = await ControlService.fetchResourceQuota();
+    if (!mounted || quota == null) return;
+    setState(() => _quota = quota);
+  }
+
+  @override
+  void dispose() {
+    _paperController.dispose();
+    super.dispose();
   }
 
   Future<void> _openEntry(ResourceEntry entry) async {
+    // docx 的正文由服务端抽取，网页版照样能看。
+    // 其余（PDF 预览、doc、压缩包）都要先落成本地文件再打开，网页版做不到。
+    if (kIsWeb && !entry.isDocx) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_kWebFileHint)),
+      );
+      return;
+    }
+    if (entry.isDocx) {
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ResourceTextPreviewPage(
+          title: entry.name,
+          fileId: entry.fileId,
+          onDownload: () => _download(entry),
+        ),
+      ));
+      return;
+    }
+    if (entry.isDoc) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('暂不支持在线预览'),
+          content: Text(
+            '${entry.name}\n\n旧版 .doc 文件需要下载后用 Word / WPS 打开。',
+            style: const TextStyle(fontSize: AppTheme.fontSmall),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _download(entry);
+              },
+              child: const Text('下载'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     if (!entry.isPdf) {
       await _download(entry);
       return;
@@ -496,8 +591,16 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   }
 
   Future<void> _download(ResourceEntry entry) async {
+    if (kIsWeb) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_kWebFileHint)),
+      );
+      return;
+    }
     final path = await _downloadWithProgress(entry, save: true);
     if (path == null || !mounted) return;
+    unawaited(_loadQuota());
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已保存到：$path')),
     );
@@ -510,6 +613,8 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
     BuildContext? dialogCtx;
     StateSetter? setDialog;
     var progress = 0.0;
+    var cancelling = false;
+    final cancelToken = CancelToken();
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -536,6 +641,19 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
                     const SizedBox(height: 8),
                     Text('${(progress * 100).toInt()}%',
                         style: const TextStyle(fontSize: AppTheme.fontSmall)),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: cancelling
+                            ? null
+                            : () {
+                                cancelToken.cancel();
+                                setDialog?.call(() => cancelling = true);
+                              },
+                        child: Text(cancelling ? '正在取消…' : '取消'),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -559,11 +677,13 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
           ? await ResourceDownloadService.saveToDocuments(
               entry,
               _course.name,
+              cancelToken: cancelToken,
               onProgress: report,
             )
           : await ResourceDownloadService.ensureCached(
               entry,
               _course.name,
+              cancelToken: cancelToken,
               onProgress: report,
             );
       if (dialogCtx != null && dialogCtx!.mounted) {
@@ -574,7 +694,9 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
       if (dialogCtx != null && dialogCtx!.mounted) {
         Navigator.of(dialogCtx!).pop();
       }
-      if (mounted) {
+      final cancelled =
+          e is ControlFailure && e.kind == ControlFailureKind.cancelled;
+      if (!cancelled && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
         );
@@ -608,15 +730,67 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
                 border: Border.all(color: context.borderColor),
               ),
               child: Text('教材：${_course.book}',
-                  style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textPrimary)),
+                  style: TextStyle(
+                      fontSize: AppTheme.fontSmall,
+                      color: context.textPrimary)),
             ),
+          if (_quota != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withValues(alpha: .07),
+                  borderRadius: AppTheme.radiusSmAll,
+                ),
+                child: Text(
+                  '今日下载剩余 ${_quota!.remaining}/${_quota!.limit} 次'
+                  '（基础 ${_quota!.baseLimit} 次/天'
+                  '${_quota!.bonusLimit > 0 ? '，已邀 ${_quota!.invitedCount} 人 +${_quota!.bonusLimit} 次' : '，邀请 1 人 +${_quota!.bonusPerInvite} 次'}）',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: AppTheme.primaryColor),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           _sectionTitle('一区 · 教材 PDF'),
           _entryList(_course.of(ResourceKind.textbook), '暂无教材 PDF'),
           const SizedBox(height: 16),
           _sectionTitle('二区 · 试卷'),
+          if (_course.of(ResourceKind.examPaper).isNotEmpty) ...[
+            _paperSearchBox(),
+            const SizedBox(height: 10),
+          ],
           _buildExamSection(),
         ],
+      ),
+    );
+  }
+
+  /// 课程内试卷简易检索框：按试卷文件名关键词过滤（答案跟随命中的试卷）。
+  Widget _paperSearchBox() {
+    return TextField(
+      controller: _paperController,
+      onChanged: (v) => setState(() => _paperQuery = v),
+      decoration: InputDecoration(
+        hintText: '检索试卷（按文件名 / 年份）',
+        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+        isDense: true,
+        filled: true,
+        fillColor: context.surfaceColor,
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: AppTheme.radiusMdAll,
+          borderSide: BorderSide(color: context.borderColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: AppTheme.radiusMdAll,
+          borderSide: BorderSide(color: context.borderColor),
+        ),
       ),
     );
   }
@@ -634,25 +808,110 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   }
 
   Widget _buildExamSection() {
-    final papers = _course.of(ResourceKind.examPaper);
+    final allPapers = _course.of(ResourceKind.examPaper);
     final answers = _course.of(ResourceKind.answer);
+    // 🔴 v1.0.9：旧数据里 parent_id=0 的答案不再默认挂到第一份试卷。
+    //    没有绑定关系的答案单独列成“未关联答案”，避免用户误以为它属于某份卷子。
+    final orphans = answers.where((a) => a.parentId == 0).toList();
+    if (allPapers.isEmpty) {
+      return Column(
+        children: [
+          _entryList(const [], '暂无试卷'),
+          if (orphans.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _sectionTitle('未关联答案'),
+            _entryList(orphans, ''),
+          ],
+        ],
+      );
+    }
+    final q = _paperQuery.trim().toLowerCase();
+    final papers = q.isEmpty
+        ? allPapers
+        : allPapers.where((p) => p.name.toLowerCase().contains(q)).toList();
     if (papers.isEmpty) {
-      return _entryList(const [], '暂无试卷');
+      return _entryList(const [], '没有匹配「$_paperQuery」的试卷');
     }
     return Column(
       children: [
         for (var i = 0; i < papers.length; i++) ...[
           _entryList([papers[i]], ''),
-          for (final a in answers.where((a) =>
-              a.parentId == papers[i].fileId ||
-              (a.parentId == 0 && i == 0)))
+          for (final a in answers
+              .where((a) => a.parentId != 0 && a.parentId == papers[i].fileId))
             Padding(
               padding: const EdgeInsets.only(left: 16),
               child: _entryList([a], ''),
             ),
           if (i != papers.length - 1) const SizedBox(height: 8),
         ],
+        if (orphans.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _sectionTitle('未关联答案'),
+          _entryList(orphans, ''),
+        ],
       ],
+    );
+  }
+
+  Future<void> _reportEntry(ResourceEntry entry, String reason) async {
+    final detail = TextEditingController();
+    const labels = {
+      'broken': '文件失效 / 打不开',
+      'mismatch': '内容与课程不符',
+      'duplicate': '重复资源',
+      'copyright': '侵权 / 不宜内容',
+      'other': '其他问题',
+    };
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('反馈：${labels[reason] ?? '资源问题'}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(entry.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: AppTheme.fontSmall)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: detail,
+              maxLength: 200,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: '补充说明（可选）',
+                hintText: '例如：打开后是空白页、答案与试卷不对应',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('提交反馈')),
+        ],
+      ),
+    );
+    if (submitted != true || !mounted) {
+      detail.dispose();
+      return;
+    }
+    final detailText = detail.text.trim();
+    detail.dispose();
+    final failure = await ControlService.reportResource(
+      uploadId: entry.uploadId,
+      fileId: entry.fileId,
+      reason: reason,
+      detail: detailText,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(failure?.message ?? '反馈已提交，管理员会尽快处理')),
     );
   }
 
@@ -667,7 +926,8 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
           border: Border.all(color: context.borderColor),
         ),
         child: Text(emptyText,
-            style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+            style: TextStyle(
+                fontSize: AppTheme.fontSmall, color: context.textTertiary)),
       );
     }
     return Column(
@@ -706,7 +966,8 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
                                     : entry.name,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: AppTheme.fontBody)),
+                                style: const TextStyle(
+                                    fontSize: AppTheme.fontBody)),
                             const SizedBox(height: 3),
                             Text(
                               '${_formatBytes(entry.size)} · '
@@ -730,6 +991,24 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
                           ],
                         ),
                       ),
+                      if (entry.fileId > 0 && entry.uploadId > 0)
+                        PopupMenuButton<String>(
+                          tooltip: '反馈问题',
+                          icon: Icon(Icons.more_horiz_rounded,
+                              size: 19, color: context.textSecondary),
+                          onSelected: (value) => _reportEntry(entry, value),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                                value: 'broken', child: Text('文件失效 / 打不开')),
+                            PopupMenuItem(
+                                value: 'mismatch', child: Text('内容与课程不符')),
+                            PopupMenuItem(
+                                value: 'duplicate', child: Text('重复资源')),
+                            PopupMenuItem(
+                                value: 'copyright', child: Text('侵权 / 不宜内容')),
+                            PopupMenuItem(value: 'other', child: Text('其他问题')),
+                          ],
+                        ),
                       IconButton(
                         onPressed: () => _download(entry),
                         icon: const Icon(Icons.download_rounded, size: 19),

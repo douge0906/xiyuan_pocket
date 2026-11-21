@@ -4,6 +4,7 @@ import 'auth_gate.dart';
 import 'tool_usage_storage.dart';
 import '../pages/tools/grade_query_page.dart';
 import '../pages/tools/exam_query_page.dart';
+import '../pages/tools/empty_classroom_page.dart';
 import '../pages/tools/my_study_page.dart';
 import '../pages/tools/resource_center_page.dart';
 import '../pages/tools/xyl_calendar_page.dart';
@@ -21,6 +22,7 @@ class ToolNavigator {
   static const Set<String> loginRequired = {
     'grade_push',
     'exam_query',
+    'empty_classroom',
     'textbook',
     'my_study',
   };
@@ -51,6 +53,10 @@ class ToolNavigator {
       case 'exam_query':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ExamQueryPage()));
+        break;
+      case 'empty_classroom':
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const EmptyClassroomPage()));
         break;
       case 'my_study':
         Navigator.of(context)

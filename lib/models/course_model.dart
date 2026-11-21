@@ -30,8 +30,10 @@ enum CourseSource { manual, server, imported }
 enum CourseWeekType {
   /// 每周都上（不限制单双）
   every,
+
   /// 单周上
   odd,
+
   /// 双周上
   even,
 }
@@ -162,14 +164,37 @@ class Course {
   final String name;
   final String teacher;
   final String classroom;
+
+  /// 班级/班级组（OCR 的「班级名称」列、实验系统的 `BJMC`）。
+  ///
+  /// 空串 = 未知（普通手工课、没识别到班级的图片都走这个默认值）。
+  /// 同一门课可能对应多个班（如 `25电气1、25电气2、25电气3`），这里保留
+  /// 原字符串，不在模型层拆成多条，避免把一门合班课拆散。
+  final String className;
+
+  /// 学年，形如 `2026-2027`；空串 = 未知。
+  final String academicYear;
+
+  /// 学期，`第一学期` / `第二学期`；空串 = 未知。
+  final String academicTerm;
+
+  /// 实验系统里的原始实验室名（仅实验课导入使用，普通课为空）。
+  ///
+  /// 用来做稳定的导入去重键：对照表把「电路实验室」换成「D1-101」后，
+  /// 原始名不变，重复导入仍能命中同一条课程；用户在候选卡上改教室也不会
+  /// 生成第二条课程。
+  final String sourcePlace;
+
   final int weekday; // 1=周一 ... 7=周日（pattern=fixed 时有效）
   final int startSlot; // 起始节次 1..12
   final int endSlot; // 结束节次 1..12
   final String weeks; // 周次描述，如 "1-16周" / "1-16周(单)"（旧格式，兼容保留）
   final int colorValue; // 卡片主题色（Color.value）
   final CourseSource source;
+
   /// v2.0.7：单/双周选项（默认每周）
   final CourseWeekType weekType;
+
   /// v2.0.7：固定某天 / 每天 / 工作日
   final CoursePattern pattern;
 
@@ -178,6 +203,10 @@ class Course {
     required this.name,
     this.teacher = '',
     this.classroom = '',
+    this.className = '',
+    this.academicYear = '',
+    this.academicTerm = '',
+    this.sourcePlace = '',
     required this.weekday,
     required this.startSlot,
     required this.endSlot,
@@ -193,6 +222,10 @@ class Course {
     String? name,
     String? teacher,
     String? classroom,
+    String? className,
+    String? academicYear,
+    String? academicTerm,
+    String? sourcePlace,
     int? weekday,
     int? startSlot,
     int? endSlot,
@@ -207,6 +240,10 @@ class Course {
       name: name ?? this.name,
       teacher: teacher ?? this.teacher,
       classroom: classroom ?? this.classroom,
+      className: className ?? this.className,
+      academicYear: academicYear ?? this.academicYear,
+      academicTerm: academicTerm ?? this.academicTerm,
+      sourcePlace: sourcePlace ?? this.sourcePlace,
       weekday: weekday ?? this.weekday,
       startSlot: startSlot ?? this.startSlot,
       endSlot: endSlot ?? this.endSlot,
@@ -223,7 +260,13 @@ class Course {
         'name': name,
         'teacher': teacher,
         'classroom': classroom,
-        'weekday': pattern == CoursePattern.fixed ? weekday : (pattern == CoursePattern.daily ? 0 : -1),
+        'className': className,
+        'academicYear': academicYear,
+        'academicTerm': academicTerm,
+        'sourcePlace': sourcePlace,
+        'weekday': pattern == CoursePattern.fixed
+            ? weekday
+            : (pattern == CoursePattern.daily ? 0 : -1),
         'startSlot': startSlot,
         'endSlot': endSlot,
         'weeks': weeks,
@@ -241,7 +284,8 @@ class Course {
     // 被上层 catch 吞掉后整份课表被清空。缺失/非字符串时用字段指纹生成稳定 id。
     var id = (json['id'] ?? '').toString().trim();
     if (id.isEmpty) {
-      id = 'legacy_${_stableHash('${json['name']}|$weekday|${json['startSlot']}|${json['weeks']}')}';
+      id =
+          'legacy_${_stableHash('${json['name']}|$weekday|${json['startSlot']}|${json['weeks']}')}';
     }
     // 🔴 v1.0.9：节次夹到 1..12 且 end >= start。
     //    此前脏数据（0 / 13 / 99）会让课表网格 `blocks.indexWhere(...)` 返回 -1，
@@ -255,6 +299,10 @@ class Course {
       name: (json['name'] as String?) ?? '',
       teacher: (json['teacher'] as String?) ?? '',
       classroom: (json['classroom'] as String?) ?? '',
+      className: (json['className'] as String?) ?? '',
+      academicYear: (json['academicYear'] as String?) ?? '',
+      academicTerm: (json['academicTerm'] as String?) ?? '',
+      sourcePlace: (json['sourcePlace'] as String?) ?? '',
       weekday: weekday,
       startSlot: startSlot,
       endSlot: endSlot,
@@ -266,7 +314,8 @@ class Course {
       ),
       weekType: CourseWeekType.values.firstWhere(
         (e) => e.name == weekTypeRaw,
-        orElse: () => CourseWeekTypeX.fromOldText((json['weeks'] as String?) ?? ''),
+        orElse: () =>
+            CourseWeekTypeX.fromOldText((json['weeks'] as String?) ?? ''),
       ),
       pattern: CoursePattern.values.firstWhere(
         (e) => e.name == patternRaw,
@@ -407,7 +456,6 @@ int colorForName(String name) {
   return pool[(h ~/ 3) % pool.length];
 }
 
-
 // ---------------- 课节色块「色彩方案」（v1.6.9，2026-10-13）----------------
 //
 // 用户需求：「课节色块提供不同色彩方案」。v1.7.1 起名字统一为
@@ -515,8 +563,7 @@ Color _shiftColor(
 /// 根据背景色亮度返回合适的文字颜色
 Color textOnColor(Color bg) {
   // 相对亮度（Rec. 601）
-  final luminance =
-      0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
+  final luminance = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
   return luminance > 0.62 ? AppTheme.textPrimaryLight : Colors.white;
 }
 
@@ -531,7 +578,6 @@ int _stableHash(String source) {
   }
   return hash;
 }
-
 
 /// 一门「教务课」与一门「本地课」的时间冲突（2026-10-13，任务三）。
 ///

@@ -11,6 +11,64 @@ void main() {
     expect(normalizeResourceName('高等 数学-A'), '高等数学a');
   });
 
+  test('课程 + 教材组合键：同课不同教材必须分开', () {
+    expect(resourceKey('高等数学', '上册'), resourceKey(' 高等数学 ', '上册'),
+        reason: '空白差异不应拆成两张卡');
+    expect(resourceKey('高等数学', '上册'),
+        isNot(resourceKey('高等数学', '下册')));
+    expect(normalizeResourceBook(' 高等数学 上册 '), '高等数学上册');
+  });
+
+  test('缓存里同课不同教材会保留两张卡片', () async {
+    SharedPreferences.setMockInitialValues({
+      'resource_center_cache_v1': jsonEncode({
+        'courses': [
+          {
+            'courseName': '高等数学',
+            'bookName': '上册',
+            'files': [
+              {'id': 1, 'name': '上册.pdf', 'area': 'textbook', 'size': 100}
+            ]
+          },
+          {
+            'courseName': '高等数学',
+            'bookName': '下册',
+            'files': [
+              {'id': 2, 'name': '下册.pdf', 'area': 'textbook', 'size': 100}
+            ]
+          }
+        ]
+      }),
+    });
+    final result = await ResourceStore.loadCachedResult();
+    expect(result.courses, hasLength(2));
+    expect(result.courses.map((c) => c.book), containsAll(['上册', '下册']));
+  });
+
+  test('资源文件解析 uploadId，供举报定位上传批次', () async {
+    SharedPreferences.setMockInitialValues({
+      'resource_center_cache_v1': jsonEncode({
+        'courses': [
+          {
+            'courseName': '高等数学',
+            'bookName': '上册',
+            'files': [
+              {
+                'id': 1,
+                'uploadId': 9,
+                'name': '教材.pdf',
+                'area': 'textbook',
+                'size': 100
+              }
+            ]
+          }
+        ]
+      }),
+    });
+    final result = await ResourceStore.loadCachedResult();
+    expect(result.courses.first.resources.first.uploadId, 9);
+  });
+
   test('本地缓存可独立读出课程与试卷答案', () async {
     SharedPreferences.setMockInitialValues({
       'resource_center_cache_v1': jsonEncode({

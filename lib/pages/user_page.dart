@@ -20,6 +20,8 @@ import 'settings_page.dart';
 import 'widget_hub_page.dart';
 import '../services/data_wipe.dart';
 import '../services/current_tab.dart';
+import '../services/auth_gate.dart';
+import 'invite/invite_page.dart';
 import '../app.dart';
 import '../services/login_prefetch_service.dart';
 import '../services/login_sync_progress.dart';
@@ -146,7 +148,10 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     NavPrefs.notifier.addListener(_onNavPrefsChanged);
     // 首页齿轮请求「打开设置」时，由本页接收并打开（2026-11-03）。
     _unsubEntered = CurrentTab.addListener((page) {
-      if (page == NavPageRef.user) _consumePendingSettings();
+      if (page == NavPageRef.user) {
+        _consumePendingSettings();
+        _consumePendingInvite();
+      }
     });
     _load();
   }
@@ -166,6 +171,18 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _openSettings();
+    });
+  }
+
+  /// 邀请深链（`xiyuan://invite?c=...`）→ 切到「我的」页后直接打开邀请页。
+  /// 邀请页 initState 会读取 `invite_pending_code` 并把码填进输入框。
+  void _consumePendingInvite() {
+    if (!AppTabs.pendingOpenInvite) return;
+    if (CurrentTab.current != NavPageRef.user) return;
+    AppTabs.pendingOpenInvite = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openInvite(context);
     });
   }
 
@@ -194,6 +211,23 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     _usernameCtl.dispose();
     _passwordCtl.dispose();
     super.dispose();
+  }
+
+  /// 预取电费步骤使用的宿舍选择回调：先弹窗等用户填完，保存后把宿舍交回
+  /// 预取服务，再继续电费抓取；取消则返回 null，服务层记为未绑定宿舍。
+  Future<DormInfo?> _requireDormForPrefetch() async {
+    if (!mounted) return null;
+    final d = await showDormDialog(context);
+    if (!mounted) return null;
+    // 预取流程里用户取消（d == null）不等于「以后不再问」：不要写
+    // dorm_asked，否则登录后本该补问的一次也被这条标记吞掉。
+    if (d == null) return null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kDormAsked, true);
+    await DormStore.save(d);
+    if (!mounted) return null;
+    setState(() => _dorm = d);
+    return d;
   }
 
   /// 登录后问一次宿舍号（只问一次，见 [_kDormAsked]）。
@@ -225,7 +259,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       if (info != null) {
         await DormService.saveElecCache(info, d);
         if (info.balance != null) {
-          await DormService.saveElecPoint(info.balance!, kwh: info.kwh, dorm: d);
+          await DormService.saveElecPoint(info.balance!,
+              kwh: info.kwh, dorm: d);
         }
         if (!mounted) return;
         _snack(
@@ -272,6 +307,14 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       );
   }
 
+  Future<void> _openInvite(BuildContext context) async {
+    final ok = await AuthGate.ensureLoggedIn(context);
+    if (!ok || !context.mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const InvitePage()),
+    );
+  }
+
   Future<void> _load() async {
     final config = await StorageService.loadUserConfig();
     final name = await StorageService.loadStudentName();
@@ -311,7 +354,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     final action = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('连续 3 次登录失败', style: TextStyle(fontSize: AppTheme.fontTitle)),
+        title: const Text('连续 3 次登录失败',
+            style: TextStyle(fontSize: AppTheme.fontTitle)),
         content: const Text(
           '可能是密码错误、验证码识别失败，或账号已被临时锁定。\n'
           '建议先用浏览器打开统一认证页面确认能否登录；'
@@ -351,7 +395,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('连接诊断', style: TextStyle(fontSize: AppTheme.fontTitle)),
+        title:
+            const Text('连接诊断', style: TextStyle(fontSize: AppTheme.fontTitle)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -370,7 +415,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text('${p.label}：${p.detail}',
-                          style: const TextStyle(fontSize: AppTheme.fontSmall, height: 1.5)),
+                          style: const TextStyle(
+                              fontSize: AppTheme.fontSmall, height: 1.5)),
                     ),
                   ],
                 ),
@@ -378,7 +424,10 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
             const SizedBox(height: 8),
             const Text(
               '登录页通、验证码接口不通 → 多半是学校对接口做了限制；\n两者都不通 → 网络或校园网限制。',
-              style: TextStyle(fontSize: AppTheme.fontSmall, height: 1.6, color: Colors.grey),
+              style: TextStyle(
+                  fontSize: AppTheme.fontSmall,
+                  height: 1.6,
+                  color: Colors.grey),
             ),
           ],
         ),
@@ -459,7 +508,10 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
         }).catchError((Object e) {
           LoginSyncProgress.failed(LoginSyncStep.courses, note: '网络异常');
         }).whenComplete(
-          () => LoginPrefetchService.run(container).then((_) {
+          () => LoginPrefetchService.run(
+            container,
+            onRequireDorm: _requireDormForPrefetch,
+          ).then((_) {
             // 预取跑完（含「电费」那步）再问宿舍号：此时若宿舍已绑定，
             // 预取里已经把余额写进缓存，不需要再问。
             if (mounted) _askDormAfterLogin();
@@ -621,7 +673,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     if (mounted) setState(() => _config = config);
   }
 
-
   // ------------------------------------------------------------ build
 
   @override
@@ -766,7 +817,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                 Text(
                   _loginError!,
                   style: const TextStyle(
-                      fontSize: AppTheme.fontSmall, color: Color(0xFFEF4444), height: 1.5),
+                      fontSize: AppTheme.fontSmall,
+                      color: Color(0xFFEF4444),
+                      height: 1.5),
                 ),
               ],
 
@@ -796,7 +849,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                       : const Text(
                           '登录',
                           style: TextStyle(
-                              fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600),
+                              fontSize: AppTheme.fontTitle,
+                              fontWeight: FontWeight.w600),
                         ),
                 ),
               ),
@@ -810,8 +864,7 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
               // v1.6.5：新生账户激活指引 + 同一跳转地址）
               GestureDetector(
                 onTap: () => launchUrl(
-                  Uri.parse(
-                      'https://wxcas.cwxu.edu.cn/lyuapServer/login'
+                  Uri.parse('https://wxcas.cwxu.edu.cn/lyuapServer/login'
                       '?service=https://my.cwxu.edu.cn/shiro-cas'),
                   mode: LaunchMode.externalApplication,
                 ),
@@ -856,7 +909,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   }) =>
       InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey.shade400),
+        hintStyle:
+            TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey.shade400),
         prefixIcon: Icon(icon, size: 20, color: Colors.grey.shade400),
         suffixIcon: suffix,
         filled: true,
@@ -906,7 +960,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     dormText: _dorm?.display ?? '',
                     onDormTap: _editDorm,
                   ),
-                  const SizedBox(height: 8),
                   // 🔴 2026-11-03：分区名从「主题色」改成「外观」。
                   //    这一组装的是「主题」入口 + 「极简模式」开关，跟
                   //    「主题色」根本不是一回事（主题色在设置 → 界面与显示里）。
@@ -968,6 +1021,18 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                         ),
                       );
                     }),
+                  ),
+                  const SizedBox(height: 8),
+                  // 邀请同学入口放在桌面小组件入口下方：用户先看到小组件，
+                  // 再看到邀请；符合「功能入口 → 拉新入口」的层级。
+                  _card(
+                    child: _widgetEntry(
+                      icon: Icons.people_alt_rounded,
+                      title: '邀请同学',
+                      subtitle: '每邀请 1 人，资源中心每日下载额度 +10 次',
+                      installed: null,
+                      onTap: () => _openInvite(context),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _sectionTitle('关于'),
@@ -1075,14 +1140,14 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                   const SizedBox(height: 3),
                   Text(subtitle,
                       style: TextStyle(
-                          fontSize: AppTheme.fontSmall, color: context.textTertiary)),
+                          fontSize: AppTheme.fontSmall,
+                          color: context.textTertiary)),
                 ],
               ),
             ),
             if (installed != null)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: (installed ? const Color(0xFF10B981) : Colors.grey)
                       .withValues(alpha: .10),
@@ -1125,8 +1190,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       SizedBox(
         height: UserInfoCard.rowHeight,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-              horizontal: UserInfoCard.rowPadding),
+          padding:
+              const EdgeInsets.symmetric(horizontal: UserInfoCard.rowPadding),
           child: Row(
             children: [
               Icon(icon, size: 20, color: AppTheme.primaryColor),

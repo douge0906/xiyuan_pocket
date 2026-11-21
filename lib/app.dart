@@ -16,6 +16,7 @@ import 'services/app_update_service.dart';
 import 'services/course_storage.dart';
 import 'services/course_sync_service.dart';
 import 'services/legal_consent.dart';
+import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/pressable.dart';
 
@@ -103,6 +104,13 @@ class AppTabs {
   /// 原来是 `goUser()`（我的页），但余额详情是 `CardBalancePage`，
   /// 不在「我的」页里。改走服务页消费，与 exam 同一条路径。
   static bool pendingOpenCard = false;
+
+  /// 「打开邀请页」的一次性请求（2026-11-18 深链）。
+  ///
+  /// 邀请落地页的「打开 App」走 `xiyuan://invite?c=<码>`：原生把完整 URI
+  /// 交给 Dart，Dart 先把 code 存进待填码，再切到「我的」页并由它消费后
+  /// 直接打开邀请页（邀请页 initState 本来就会读待填码）。
+  static bool pendingOpenInvite = false;
 
   /// 「倒数日组件点某一格 → 直接弹该槽的新建框」（2026-11-05，用户 m24495 #3）。
   ///
@@ -284,6 +292,17 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     //      · 插件腿（完整 URI）
     void route(Uri? uri) {
       if (uri == null) return;
+      // xiyuan://invite?c=XXXXXXXX：邀请落地页「打开 App」深链。
+      // 先把码落到待填缓存，再由「我的」页消费 pendingOpenInvite 打开邀请页。
+      if (uri.scheme == 'xiyuan' && uri.host == 'invite') {
+        final code = (uri.queryParameters['c'] ?? '').trim().toUpperCase();
+        if (code.length == 8) {
+          unawaited(StorageService.saveInvitePendingCode(code));
+        }
+        AppTabs.pendingOpenInvite = true;
+        AppTabs.goUser();
+        return;
+      }
       final target = uri.host.isNotEmpty ? uri.host : uri.path;
       if (target.isEmpty) return; // 空 Uri() 不当成「打开课表」
       switch (target) {

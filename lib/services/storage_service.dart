@@ -32,7 +32,8 @@ class UserConfig {
     bool? rememberPassword,
     ThemeMode? themeMode,
     int? primaryColor,
-  }) => UserConfig(
+  }) =>
+      UserConfig(
         showdocUrl: showdocUrl ?? this.showdocUrl,
         username: username ?? this.username,
         password: password ?? this.password,
@@ -53,6 +54,16 @@ class StorageService {
   static const String _kStudentName = 'student_name'; // 学生姓名缓存（「我的」页展示）
   static const String _kHiddenServices = 'hidden_services'; // v1.9.0 服务页显示/隐藏
 
+  // 邀请拉新：待回填的邀请码（退出账号时清除）
+  static const String _kInvitePendingCode = 'invite_pending_code';
+
+  // App 体验：累计进入课表页次数、是否已弹过五星评价、最近一次评分与时间
+  static const String _kCourseRatingEntryCount = 'course_rating_entry_count';
+  static const String _kCourseRatingShown = 'course_rating_shown';
+  static const String _kCourseRatingSnoozeUntil = 'course_rating_snooze_until';
+  static const String _kAppRatingScore = 'app_rating_score';
+  static const String _kAppRatingAt = 'app_rating_at';
+
   // 教务密码专用键：存放在系统安全存储（Android Keystore / iOS Keychain），
   // 不写入 SharedPreferences 明文。
   static const String _kSecurePassword = 'secure_school_password';
@@ -66,22 +77,20 @@ class StorageService {
 
   static Future<UserConfig> loadUserConfig() async {
     final prefs = await SharedPreferences.getInstance();
-    final remember = prefs.getBool(_kRemember) ??
-        prefs.getBool(_kOldRemember) ??
-        true;
+    final remember =
+        prefs.getBool(_kRemember) ?? prefs.getBool(_kOldRemember) ?? true;
 
-    String showdoc = prefs.getString(_kShowdoc) ??
-        prefs.getString(_kOldShowdoc) ??
-        '';
-    String username = prefs.getString(_kUsername) ??
-        prefs.getString(_kOldUsername) ??
-        '';
+    String showdoc =
+        prefs.getString(_kShowdoc) ?? prefs.getString(_kOldShowdoc) ?? '';
+    String username =
+        prefs.getString(_kUsername) ?? prefs.getString(_kOldUsername) ?? '';
     String password = '';
     if (remember) {
       // 密码仅从安全存储读取；若为首次运行且旧版曾明文存于 SP，则迁移后删除明文
       password = await _secure.read(key: _kSecurePassword) ?? '';
       if (password.isEmpty) {
-        final legacy = prefs.getString(_kPassword) ?? prefs.getString(_kOldPassword);
+        final legacy =
+            prefs.getString(_kPassword) ?? prefs.getString(_kOldPassword);
         if (legacy != null && legacy.isNotEmpty) {
           await _secure.write(key: _kSecurePassword, value: legacy);
           password = legacy;
@@ -185,7 +194,8 @@ class StorageService {
 
   static Future<void> saveTodoSortMode(String mode) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kTodoSortMode, mode == 'priority' ? 'priority' : 'time');
+    await prefs.setString(
+        _kTodoSortMode, mode == 'priority' ? 'priority' : 'time');
   }
 
   // ---------------- 服务页排序（2026-11-03） ----------------
@@ -257,7 +267,8 @@ class StorageService {
   }
 
   /// 读取一卡通余额缓存；无 / 解析失败返回 null。
-  static Future<({double balance, DateTime savedAt})?> loadCardBalanceCache() async {
+  static Future<({double balance, DateTime savedAt})?>
+      loadCardBalanceCache() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_kCardBalanceCache);
     if (raw == null || raw.isEmpty) return null;
@@ -303,7 +314,8 @@ class StorageService {
     // 0.2 是更早的「趋近直角」默认值，直接归到新默认，不再经过中间态 0.55。
     const migrated020 = 'ui_radius_default_migrated_055';
     const migratedDefault = 'ui_radius_default_migrated_design';
-    final lookedLikeOldDefault = (v - 0.2).abs() < 0.001 || (v - 0.55).abs() < 0.001;
+    final lookedLikeOldDefault =
+        (v - 0.2).abs() < 0.001 || (v - 0.55).abs() < 0.001;
     if (lookedLikeOldDefault && prefs.getBool(migratedDefault) != true) {
       await prefs.setBool(migrated020, true);
       await prefs.setBool(migratedDefault, true);
@@ -576,5 +588,66 @@ class StorageService {
   static Future<void> saveMessageAutoRefresh(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kMessageAutoRefresh, value);
+  }
+
+  // ---- 邀请拉新 / App 体验本地状态 ----
+
+  static Future<int> loadCourseRatingEntryCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_kCourseRatingEntryCount) ?? 0;
+  }
+
+  static Future<void> saveCourseRatingEntryCount(int count) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kCourseRatingEntryCount, count);
+  }
+
+  static Future<bool> loadCourseRatingShown() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kCourseRatingShown) ?? false;
+  }
+
+  static Future<void> saveCourseRatingShown(bool shown) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kCourseRatingShown, shown);
+  }
+
+  /// 「以后再说」的延后时间：到点之前不再弹评价，但不是永久关闭。
+  static Future<DateTime?> loadCourseRatingSnoozeUntil() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getInt(_kCourseRatingSnoozeUntil);
+    if (raw == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(raw);
+  }
+
+  static Future<void> saveCourseRatingSnoozeUntil(DateTime until) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kCourseRatingSnoozeUntil, until.millisecondsSinceEpoch);
+  }
+
+  /// 最近一次五星评分；没评过返回 null。
+  static Future<int?> loadAppRatingScore() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_kAppRatingScore);
+  }
+
+  static Future<void> saveAppRating(int score, String at) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kAppRatingScore, score);
+    await prefs.setString(_kAppRatingAt, at);
+  }
+
+  static Future<String?> loadInvitePendingCode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kInvitePendingCode);
+  }
+
+  static Future<void> saveInvitePendingCode(String? code) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (code == null || code.isEmpty) {
+      await prefs.remove(_kInvitePendingCode);
+    } else {
+      await prefs.setString(_kInvitePendingCode, code.trim());
+    }
   }
 }

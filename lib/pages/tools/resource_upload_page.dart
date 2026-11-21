@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/cancel_token.dart';
 import '../../services/control_service.dart';
 import '../../services/resource_store.dart';
 import '../../theme/app_theme.dart';
@@ -24,6 +25,7 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
   bool _loadingCourses = true;
   ResourceKind _area = ResourceKind.textbook;
   bool _saving = false;
+  CancelToken? _uploadToken;
   double _progress = 0;
   int _currentFile = 0;
   int _totalFiles = 0;
@@ -235,6 +237,8 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
       _currentFile = 1;
       _totalFiles = _allFiles.length;
     });
+    final uploadToken = CancelToken();
+    _uploadToken = uploadToken;
     final error = await ControlService.uploadResource(
       courseName: course.name,
       bookName: course.book,
@@ -243,6 +247,7 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
       contributor: _contributor.text,
       paperFiles: _paperFiles,
       answerFiles: _isExam ? _answerFiles : const [],
+      cancelToken: uploadToken,
       onProgress: (sent, total, current, totalFiles) {
         if (!mounted) return;
         setState(() {
@@ -253,7 +258,10 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
       },
     );
     if (!mounted) return;
-    setState(() => _saving = false);
+    setState(() {
+      _saving = false;
+      _uploadToken = null;
+    });
     if (error != null) {
       setState(() => _error = error);
       _toast(error);
@@ -354,6 +362,18 @@ class _ResourceUploadPageState extends State<ResourceUploadPage> {
               '正在上传 第 $_currentFile / $_totalFiles 个 · '
               '${(_progress * 100).toInt()}%',
               style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textSecondary),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _uploadToken == null
+                    ? null
+                    : () {
+                        _uploadToken?.cancel();
+                        setState(() => _error = '正在取消上传…');
+                      },
+                child: const Text('取消上传'),
+              ),
             ),
           ],
           if (_error != null) ...[

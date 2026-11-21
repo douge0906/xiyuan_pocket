@@ -41,6 +41,8 @@ dependencies:
   # （image_picker 返回的是临时路径，直接存会「过几天就丢」）
   image_picker: ^1.1.2
   path_provider: ^2.1.5
+  # 图片识别导入课程（T3）：改由服务端识别（见 lib/services/ocr/course_ocr_engine.dart），
+  # 端上不再依赖 ML Kit，也不再自带 Dart 解析规则。
   # 桌面小组件数据桥（v1.0.0 铺垫）：Dart ↔ 原生共享存储 + 跨平台刷新入口。
   # 锁 0.7.0，原因（实测，勿随意改版本）：
   #  - 0.4.1 的 Dart 代码用老 API `ViewConfiguration(size:)`，Flutter 3.24.3
@@ -87,4 +89,5 @@ flutter:
     # 法务文本（隐私政策 / 用户协议）
     - assets/legal/privacy_policy.md
     - assets/legal/user_agreement.md
-
+    # 实验室 → 标准教室对照表（来源：无锡学院实验室_机器可读.csv）
+    - assets/data/lab_rooms.json

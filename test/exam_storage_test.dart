@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,20 +23,72 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  group('ExamStorage 缓存守卫', () {
-    test('saveExams 传空列表：不得覆盖已有缓存', () async {
+  group('ExamStorage 缓存守卫与手动项保护', () {
+    test('saveExams 传空 server 列表：清掉教务项，但保留手动项', () async {
       await ExamStorage.saveExams(<Map<String, dynamic>>[
-        {'name': '高等数学', 'date': '2099-01-01', 'classroom': 'A101'},
+        {'name': '教务高数', 'date': '2099-01-01', 'classroom': 'A101'},
       ]);
-      expect((await ExamStorage.loadExams()).length, 1,
-          reason: '前置条件：已有一场考试');
+      await ExamStorage.addManualExam(
+          {'name': '手动大英', 'date': '2099-01-02'});
+      expect((await ExamStorage.loadExams()).length, 2,
+          reason: '前置条件：一场教务 + 一场手动');
 
-      // 模拟「教务维护 → 返回空结果」被照写
+      // 教务成功返回空（本学期暂无考试）：清教务项，手动项必须留下。
       await ExamStorage.saveExams(const <Map<String, dynamic>>[]);
 
       final after = await ExamStorage.loadExams();
-      expect(after.length, 1, reason: '空列表不得覆盖已有缓存');
-      expect(after.first['name'], '高等数学');
+      expect(after.length, 1, reason: '空 server 结果只清教务项');
+      expect(after.first['name'], '手动大英');
+      expect(after.first['source'], ExamStorage.sourceManual);
+    });
+
+    test('saveExams 同步教务：替换教务项，不覆盖手动项', () async {
+      await ExamStorage.addManualExam(
+          {'name': '手动 retained', 'date': '2099-03-03'});
+      await ExamStorage.saveExams(<Map<String, dynamic>>[
+        {'name': '教务第一场', 'date': '2099-01-01'},
+        {'name': '教务第二场', 'date': '2099-02-02'},
+      ]);
+
+      final list = await ExamStorage.loadExams();
+      expect(list.length, 3, reason: '2 教务 + 1 手动');
+      expect(list.where((e) => e['source'] == ExamStorage.sourceManual).length, 1);
+      expect(list.where((e) => e['source'] == ExamStorage.sourceServer).length, 2);
+      expect(list.any((e) => e['name'] == '手动 retained'), isTrue);
+
+      // 再次同步：教务项整体替换，手动项仍在。
+      await ExamStorage.saveExams(<Map<String, dynamic>>[
+        {'name': '教务新一场', 'date': '2099-04-04'},
+      ]);
+      final again = await ExamStorage.loadExams();
+      expect(again.length, 2);
+      expect(again.any((e) => e['name'] == '手动 retained'), isTrue);
+      expect(again.any((e) => e['name'] == '教务第一场'), isFalse);
+    });
+
+    test('removeExam 按 id 删除：仅删指定项', () async {
+      await ExamStorage.addManualExam(
+          {'name': '手动甲', 'date': '2099-01-01'});
+      await ExamStorage.addManualExam(
+          {'name': '手动乙', 'date': '2099-01-02'});
+      final list = await ExamStorage.loadExams();
+      final target = list.firstWhere((e) => e['name'] == '手动甲');
+
+      await ExamStorage.removeExam(target['id'].toString());
+      final after = await ExamStorage.loadExams();
+      expect(after.length, 1);
+      expect(after.first['name'], '手动乙');
+    });
+
+    test('旧缓存（无 source/id）规范化为教务项并补稳定 id', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'exam_cache_list':
+            jsonEncode([{'name': '老缓存', 'date': '2099-01-01'}]),
+      });
+      final list = await ExamStorage.loadExams();
+      expect(list.length, 1);
+      expect(list.first['source'], ExamStorage.sourceServer);
+      expect((list.first['id'] ?? '').toString().isNotEmpty, isTrue);
     });
 
     test('saveExams 非空：正常写入并可原样读回', () async {

@@ -1,5 +1,6 @@
 import 'auth_gate.dart';
 import 'campus/campus_store.dart';
+import 'campus/empty_classroom_fetcher.dart';
 import 'campus/sygl_client.dart';
 import 'campus/web_campus_client.dart';
 import 'dorm_service.dart';
@@ -171,6 +172,36 @@ class ApiService {
     final data = await LocalCampusService.queryTextbooks(
         c.username, c.password, xnm, xqm);
     return {'data': data};
+  }
+
+  /// 空教室：读取教务真实楼号、节次和学期/校区上下文。
+  static Future<Map<String, dynamic>> fetchEmptyClassroomOptions(
+      {bool forceRefresh = false}) async {
+    final c = await _resolveCredential('', '');
+    final options = await LocalCampusService.fetchEmptyClassroomOptions(
+        c.username, c.password, forceRefresh: forceRefresh);
+    return {'data': options.toJson()};
+  }
+
+  /// 空教室：按四项必填筛选查询空闲教室。
+  static Future<Map<String, dynamic>> fetchEmptyClassrooms({
+    required List<int> weeks,
+    required List<int> weekdays,
+    required List<int> slots,
+    required String buildingValue,
+    EmptyClassroomOptions? options,
+  }) async {
+    final c = await _resolveCredential('', '');
+    final result = await LocalCampusService.queryEmptyClassrooms(
+      c.username,
+      c.password,
+      weeks: weeks,
+      weekdays: weekdays,
+      slots: slots,
+      buildingValue: buildingValue,
+      options: options,
+    );
+    return {'data': result.toJson()};
   }
 
   /// 从实验管理系统（sygl.cwxu.edu.cn）读取实验课安排。

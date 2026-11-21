@@ -52,7 +52,7 @@ class LegalConsentService {
               const Text(
                 '使用掌上锡院前，请阅读并同意《隐私政策》和《用户协议》。\n\n'
                 'App 会在你主动使用时，使用学校统一认证账号查询课表、成绩、考试、余额等数据，这些数据只保存在本机，密码不会发送到开发者服务器。\n\n'
-                '为提供版本更新、公告、资源库和账号额度，App 会连接开发者自建控制端 con.wxxydouge.icu，并发送本地计算的学号伪名（不上传原始学号）、你自愿填写的显示名、由 ANDROID_ID 派生的安装标识、设备公钥和 App 版本。\n\n'
+                '为提供版本更新、公告、资源库、设备登记与账号额度，App 会连接开发者自建控制端 con.wxxydouge.icu，并发送由 ANDROID_ID 派生的安装标识、设备公钥、平台与版本；登录后还会发送本机计算的学号伪名（不上传原始学号）和你自愿填写的显示名。\n\n'
                 '不同意将无法进入 App。',
                 style: TextStyle(fontSize: AppTheme.fontBody, height: 1.55),
               ),

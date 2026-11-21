@@ -126,6 +126,7 @@ class JwglClient {
     required int pageSize,
   }) async {
     Object? lastError;
+    List<Map<String, dynamic>>? empty;
     for (final url in [
       _gradeApi,
       '$_gradePage?doType=query&gnmkdm=N305005',
@@ -133,15 +134,17 @@ class JwglClient {
       try {
         final items =
             await _queryAll(session, url, form, pageSize: pageSize);
-        // 该入口正常响应即以此为准：有数据返回，空结果也直接返回空，
-        // 不再为「空」重复打第二个入口（空学期请求减半）；只有抛错才
-        // 换下一个入口兜底。
-        return items;
+        // 第一个入口「成功但空」不代表这个学期没成绩：教务不同入口
+        // 的过滤条件不一致时，备用入口仍可能有数据。先记住空结果，
+        // 继续试下一个入口；两个都空才返回空。
+        if (items.isNotEmpty) return items;
+        empty ??= items;
       } catch (e) {
         if (e is CampusException && e.needRelogin) rethrow;
         lastError = e;
       }
     }
+    if (empty != null) return empty;
     if (lastError != null) throw lastError;
     return const [];
   }

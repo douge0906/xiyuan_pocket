@@ -16,74 +16,82 @@ class _LabImportDialog extends StatefulWidget {
 
 class _LabImportDialogState extends State<_LabImportDialog> {
   static const List<String> _weekdays = [
-    '', '一', '二', '三', '四', '五', '六', '日',
+    '',
+    '一',
+    '二',
+    '三',
+    '四',
+    '五',
+    '六',
+    '日',
   ];
 
   /// 可变副本：教室批量替换会改写 place。
   late List<SyglLab> _labs;
-  /// 选中的课程名（按课程分组勾选）。默认全选。
+
+  /// 选中的分组 key（课程 + 班级 + 学年/学期），不是裸课程名。
   late Set<String> _picked;
 
   @override
   void initState() {
     super.initState();
     _labs = List<SyglLab>.of(widget.labs);
-    _picked = {for (final l in _labs) l.name};
+    // 默认全部不选，由用户明确勾选要导入的实验课。
+    _picked = <String>{};
   }
 
-  /// 课程名 -> 该组所有条目的下标。
+  /// 分组键：**课程 + 班级 + 学年/学期**。
+  ///
+  /// 同一门实验的不同时间段合到一张卡里全部展示，避免「看到一条、实际
+  /// 导入多条」；教室、教师、时间不参与分组，卡片内逐条列出，每条都能
+  /// 单独改教室（不再按 place 全局替换）。
+  String _groupKey(SyglLab l) => [
+        l.name,
+        l.className,
+        l.academicYear,
+        l.academicTerm,
+      ].join('\u0001');
+
+  /// 分组 key -> 该组所有条目的下标。
   Map<String, List<int>> get _groups {
     final map = <String, List<int>>{};
     for (var i = 0; i < _labs.length; i++) {
-      map.putIfAbsent(_labs[i].name, () => <int>[]).add(i);
+      map.putIfAbsent(_groupKey(_labs[i]), () => <int>[]).add(i);
     }
     return map;
   }
 
-  /// 当前所有不同的实验室值（去掉空值），按出现顺序。
-  List<String> get _places {
-    final seen = <String>{};
-    final out = <String>[];
-    for (final l in _labs) {
-      if (l.place.isNotEmpty && seen.add(l.place)) out.add(l.place);
-    }
-    return out;
+  String _groupTitle(List<int> indexes) => _labs[indexes.first].name;
+
+  String _groupSubtitle(List<int> indexes) {
+    final first = _labs[indexes.first];
+    final parts = <String>[
+      if (first.className.isNotEmpty) '班级 ${first.className}' else '班级未知',
+      if (first.academicYear.isNotEmpty)
+        '${first.academicYear}学年'
+            '${first.academicTerm.isEmpty ? '' : ' ${first.academicTerm}'}'
+      else
+        '学年未知',
+    ];
+    return parts.join(' · ');
   }
 
-  int _placeCount(String place) => _labs.where((l) => l.place == place).length;
-
-  void _applyClassroom(String from, String to) {
+  /// 只改当前卡片对应的那一条实验，不再按 `place` 全局替换。
+  /// 同一实验室名可能出现在多门实验里，全局替换会把用户没打开的实验一起改掉。
+  void _applyClassroomAt(int index, String to) {
     final value = to.trim();
-    if (value.isEmpty) return;
+    if (value.isEmpty || index < 0 || index >= _labs.length) return;
     setState(() {
-      _labs = [
-        for (final l in _labs)
-          if (l.place == from)
-            SyglLab(
-              name: l.name,
-              code: l.code,
-              place: value,
-              teacher: l.teacher,
-              time: l.time,
-              weekday: l.weekday,
-              startSlot: l.startSlot,
-              endSlot: l.endSlot,
-              weeks: l.weeks,
-              source: l.source,
-            )
-          else
-            l,
-      ];
+      _labs[index] = _labs[index].copyWith(place: value);
     });
   }
 
-  Future<void> _editClassroom(String from) async {
+  Future<void> _editClassroom(int index, String from) async {
     final value = await showDialog<String>(
       context: context,
-      builder: (ctx) =>
-          _ClassroomEditDialog(from: from, count: _placeCount(from)),
+      builder: (ctx) => _ClassroomEditDialog(from: from, count: 1),
     );
-    if (value != null) _applyClassroom(from, value);
+    if (value != null) _applyClassroomAt(index, value);
   }
 
   String _sessionLine(SyglLab l) {
@@ -97,9 +105,10 @@ class _LabImportDialogState extends State<_LabImportDialog> {
   @override
   Widget build(BuildContext context) {
     final groups = _groups;
-    final places = _places;
     final allCourses = groups.length;
     final pickedCourses = _picked.length;
+    final pickedEntries =
+        _labs.where((l) => _picked.contains(_groupKey(l))).length;
     final width = (MediaQuery.of(context).size.width - 96).clamp(280.0, 420.0);
     return AlertDialog(
       backgroundColor: context.cardColor,
@@ -118,10 +127,9 @@ class _LabImportDialogState extends State<_LabImportDialog> {
           const Expanded(
             child: Text('导入实验课',
                 style: TextStyle(
-                    fontSize: AppTheme.fontTitle,
-                    fontWeight: FontWeight.w600)),
+                    fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
           ),
-          Text('$pickedCourses / $allCourses 门',
+          Text('$pickedCourses / $allCourses 门 · $pickedEntries 条',
               style: TextStyle(
                   fontSize: AppTheme.fontSmall, color: context.textTertiary)),
           IconButton(
@@ -138,32 +146,6 @@ class _LabImportDialogState extends State<_LabImportDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('已按课程合并。勾选要导入的实验；实验室就是课表里的教室，可统一改名。',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontSmall,
-                      color: context.textSecondary)),
-              if (places.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                Text('统一更改教室',
-                    style: TextStyle(
-                        fontSize: AppTheme.fontSmall,
-                        fontWeight: FontWeight.w600,
-                        color: context.textPrimary)),
-                const SizedBox(height: 6),
-                Text('点一个实验室，把它在所有实验里一次性改成真实教室。',
-                    style: TextStyle(
-                        fontSize: AppTheme.fontCaption,
-                        color: context.textTertiary)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [for (final p in places) _placeChip(context, p)],
-                ),
-                const SizedBox(height: 14),
-                Divider(height: 1, color: context.borderColor),
-              ],
-              const SizedBox(height: 12),
               Row(
                 children: [
                   Text('实验课程',
@@ -173,8 +155,8 @@ class _LabImportDialogState extends State<_LabImportDialog> {
                           color: context.textPrimary)),
                   const Spacer(),
                   TextButton(
-                    onPressed: () =>
-                        setState(() => _picked = {for (final l in _labs) l.name}),
+                    onPressed: () => setState(
+                        () => _picked = {for (final l in _labs) _groupKey(l)}),
                     child: const Text('全选'),
                   ),
                   TextButton(
@@ -192,7 +174,8 @@ class _LabImportDialogState extends State<_LabImportDialog> {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text('取消',
-              style: TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey)),
+              style:
+                  TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey)),
         ),
         FilledButton(
           onPressed: pickedCourses == 0
@@ -200,7 +183,9 @@ class _LabImportDialogState extends State<_LabImportDialog> {
               : () {
                   final picked = <SyglLab>[];
                   for (var i = 0; i < _labs.length; i++) {
-                    if (_picked.contains(_labs[i].name)) picked.add(_labs[i]);
+                    if (_picked.contains(_groupKey(_labs[i]))) {
+                      picked.add(_labs[i]);
+                    }
                   }
                   Navigator.of(context).pop(picked);
                 },
@@ -210,55 +195,15 @@ class _LabImportDialogState extends State<_LabImportDialog> {
     );
   }
 
-  Widget _placeChip(BuildContext context, String place) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-        onTap: () => _editClassroom(place),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: context.subtleFill,
-            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-            border: Border.all(color: context.borderColor),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.edit_rounded, size: 13, color: AppTheme.primaryColor),
-              const SizedBox(width: 6),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 180),
-                child: Text(place,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: AppTheme.fontSmall,
-                        color: context.textPrimary)),
-              ),
-              const SizedBox(width: 4),
-              Text('${_placeCount(place)} 条',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontCaption,
-                      color: context.textTertiary)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _courseCard(BuildContext context, MapEntry<String, List<int>> entry) {
     final on = _picked.contains(entry.key);
     final labs = [for (final i in entry.value) _labs[i]];
-    final placeSet = <String>{
-      for (final l in labs) if (l.place.isNotEmpty) l.place,
-    };
     final teacherSet = <String>{
-      for (final l in labs) if (l.teacher.isNotEmpty) l.teacher,
+      for (final l in labs)
+        if (l.teacher.isNotEmpty) l.teacher,
     };
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -271,7 +216,7 @@ class _LabImportDialogState extends State<_LabImportDialog> {
             }
           }),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             decoration: BoxDecoration(
               color: on
                   ? AppTheme.primaryColor.withValues(alpha: 0.08)
@@ -297,26 +242,20 @@ class _LabImportDialogState extends State<_LabImportDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(entry.key,
+                      Text(_groupTitle(entry.value),
                           style: TextStyle(
                               fontSize: AppTheme.fontBody,
                               fontWeight: FontWeight.w600,
                               color: context.textPrimary)),
-                      const SizedBox(height: 4),
-                      Text('${labs.length} 次实验 · ${_sessionLine(labs.first)}',
+                      const SizedBox(height: 2),
+                      Text(_groupSubtitle(entry.value),
                           style: TextStyle(
                               fontSize: AppTheme.fontCaption,
-                              color: context.textSecondary)),
-                      if (placeSet.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 3),
-                          child: Text('教室：${placeSet.join('、')}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontSize: AppTheme.fontCaption,
-                                  color: context.textTertiary)),
-                        ),
+                              fontWeight: FontWeight.w500,
+                              color: AppTheme.primaryColor)),
+                      const SizedBox(height: 4),
+                      for (var j = 0; j < entry.value.length; j++)
+                        _sessionRow(entry.value[j], labs[j]),
                       if (teacherSet.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
@@ -335,6 +274,32 @@ class _LabImportDialogState extends State<_LabImportDialog> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 卡片内的一条实验时间段；教室按钮只改这一条。
+  Widget _sessionRow(int index, SyglLab lab) {
+    final room = lab.place.trim().isEmpty ? '教室未识别' : lab.place.trim();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text('${_sessionLine(lab)} · $room',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: AppTheme.fontCaption,
+                  color: context.textSecondary)),
+        ),
+        IconButton(
+          tooltip: '只改这次实验的教室',
+          onPressed: () => _editClassroom(index, lab.place),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          icon:
+              Icon(Icons.edit_outlined, size: 15, color: AppTheme.primaryColor),
+        ),
+      ],
     );
   }
 }
@@ -378,11 +343,10 @@ class _ClassroomEditDialogState extends State<_ClassroomEditDialog> {
       contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
       title: Row(
         children: [
-          const Expanded(
-            child: Text('统一更改教室',
+          Expanded(
+            child: Text(widget.count > 1 ? '统一更改教室' : '更改这次实验的教室',
                 style: TextStyle(
-                    fontSize: AppTheme.fontTitle,
-                    fontWeight: FontWeight.w600)),
+                    fontSize: AppTheme.fontTitle, fontWeight: FontWeight.w600)),
           ),
           IconButton(
             tooltip: '关闭',
@@ -395,10 +359,12 @@ class _ClassroomEditDialogState extends State<_ClassroomEditDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('把「${widget.from}」在 ${widget.count} 条实验里全部改成：',
+          Text(
+              widget.count > 1
+                  ? '把「${widget.from}」在 ${widget.count} 条实验里全部改成：'
+                  : '把这次实验的教室「${widget.from.isEmpty ? '未识别' : widget.from}」改成：',
               style: TextStyle(
-                  fontSize: AppTheme.fontSmall,
-                  color: context.textSecondary)),
+                  fontSize: AppTheme.fontSmall, color: context.textSecondary)),
           const SizedBox(height: 12),
           TextField(
             controller: _ctrl,
@@ -419,7 +385,8 @@ class _ClassroomEditDialogState extends State<_ClassroomEditDialog> {
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text('取消',
-              style: TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey)),
+              style:
+                  TextStyle(fontSize: AppTheme.fontBody, color: Colors.grey)),
         ),
         FilledButton(
           onPressed: () {
@@ -427,7 +394,7 @@ class _ClassroomEditDialogState extends State<_ClassroomEditDialog> {
             if (v.isEmpty) return;
             Navigator.of(context).pop(v);
           },
-          child: const Text('应用到全部'),
+          child: const Text('保存'),
         ),
       ],
     );

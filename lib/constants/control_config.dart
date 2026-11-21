@@ -64,5 +64,9 @@ class ControlConfig {
   static const String pathResources = '/api/v1/resources';
   static const String pathResourceUploads = '/api/v1/resource-uploads';
   static const String pathFeedback = '/api/v1/feedback';
+  static const String pathInviteMe = '/api/v1/invite/me';
+  static const String pathInviteBind = '/api/v1/invite/bind';
+  static const String pathInviteConfig = '/api/v1/invite/config';
+  static const String pathAppRating = '/api/v1/app/rating';
   static const String pathHealth = '/healthz';
 }
