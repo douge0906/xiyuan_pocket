@@ -1,19 +1,17 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../models/academic_term.dart';
+import '../../models/course_model.dart';
 import '../../models/study_models.dart';
 import '../../providers/user_config_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/campus/jwgl_client.dart';
+import '../../services/course_storage.dart';
 import '../../services/study_store.dart';
 import '../../theme/app_theme.dart';
-import '../../utils/offscreen_capture.dart';
 import '../../widgets/empty_state_art.dart';
 import '../../widgets/loading_overlay.dart';
 import '../../widgets/state_views.dart';
@@ -53,9 +51,6 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
   bool _checking = true;
   bool _credentialBound = false;
 
-  /// 导出长图进行中（防止连点导两次）。
-  bool _exporting = false;
-
   bool _loading = false;
   int _seconds = 0;
   Timer? _timer;
@@ -64,6 +59,9 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
   bool _fromCache = false;
   DateTime? _cacheUpdatedAt;
   String? _errorText;
+
+  /// 教务未下发培养方案时，用本机课表课程做简易替代（离线兜底，非学业档案）。
+  List<Course> _localCourses = [];
 
   /// 当前状态筛选。空集合 = 全部。
   Set<StudyState> _filter = {};
@@ -111,7 +109,12 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
 
   Future<void> _loadCache() async {
     final cached = await StudyStore.load();
-    if (cached == null || !mounted) return;
+    if (cached == null) {
+      // 无缓存：尝试用本机课表兜底展示。
+      unawaited(_loadLocalCourses());
+      return;
+    }
+    if (!mounted) return;
     final updatedAt = await StudyStore.loadUpdatedAt();
     if (!mounted) return;
     setState(() {
@@ -123,6 +126,24 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
         _expanded.add(cached.blocks.first.id);
       }
     });
+    if (cached.isUnconfigured) unawaited(_loadLocalCourses());
+  }
+
+  /// 读取本机已导入的课表，按课程名去重，作为「教务未下发」时的简易替代。
+  ///
+  /// 这只是课表视角的在读课程，不含培养方案/通过状态，UI 必须标注来源，
+  /// 不能让用户误以为是完整学业档案。
+  Future<void> _loadLocalCourses() async {
+    final all = await CourseStorage.loadCourses();
+    final seen = <String>{};
+    final out = <Course>[];
+    for (final c in all) {
+      final key = c.name.trim();
+      if (key.isEmpty || !seen.add(key)) continue;
+      out.add(c);
+    }
+    if (!mounted) return;
+    setState(() => _localCourses = out);
   }
 
   void _startTimer() {
@@ -162,6 +183,7 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
           _expanded.add(archive.blocks.first.id);
         }
       });
+      if (archive.isUnconfigured) unawaited(_loadLocalCourses());
     } catch (e) {
       final msg = _humanize(e);
       if (!mounted) return;
@@ -171,6 +193,7 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
         if (!silent) _toast(msg);
       } else {
         setState(() => _errorText = msg);
+        unawaited(_loadLocalCourses());
       }
     } finally {
       _stopTimer();
@@ -203,17 +226,6 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
         foregroundColor: isDark ? Colors.white : AppTheme.primaryColor,
         elevation: 0,
         actions: [
-          // 导出学业总览为图片（2026-11-03 新增）。
-          //
-          // 为什么是「导出图片」而不是 PDF / Excel：这一页最有用的信息就是
-          // 顶部那张卡（GPA + 计划/通过/在读 + 学分进度），用户真实场景是
-          // **发给家长 / 截图存相册 / 发群里问学长**。生成一份带表格的 PDF
-          // 交付成本高、收益低；把卡片截成 PNG 正好是用户已经在做的事。
-          IconButton(
-            onPressed: _archive == null ? null : _exportOverview,
-            tooltip: '导出学业总览为图片',
-            icon: const Icon(Icons.ios_share_rounded),
-          ),
           IconButton(
             onPressed: _loading || !_credentialBound ? null : _refresh,
             tooltip: '重新获取学业数据',
@@ -254,11 +266,110 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
     );
   }
 
+  static const _weekLabels = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+  /// 教务未下发培养方案时的本机课表兜底列表（仅在读课程，非完整学业档案）。
+  Widget _buildLocalFallback(bool isDark) {
+    String slotLabel(Course c) {
+      final parts = <String>[];
+      if (c.pattern == CoursePattern.fixed &&
+          c.weekday >= 1 &&
+          c.weekday <= 7) {
+        parts.add(_weekLabels[c.weekday - 1]);
+      } else {
+        parts.add(c.pattern.label);
+      }
+      parts.add('第${c.startSlot}-${c.endSlot}节');
+      if (c.weeks.trim().isNotEmpty) parts.add(c.weeks.trim());
+      return parts.join(' · ');
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: context.cardColor,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: context.borderColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('教务暂未配置培养方案',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontTitle,
+                      fontWeight: FontWeight.w700,
+                      color: context.textPrimary)),
+              const SizedBox(height: 6),
+              Text(
+                '以下为本机课表中的在读课程，仅供参考；不含培养方案、学分与通过状态。',
+                style: TextStyle(
+                    fontSize: AppTheme.fontSmall, color: context.textTertiary),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _refresh,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('重新读取教务'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        for (final c in _localCourses)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              color: context.cardColor,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              border: Border.all(color: context.borderColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(c.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: AppTheme.fontBody,
+                        fontWeight: FontWeight.w600,
+                        color: context.textPrimary)),
+                const SizedBox(height: 4),
+                Text(slotLabel(c),
+                    style: TextStyle(
+                        fontSize: AppTheme.fontSmall,
+                        color: context.textTertiary)),
+                if (c.teacher.trim().isNotEmpty || c.classroom.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      [c.teacher.trim(), c.classroom.trim()]
+                          .where((s) => s.isNotEmpty)
+                          .join(' · '),
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption,
+                          color: context.textTertiary),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildBody(bool isDark) {
     final archive = _archive;
     if (archive == null) {
       if (_errorText != null) {
         return ErrorState(message: _errorText!, onRetry: _refresh);
+      }
+      // 无学业数据但本机已有课表：用课表课程简易兜底。
+      if (_localCourses.isNotEmpty) {
+        return _buildLocalFallback(isDark);
       }
       return const EmptyState(
         message: '还没有学业数据',
@@ -270,6 +381,10 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
     // 「教务暂未配置」是确定的结论，不是加载失败；但仍要给一个重试出口 ——
     // 学校随时可能补配培养方案，此前这里没有按钮，用户只能退出重进。
     if (archive.isUnconfigured && archive.blocks.isEmpty) {
+      // 26 级等教务未下发培养方案时，用本机课表课程做简易替代，而不是只给空状态。
+      if (_localCourses.isNotEmpty) {
+        return _buildLocalFallback(isDark);
+      }
       return EmptyState(
         message: '教务暂未配置培养方案',
         hint: '${archive.notice}\n'
@@ -293,8 +408,6 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
           _buildErrorBanner(isDark, _errorText!),
           const SizedBox(height: 12),
         ],
-        // 不再包 RepaintBoundary：导出改走 OffscreenCapture 离屏整树渲染，
-        // 屏幕上这层边界没有用途（见 _exportOverview 的注释）。
         _buildOverview(archive, isDark),
         const SizedBox(height: 16),
         _buildFilters(archive, isDark),
@@ -451,159 +564,6 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
     final need = a.requiredCredits;
     if (got == null || need == null || need <= 0) return null;
     return '已获 ${_trim(got)} / 要求 ${_trim(need)} 学分';
-  }
-
-  /// 把**完整学业报告**（总览 + 筛选统计 + 全部板块与课程 + 页脚）导成一张长图。
-  ///
-  /// 🔴 2026-11-03 第二版（用户原话：「导出功能做得不好，应当导出完全数据图片」）：
-  ///    第一版对页面里的 `_overviewKey` 直接 `toImage()`，只能拿到**屏幕可见的
-  ///    那一屏** —— 因为 `ListView` 只 build/layout 可见区域，屏幕外的课程行
-  ///    根本没进渲染树。现在改走 [OffscreenCapture]：在一棵离屏渲染树里按
-  ///    「宽度固定、高度无界」重新排版整份内容，再取图，所以屏幕多高都不影响结果。
-  ///
-  /// 三个必须处理的边界：
-  ///   1. 没有数据 → 直接返回，不崩；
-  ///   2. 长图可能很大（40+ 门课）→ [OffscreenCapture] 内部按高度自适应倍率，
-  ///      失败返回 null，只提示「导出失败」，不影响页面继续用；
-  ///   3. 大图写盘走 `getApplicationCacheDirectory()`（可回收层），
-  ///      不污染用户的 Documents（那是教材/试卷的地盘）。
-  Future<void> _exportOverview() async {
-    final a = _archive;
-    if (a == null) {
-      _toast('还没有学业数据');
-      return;
-    }
-    if (_exporting) return;
-    setState(() => _exporting = true);
-    try {
-      final isDark = Theme.of(context).brightness == Brightness.dark;
-      final screenWidth = MediaQuery.of(context).size.width;
-      final width = (screenWidth - 40).clamp(320.0, 560.0);
-
-      final bytes = await OffscreenCapture.capture(
-        context,
-        _buildExportReport(a, isDark),
-        width: width,
-      );
-      if (bytes == null) {
-        if (mounted) _toast('导出失败，稍后再试');
-        return;
-      }
-      final dir = await getApplicationCacheDirectory();
-      final stamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(':', '-')
-          .split('.')
-          .first;
-      final file = File('${dir.path}/我的学业_$stamp.png');
-      await file.writeAsBytes(bytes);
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'image/png')],
-        text: '掌上锡院 · 我的学业',
-      );
-    } catch (_) {
-      if (mounted) _toast('导出失败，稍后再试');
-    } finally {
-      if (mounted) setState(() => _exporting = false);
-    }
-  }
-
-  /// 导出图的内容：标题 + 总览卡 + 状态统计 + 全部板块（强制展开）+ 页脚。
-  ///
-  /// 刻意**不含**筛选胶囊与折叠箭头 —— 图上点不了，画出来只会让人以为能按。
-  Widget _buildExportReport(StudyArchive a, bool isDark) {
-    final blocks = a.blocks;
-    final at = a.fetchedAt ?? _cacheUpdatedAt;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '我的学业',
-                style: TextStyle(
-                  fontSize: AppTheme.fontHero,
-                  height: 1.1,
-                  fontWeight: FontWeight.w700,
-                  color: context.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              if (at != null)
-                Text(
-                  '更新于 ${_fmtTime(at)}',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontCaption, color: context.textTertiary),
-                ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          _buildOverview(a, isDark),
-          const SizedBox(height: 14),
-          _buildExportStats(a),
-          const SizedBox(height: 14),
-          for (final b in blocks) ...[
-            _buildBlock(b, isDark, forceOpen: true),
-            const SizedBox(height: 10),
-          ],
-          const SizedBox(height: 2),
-          _buildFooter(a),
-          const SizedBox(height: 6),
-          Text(
-            '由「掌上锡院」生成',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                fontSize: AppTheme.fontCaption, color: context.textTertiary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 导出图里那行「全部 / 已修 / 在读 / 未过 / 未修」统计。
-  ///
-  /// 🔴「已修」必须含「替代」：`StudyState.isCountedPassed` 明确
-  /// `passed` 和 `replaced` 都算通过（教务口径），总览的「通过」也是这么算的。
-  /// 此前这里只数 `passed`，于是同一屏出现「通过 17 / 已修 15」两个矛盾数字，
-  /// 而导出图连「替代」这一项都没有 —— 交给辅导员看就是硬伤。
-  Widget _buildExportStats(StudyArchive a) {
-    final counts = a.stateCounts;
-    final total = a.allCourses.length;
-    final passed = counts[StudyState.passed] ?? 0;
-    final replaced = counts[StudyState.replaced] ?? 0;
-    final items = <(String, int)>[
-      ('全部', total),
-      ('已修', passed + replaced),
-      ('在读', counts[StudyState.studying] ?? 0),
-      ('未过', counts[StudyState.failed] ?? 0),
-      ('未修', counts[StudyState.notStarted] ?? 0),
-      if (replaced > 0) ('其中替代', replaced),
-    ];
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final (label, n) in items)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: context.subtleFill,
-              borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-            ),
-            child: Text(
-              '$label $n',
-              style: TextStyle(
-                  fontSize: AppTheme.fontSmall,
-                  fontWeight: FontWeight.w500,
-                  color: context.textSecondary),
-            ),
-          ),
-      ],
-    );
   }
 
   double _creditProgress(StudyArchive a) {

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../constants/control_config.dart';
+import 'cancel_token.dart';
 import 'control_api.dart';
 import 'device_identity.dart';
 import 'storage_service.dart';
@@ -20,6 +21,7 @@ enum ControlFailureKind {
   quota,
   server,
   client,
+  cancelled,
   unknown,
 }
 
@@ -53,6 +55,41 @@ class ResourceFetchResult {
   bool get offline => failure != null;
 }
 
+class ResourceQuota {
+  const ResourceQuota({
+    required this.limit,
+    required this.used,
+    required this.baseLimit,
+    this.bonusLimit = 0,
+    this.bonusPerInvite = 10,
+    this.invitedCount = 0,
+  });
+
+  final int limit;
+  final int used;
+
+  /// 每日基础额度，默认 5 次。
+  final int baseLimit;
+
+  /// 邀请加成；每成功邀请 1 人加 10 次/天。
+  final int bonusLimit;
+  final int bonusPerInvite;
+  final int invitedCount;
+  int get remaining => (limit - used).clamp(0, limit);
+}
+
+class ResourceTextPreview {
+  const ResourceTextPreview({
+    this.text,
+    this.truncated = false,
+    this.failure,
+  });
+
+  final String? text;
+  final bool truncated;
+  final ControlFailure? failure;
+}
+
 ControlFailure _failureForStatus(int status, String message) {
   final kind = switch (status) {
     401 => ControlFailureKind.unauthorized,
@@ -77,11 +114,13 @@ class ControlService {
 
   /// 冷启动/回前台预热：设备登记 → 必要时断言登录 → 版本探测。
   ///
-  /// 未登录统一认证时整段空转 —— 一次 DNS 都不会发。
+  /// 未登录学校统一认证时仍会做设备登记与版本检查，但不会发送学号伪名。
   /// 默认 6 小时内不重复（[force] 可绕过，登录成功后用）。
   static Future<void> warmUp({bool force = false}) async {
     final last = _lastWarmUp;
-    if (!force && last != null && DateTime.now().difference(last) < const Duration(hours: 6)) {
+    if (!force &&
+        last != null &&
+        DateTime.now().difference(last) < const Duration(hours: 6)) {
       return;
     }
 
@@ -95,7 +134,8 @@ class ControlService {
 
     final cfg = await StorageService.loadUserConfig();
     final studentId = cfg.username.trim();
-    if (studentId.isNotEmpty && await DeviceIdentity.loadAccessToken() == null) {
+    if (studentId.isNotEmpty &&
+        await DeviceIdentity.loadAccessToken() == null) {
       await loginWithStudentId(studentId);
     }
     await fetchVersions();
@@ -165,7 +205,8 @@ class ControlService {
 
   /// 断言登录：拿一次性挑战 → 用设备私钥签名 → 换会话令牌。
   ///
-  /// 只在完成本机统一认证登录后调用；学号会先转成伪名再上传。
+  /// 只在完成本机统一认证登录后调用；原始学号只在本机参与伪名计算，
+  /// 请求与签名里都不再出现。
   static Future<bool> loginWithStudentId(
     String studentId, {
     String displayName = '',
@@ -189,11 +230,10 @@ class ControlService {
     final alias = DeviceIdentity.studentAlias(studentId);
     final assertedAt = isoTimestamp();
     final signature = identity.signLines([
-      ControlConfig.loginSignPrefix,
+      ControlConfig.loginSignPrefixV2,
       challengeId,
       challenge,
       serial,
-      studentId,
       alias,
       displayName,
       assertedAt,
@@ -202,10 +242,10 @@ class ControlService {
     final res = await ControlApi.postJson(
       ControlConfig.pathAssertions,
       {
+        'assertion_version': ControlConfig.assertionVersion,
         'challenge_id': challengeId,
         'challenge': challenge,
         'device_serial': serial,
-        'student_id': studentId,
         'student_alias': alias,
         'display_name': displayName,
         'asserted_at': assertedAt,
@@ -220,19 +260,7 @@ class ControlService {
   }
 
   /// 用 refresh token 换新的一对令牌（服务端会轮换旧的）。
-  static Future<bool> refreshSession() async {
-    final refresh = await DeviceIdentity.loadRefreshToken();
-    if (refresh == null || refresh.isEmpty) return false;
-    final res = await ControlApi.postJson(
-      ControlConfig.pathRefresh,
-      {'refresh_token': refresh},
-    );
-    final access = res?['access_token']?.toString();
-    final next = res?['refresh_token']?.toString();
-    if (access == null || next == null) return false;
-    await DeviceIdentity.saveSession(access, next);
-    return true;
-  }
+  static Future<bool> refreshSession() => ControlApi.refreshTokens();
 
   /// 退出本机账号时调用：撤销服务端会话并清本地令牌。
   static Future<void> logout() async {
@@ -311,15 +339,22 @@ class ControlService {
   static Future<ResourceFetchResult> fetchResourcesResult() async {
     if (!ControlConfig.enabled) {
       return const ResourceFetchResult(
-        failure: ControlFailure(
-            ControlFailureKind.unknown, '资源服务未启用'),
+        failure: ControlFailure(ControlFailureKind.unknown, '资源服务未启用'),
       );
     }
-    final uri = Uri.parse('${ControlConfig.baseUrl}${ControlConfig.pathResources}');
+    final uri =
+        Uri.parse('${ControlConfig.baseUrl}${ControlConfig.pathResources}');
+    final token = await ensureDevice();
+    if (token == null || token.isEmpty) {
+      return const ResourceFetchResult(
+        failure:
+            ControlFailure(ControlFailureKind.unauthorized, '设备身份未就绪，无法同步资源'),
+      );
+    }
     try {
-      final response = await http
-          .get(uri)
-          .timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Device $token',
+      }).timeout(Duration(seconds: ControlConfig.timeoutSeconds));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         String message = '资源同步失败（HTTP ${response.statusCode}）';
         try {
@@ -336,27 +371,165 @@ class ControlService {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! Map<String, dynamic>) {
         return const ResourceFetchResult(
-          failure: ControlFailure(
-              ControlFailureKind.unknown, '资源数据格式异常'),
+          failure: ControlFailure(ControlFailureKind.unknown, '资源数据格式异常'),
         );
       }
       return ResourceFetchResult(data: decoded, syncedAt: isoTimestamp());
     } on TimeoutException {
       return const ResourceFetchResult(
-        failure: ControlFailure(
-            ControlFailureKind.timeout, '资源同步超时，请稍后重试'),
+        failure: ControlFailure(ControlFailureKind.timeout, '资源同步超时，请稍后重试'),
       );
     } on SocketException {
       return const ResourceFetchResult(
-        failure: ControlFailure(
-            ControlFailureKind.offline, '当前无网络，显示上次同步内容'),
+        failure: ControlFailure(ControlFailureKind.offline, '当前无网络，显示上次同步内容'),
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[control] 资源同步失败：$e');
       return const ResourceFetchResult(
-        failure: ControlFailure(
-            ControlFailureKind.unknown, '资源同步失败，请稍后重试'),
+        failure: ControlFailure(ControlFailureKind.unknown, '资源同步失败，请稍后重试'),
       );
+    }
+  }
+
+  /// 当前设备今日下载额度；失败返回 null，页面不强行挡下载。
+  static Future<ResourceQuota?> fetchResourceQuota() async {
+    if (!ControlConfig.enabled) return null;
+    final token = await ensureDevice();
+    if (token == null || token.isEmpty) return null;
+    final uri = Uri.parse('${ControlConfig.baseUrl}/api/v1/resources/quota');
+    try {
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Device $token',
+      }).timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      if (response.statusCode < 200 || response.statusCode >= 300) return null;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! Map) return null;
+      final limit = (decoded['limit'] as num?)?.toInt() ?? 5;
+      final used = (decoded['used'] as num?)?.toInt() ?? 0;
+      final baseLimit = (decoded['baseLimit'] as num?)?.toInt() ?? limit;
+      final bonusLimit = (decoded['bonusLimit'] as num?)?.toInt() ?? 0;
+      final bonusPerInvite = (decoded['bonusPerInvite'] as num?)?.toInt() ?? 10;
+      final invitedCount = (decoded['invitedCount'] as num?)?.toInt() ?? 0;
+      return ResourceQuota(
+        limit: limit,
+        used: used,
+        baseLimit: baseLimit,
+        bonusLimit: bonusLimit,
+        bonusPerInvite: bonusPerInvite,
+        invitedCount: invitedCount,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// DOCX 文本预览。服务端只接受 .docx；.doc 返回 415，页面提示下载。
+  static Future<ResourceTextPreview> fetchResourceTextPreview({
+    required int fileId,
+  }) async {
+    if (!ControlConfig.enabled) {
+      return const ResourceTextPreview(
+        failure: ControlFailure(ControlFailureKind.unknown, '资源服务未启用'),
+      );
+    }
+    final token = await ensureDevice();
+    if (token == null || token.isEmpty) {
+      return const ResourceTextPreview(
+        failure:
+            ControlFailure(ControlFailureKind.unauthorized, '设备身份未就绪，无法预览'),
+      );
+    }
+    final uri = Uri.parse(
+        '${ControlConfig.baseUrl}/api/v1/resources/files/$fileId/text');
+    try {
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Device $token',
+      }).timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        String message = '该格式暂不支持在线预览，请下载后打开';
+        try {
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          if (decoded is Map && decoded['error'] is Map) {
+            final m = decoded['error']['message'];
+            if (m != null && m.toString().isNotEmpty) message = m.toString();
+          }
+        } catch (_) {}
+        return ResourceTextPreview(
+            failure: _failureForStatus(response.statusCode, message));
+      }
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is! Map) {
+        return const ResourceTextPreview(
+          failure: ControlFailure(ControlFailureKind.unknown, '预览数据格式异常'),
+        );
+      }
+      return ResourceTextPreview(
+        text: (decoded['text'] ?? '').toString(),
+        truncated: decoded['truncated'] == true,
+      );
+    } on TimeoutException {
+      return const ResourceTextPreview(
+        failure: ControlFailure(ControlFailureKind.timeout, '预览超时，请稍后重试'),
+      );
+    } on SocketException {
+      return const ResourceTextPreview(
+        failure: ControlFailure(ControlFailureKind.offline, '当前无网络，无法预览'),
+      );
+    } catch (_) {
+      return const ResourceTextPreview(
+        failure: ControlFailure(ControlFailureKind.unknown, '预览失败，请下载后打开'),
+      );
+    }
+  }
+
+  /// 举报/反馈资源：`reason` 为 broken/mismatch/duplicate/copyright/other。
+  static Future<ControlFailure?> reportResource({
+    required int uploadId,
+    required int fileId,
+    required String reason,
+    String detail = '',
+  }) async {
+    if (!ControlConfig.enabled) {
+      return const ControlFailure(ControlFailureKind.unknown, '资源服务未启用');
+    }
+    final token = await ensureDevice();
+    if (token == null || token.isEmpty) {
+      return const ControlFailure(
+          ControlFailureKind.unauthorized, '设备身份未就绪，无法反馈');
+    }
+    final uri = Uri.parse('${ControlConfig.baseUrl}/api/v1/resources/reports');
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Device $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'uploadId': uploadId,
+              'fileId': fileId,
+              'reason': reason,
+              'detail': detail,
+            }),
+          )
+          .timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      if (response.statusCode >= 200 && response.statusCode < 300) return null;
+      String message = '反馈提交失败（HTTP ${response.statusCode}）';
+      try {
+        final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+        if (decoded is Map && decoded['error'] is Map) {
+          final m = decoded['error']['message'];
+          if (m != null && m.toString().isNotEmpty) message = m.toString();
+        }
+      } catch (_) {}
+      return _failureForStatus(response.statusCode, message);
+    } on TimeoutException {
+      return const ControlFailure(ControlFailureKind.timeout, '反馈超时，请稍后重试');
+    } on SocketException {
+      return const ControlFailure(ControlFailureKind.offline, '当前无网络，无法提交反馈');
+    } catch (_) {
+      return const ControlFailure(ControlFailureKind.unknown, '反馈提交失败，请稍后重试');
     }
   }
 
@@ -372,12 +545,15 @@ class ControlService {
     String contributor = '',
     required List<PlatformFile> paperFiles,
     List<PlatformFile> answerFiles = const [],
+    CancelToken? cancelToken,
     void Function(int sent, int total, int fileIndex, int totalFiles)?
         onProgress,
   }) async {
     final allFiles = [...paperFiles, ...answerFiles];
     if (allFiles.isEmpty) return '请选择文件';
+    if (cancelToken?.isCancelled == true) return '已取消上传';
     http.Client? uploadClient;
+    void abort() => uploadClient?.close();
     const maxTotal = 80 * 1024 * 1024;
     final totalSize = allFiles.fold<int>(0, (sum, f) => sum + f.size);
     if (totalSize > maxTotal) {
@@ -393,6 +569,8 @@ class ControlService {
       if (token == null || token.isEmpty) {
         return '设备注册失败，请检查网络后重试';
       }
+      if (cancelToken?.isCancelled == true) return '已取消上传';
+      cancelToken?.addListener(abort);
 
       final uri = Uri.parse(
           '${ControlConfig.baseUrl}${ControlConfig.pathResourceUploads}');
@@ -419,6 +597,7 @@ class ControlService {
         await addFile('answer_files', file);
       }
       if (request.files.isEmpty) return '没有可上传的文件';
+      if (cancelToken?.isCancelled == true) return '已取消上传';
 
       final byteStream = request.finalize();
       final total = request.contentLength;
@@ -455,9 +634,8 @@ class ControlService {
       );
 
       final client = uploadClient = http.Client();
-      final response = await client
-          .send(streamed)
-          .timeout(const Duration(seconds: 300));
+      final response =
+          await client.send(streamed).timeout(const Duration(seconds: 900));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         if (kDebugMode) {
           debugPrint('[control] 资源上传失败：HTTP ${response.statusCode}');
@@ -467,7 +645,8 @@ class ControlService {
           final decoded = jsonDecode(body);
           if (decoded is Map) {
             final error = decoded['error'];
-            if (error is Map && (error['message'] ?? '').toString().isNotEmpty) {
+            if (error is Map &&
+                (error['message'] ?? '').toString().isNotEmpty) {
               return error['message'].toString();
             }
           }
@@ -484,13 +663,17 @@ class ControlService {
       } catch (_) {}
       return '上传失败，服务未返回成功状态';
     } on TimeoutException {
+      if (cancelToken?.isCancelled == true) return '已取消上传';
       return '上传超时，已保留文件，可重试';
     } on SocketException {
+      if (cancelToken?.isCancelled == true) return '已取消上传';
       return '当前无网络，已保留文件，联网后可重试';
     } catch (e) {
+      if (cancelToken?.isCancelled == true) return '已取消上传';
       if (kDebugMode) debugPrint('[control] 资源上传异常：$e');
       return '上传失败，请检查网络后重试';
     } finally {
+      cancelToken?.removeListener(abort);
       uploadClient?.close();
     }
   }
@@ -508,28 +691,59 @@ class ControlService {
     required int fileId,
     required String targetPath,
     bool preview = false,
+    CancelToken? cancelToken,
     void Function(int received, int total)? onProgress,
   }) async {
     if (!ControlConfig.enabled) {
-      return const ControlFailure(
-          ControlFailureKind.unknown, '资源服务未启用');
+      return const ControlFailure(ControlFailureKind.unknown, '资源服务未启用');
+    }
+    if (cancelToken?.isCancelled == true) {
+      return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
     }
     final token = await ensureDevice();
     if (token == null || token.isEmpty) {
       return const ControlFailure(
           ControlFailureKind.unauthorized, '请先登录统一认证后再下载');
     }
-    final uri = Uri.parse(
-        '${ControlConfig.baseUrl}/api/v1/resources/files/$fileId'
-        '?mode=${preview ? 'preview' : 'download'}');
+    final uri =
+        Uri.parse('${ControlConfig.baseUrl}/api/v1/resources/files/$fileId'
+            '?mode=${preview ? 'preview' : 'download'}');
     final request = http.Request('GET', uri)
       ..headers['Authorization'] = 'Device $token';
+    // 不自动跟随跳转：后端会把「已上 CDN」的文件 307 到对象存储/CDN，
+    // 设备令牌只应发给控制端，不能跟着重定向泄漏到第三方域名。
+    request.followRedirects = false;
     final client = http.Client();
+    void abort() => client.close();
+    cancelToken?.addListener(abort);
     IOSink? sink;
     try {
-      final response = await client
+      var response = await client
           .send(request)
           .timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      if (cancelToken?.isCancelled == true) {
+        return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+      }
+      if (const {301, 302, 303, 307, 308}.contains(response.statusCode)) {
+        final location = response.headers['location'] ?? '';
+        try {
+          await response.stream.drain<void>();
+        } catch (_) {}
+        if (location.isEmpty) {
+          return const ControlFailure(ControlFailureKind.server, '下载地址无效，请重试');
+        }
+        final redirected = Uri.parse(location);
+        if (redirected.scheme != 'https' && redirected.scheme != 'http') {
+          return const ControlFailure(ControlFailureKind.server, '下载地址无效，请重试');
+        }
+        // 第二阶段直连 CDN，不带 Authorization；配额/鉴权已在控制端完成。
+        response = await client
+            .send(http.Request('GET', redirected))
+            .timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+        if (cancelToken?.isCancelled == true) {
+          return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+        }
+      }
       if (response.statusCode != 200) {
         String message = '下载失败（HTTP ${response.statusCode}）';
         try {
@@ -558,6 +772,9 @@ class ControlService {
           TimeoutException('下载数据流中断'),
         ),
       )) {
+        if (cancelToken?.isCancelled == true) {
+          return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+        }
         sink.add(chunk);
         received += chunk.length;
         onProgress?.call(received, total);
@@ -576,21 +793,27 @@ class ControlService {
         if (kDebugMode) {
           debugPrint('[control] 下载不完整：收到 $received / 应为 $total');
         }
-        return const ControlFailure(
-            ControlFailureKind.server, '下载不完整，请重试');
+        return const ControlFailure(ControlFailureKind.server, '下载不完整，请重试');
       }
       return null;
     } on TimeoutException {
-      return const ControlFailure(
-          ControlFailureKind.timeout, '下载超时，请检查网络后重试');
+      if (cancelToken?.isCancelled == true) {
+        return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+      }
+      return const ControlFailure(ControlFailureKind.timeout, '下载超时，请检查网络后重试');
     } on SocketException {
-      return const ControlFailure(
-          ControlFailureKind.offline, '当前无网络，无法下载');
+      if (cancelToken?.isCancelled == true) {
+        return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+      }
+      return const ControlFailure(ControlFailureKind.offline, '当前无网络，无法下载');
     } catch (e) {
+      if (cancelToken?.isCancelled == true) {
+        return const ControlFailure(ControlFailureKind.cancelled, '已取消下载');
+      }
       if (kDebugMode) debugPrint('[control] 资源下载异常：$e');
-      return const ControlFailure(
-          ControlFailureKind.unknown, '下载失败，请稍后重试');
+      return const ControlFailure(ControlFailureKind.unknown, '下载失败，请稍后重试');
     } finally {
+      cancelToken?.removeListener(abort);
       try {
         await sink?.close();
       } catch (_) {}

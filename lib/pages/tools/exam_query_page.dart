@@ -181,9 +181,11 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
           rawList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       await ExamStorage.saveExams(parsed, semester: data['semester'] as String?);
       unawaited(WidgetSyncService.syncExamWidget());
+      // 合并后重新读取：保留本地手动项，避免界面只显示本次教务结果。
+      final merged = await ExamStorage.loadExams();
       if (!mounted) return;
       setState(() {
-        _exams = parsed;
+        _exams = merged;
         _semester = data['semester'] as String?;
         _fromCache = false;
         _cacheUpdatedAt = null;
@@ -220,6 +222,233 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
     }
   }
 
+  Widget _textField(TextEditingController ctl, String hint) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: ctl,
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          border: OutlineInputBorder(borderRadius: AppTheme.radiusMdAll),
+        ),
+      ),
+    );
+  }
+
+  String _fmtDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  String _fmtTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// 日期字段：只读，点击弹 App 内日期选择器，不再手填文本。
+  Widget _dateField(TextEditingController ctl, String hint, BuildContext ctx) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: ctl,
+        readOnly: true,
+        onTap: () async {
+          final now = DateTime.tryParse(ctl.text.trim()) ?? DateTime.now();
+          final d = await showDatePicker(
+            context: ctx,
+            initialDate: now,
+            firstDate: DateTime(2000),
+            lastDate: DateTime(2100),
+          );
+          if (d != null) ctl.text = _fmtDate(d);
+        },
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          border: OutlineInputBorder(borderRadius: AppTheme.radiusMdAll),
+        ),
+      ),
+    );
+  }
+
+  /// 时间字段：只读，点击弹 App 内时间选择器，不再手填文本。
+  Widget _timeField(TextEditingController ctl, String hint, BuildContext ctx) {
+    TimeOfDay? initial;
+    final parts = ctl.text.trim().split(':');
+    if (parts.length == 2) {
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h != null && m != null) initial = TimeOfDay(hour: h, minute: m);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: ctl,
+        readOnly: true,
+        onTap: () async {
+          final t = await showTimePicker(
+            context: ctx,
+            initialTime: initial ?? TimeOfDay.now(),
+          );
+          if (t != null) ctl.text = _fmtTime(t);
+        },
+        decoration: InputDecoration(
+          hintText: hint,
+          isDense: true,
+          suffixIcon: const Icon(Icons.access_time_outlined, size: 18),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          border: OutlineInputBorder(borderRadius: AppTheme.radiusMdAll),
+        ),
+      ),
+    );
+  }
+
+  /// 手动添加一场考试（标记为 manual，教务同步不会覆盖）。
+  Future<void> _openAddDialog() async {
+    final nameCtl = TextEditingController();
+    final dateCtl = TextEditingController();
+    final timeCtl = TextEditingController();
+    final endTimeCtl = TextEditingController();
+    final roomCtl = TextEditingController();
+    final teacherCtl = TextEditingController();
+    String? error;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(color: context.borderColor),
+          ),
+          title: Row(
+            children: [
+              const Expanded(child: Text('手动添加考试')),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: () => Navigator.of(ctx).pop(false),
+                icon: Icon(Icons.close_rounded,
+                    size: 20, color: context.textTertiary),
+              ),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _textField(nameCtl, '科目名称'),
+                _dateField(dateCtl, '选择考试日期', ctx),
+                _timeField(timeCtl, '开始时间', ctx),
+                _timeField(endTimeCtl, '结束时间（可选）', ctx),
+                _textField(roomCtl, '地点'),
+                _textField(teacherCtl, '教师'),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(error!,
+                        style: const TextStyle(
+                            color: Color(0xFFEF4444),
+                            fontSize: AppTheme.fontSmall)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('取消')),
+            TextButton(
+              onPressed: () {
+                final name = nameCtl.text.trim();
+                final date = dateCtl.text.trim();
+                if (name.isEmpty) {
+                  setDialog(() => error = '请填写科目名称');
+                  return;
+                }
+                if (DateTime.tryParse(date) == null) {
+                  setDialog(() => error = '日期格式应为 2026-06-15');
+                  return;
+                }
+                Navigator.of(ctx).pop(true);
+              },
+              child: const Text('添加'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true) {
+      for (final c in [nameCtl, dateCtl, timeCtl, endTimeCtl, roomCtl, teacherCtl]) {
+        c.dispose();
+      }
+      return;
+    }
+
+    final payload = <String, String>{
+      'name': nameCtl.text.trim(),
+      'date': dateCtl.text.trim(),
+      'start_time': timeCtl.text.trim(),
+      'end_time': endTimeCtl.text.trim(),
+      'classroom': roomCtl.text.trim(),
+      'teacher': teacherCtl.text.trim(),
+    };
+    for (final c in [nameCtl, dateCtl, timeCtl, endTimeCtl, roomCtl, teacherCtl]) {
+      c.dispose();
+    }
+    if (!mounted) return;
+
+    final list = await ExamStorage.addManualExam(payload);
+    if (!mounted) return;
+    setState(() => _exams = list);
+    unawaited(WidgetSyncService.syncExamWidget());
+    _toast('已添加手动考试');
+  }
+
+  /// 删除一场考试（仅手动项在界面上提供入口；删除前二次确认）。
+  Future<void> _deleteExam(Map<String, dynamic> exam) async {
+    final id = (exam['id'] ?? '').toString();
+    if (id.isEmpty) return;
+    final name = (exam['name'] ?? '未命名考试').toString();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            const Expanded(child: Text('删除考试')),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.of(ctx).pop(false),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
+        content: Text('确定要删除「$name」吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final list = await ExamStorage.removeExam(id);
+    if (!mounted) return;
+    setState(() => _exams = list);
+    unawaited(WidgetSyncService.syncExamWidget());
+    _toast('已删除');
+  }
+
   Future<void> _openExternal(String url) async {
     try {
       // 跳系统浏览器：内嵌 WebView 打开官网会错位、遮挡，体验差。
@@ -249,6 +478,11 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
         elevation: 0, // 2026-10-13：原 0.5 会在顶部多一道浅阴影，与全局 appBarTheme（0）不一致
         // 仿掌上徐工：右上角一个刷新按钮（取代原来的大查询按钮）
         actions: [
+          IconButton(
+            onPressed: _querying ? null : _openAddDialog,
+            tooltip: '手动添加考试',
+            icon: const Icon(Icons.add_rounded),
+          ),
           IconButton(
             onPressed: _querying ? null : _query,
             tooltip: '刷新考试安排',
@@ -418,7 +652,8 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
             ],
           ),
         ),
-      for (final e in _exams) _ExamTile(exam: e),
+      for (final e in _exams)
+        _ExamTile(exam: e, onDelete: () => _deleteExam(e)),
     ];
   }
 
@@ -455,21 +690,26 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
 /// 第一行 = 课程名 + 地点 + 「补考」标记；第二行 = 时间 + 剩余天数。
 class _ExamTile extends StatelessWidget {
   final Map<String, dynamic> exam;
+  final VoidCallback? onDelete;
 
-  const _ExamTile({required this.exam});
+  const _ExamTile({required this.exam, this.onDelete});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final muted = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
     final name = (exam['name'] ?? '未知科目').toString();
+    final startT = (exam['start_time'] ?? '').toString();
+    final endT = (exam['end_time'] ?? '').toString();
+    final rangeT = endT.isNotEmpty ? '$startT-$endT' : startT;
     final time = (exam['raw_time'] ?? '').toString().isNotEmpty
         ? exam['raw_time'].toString()
-        : '${exam['date'] ?? ''} ${exam['start_time'] ?? ''}'.trim();
+        : '${exam['date'] ?? ''} $rangeT'.trim();
     final classroom = (exam['classroom'] ?? '').toString();
     final teacher = (exam['teacher'] ?? '').toString();
     // 教务系统不给「补考」标志位，用课程名判断（补考科目名里带「补考」）。
     final isResit = name.contains('补考');
+    final isManual = exam['source'] == ExamStorage.sourceManual;
     final days = _daysUntil(exam);
 
     return AppCard(
@@ -516,6 +756,31 @@ class _ExamTile extends StatelessWidget {
                           color: Color(0xFFEF4444))),
                 ),
               ],
+              if (isManual) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF3B82F6).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  ),
+                  child: const Text('手动',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF2563EB))),
+                ),
+              ],
+              if (isManual && onDelete != null)
+                IconButton(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                  tooltip: '删除此考试',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.all(6),
+                  color: muted,
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -532,17 +797,22 @@ class _ExamTile extends StatelessWidget {
                     style: TextStyle(fontSize: AppTheme.fontBody, color: muted)),
             ],
           ),
-          if (teacher.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.person_outline_rounded, size: 15, color: muted),
-                const SizedBox(width: 8),
-                Text(teacher,
-                    style: TextStyle(fontSize: AppTheme.fontSmall, color: muted)),
-              ],
-            ),
-          ],
+          // 教师行预留固定高度槽位：有无教师都占同一行，避免卡片高低不齐。
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 20,
+            child: teacher.isEmpty
+                ? const SizedBox.shrink()
+                : Row(
+                    children: [
+                      Icon(Icons.person_outline_rounded, size: 15, color: muted),
+                      const SizedBox(width: 8),
+                      Text(teacher,
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall, color: muted)),
+                    ],
+                  ),
+          ),
         ],
       ),
     );

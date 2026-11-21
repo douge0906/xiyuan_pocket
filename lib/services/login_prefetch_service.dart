@@ -12,6 +12,10 @@ import 'study_store.dart';
 import 'textbook_storage.dart';
 import 'widget_sync_service.dart';
 
+/// 宿舍选择回调：预取到电费步骤且本机未绑定宿舍时，由持有 context 的登录
+/// 流程弹出宿舍选择框，填完返回已保存的宿舍；取消返回 null。
+typedef DormSelector = Future<DormInfo?> Function();
+
 /// 登录成功后的自动同步（2026-11-04 重做进度反馈）。
 ///
 /// 用户要求：「登录成功 自动同步成绩 中.... 同步成功。 自动同步...中 ...
@@ -36,6 +40,7 @@ class LoginPrefetchService {
   static Future<void> run(
     ProviderContainer container, {
     bool runCourses = false,
+    DormSelector? onRequireDorm,
   }) async {
     if (_running) return;
     _running = true;
@@ -46,7 +51,7 @@ class LoginPrefetchService {
         // 课表由调用方负责，这里只把它标成就绪，进度条不会卡住。
         LoginSyncProgress.done(LoginSyncStep.courses, note: '已单独同步');
       }
-      await _prefetch(container);
+      await _prefetch(container, onRequireDorm: onRequireDorm);
     } finally {
       LoginSyncProgress.skipRest(note: '已跳过');
       _running = false;
@@ -68,7 +73,10 @@ class LoginPrefetchService {
     }
   }
 
-  static Future<void> _prefetch(ProviderContainer container) async {
+  static Future<void> _prefetch(
+    ProviderContainer container, {
+    DormSelector? onRequireDorm,
+  }) async {
     // 学期码唯一真源见 models/academic_term.dart（原来这里 month>=8 的写法
     // 在 1 月会把寒假算成「第二学期」，导致预取全空）。
     final term0 = currentAcademicTerm();
@@ -187,14 +195,14 @@ class LoginPrefetchService {
       LoginSyncProgress.failed(LoginSyncStep.study, note: '网络异常');
     }
 
-    // 电费（只在宿舍已绑定时查；没绑定不弹窗，绑定入口在「我的」页）。
-    //
-    // 为什么静默：登录时宿舍还没绑的人占多数，这里只补「已绑定的人」
-    // 首屏就有电费余额，不替用户做绑定的决定。绑定引导在
-    // UserPage._afterLogin 里单独做（那里有 context，能弹窗）。
+    // 电费：已绑定则直接查询；未绑定先由登录流程弹出宿舍选择，等用户填完
+    // 再继续抓取。回调只返回宿舍，不持有 BuildContext，服务层不直接弹窗。
     LoginSyncProgress.running(LoginSyncStep.elec);
     try {
-      final dorm = await DormStore.load();
+      var dorm = await DormStore.load();
+      if (dorm == null && onRequireDorm != null) {
+        dorm = await onRequireDorm();
+      }
       if (dorm == null) {
         LoginSyncProgress.failed(LoginSyncStep.elec, note: '未绑定宿舍');
       } else {

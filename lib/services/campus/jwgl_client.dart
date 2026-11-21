@@ -29,7 +29,7 @@ class JwglClient {
   /// 先查「全部学期」，再补查最近 10 个学期；每个查询按 500/页翻页，
   /// 防止成绩行数超过 500 时后面的学期被截断。
   static Future<Map<String, dynamic>> fetchGrades(
-    CampusSession session, {
+    CampusSessionBase session, {
     int rows = 500,
   }) async {
     final csrf = await _openPage(session, _gradePage);
@@ -38,25 +38,27 @@ class JwglClient {
     Object? lastError;
     var failed = 0;
 
+    Map<String, String> formFor(String xnm, String xqm) => {
+          'xnm': xnm,
+          'xqm': xqm,
+          '_search': 'false',
+          'nd': '${DateTime.now().millisecondsSinceEpoch}',
+          'page': '1',
+          'rows': '$rows',
+          'queryModel.showCount': '$rows',
+          'queryModel.currentPage': '1',
+          'queryModel.sortName': '',
+          'queryModel.sortOrder': 'asc',
+          'sidx': '',
+          'sord': 'asc',
+          if (csrf.isNotEmpty) 'csrftoken': csrf,
+        };
+
     Future<void> addTerm(List<String> t) async {
       try {
         final items = await _queryGrade(
           session,
-          {
-            'xnm': t[0],
-            'xqm': t[1],
-            '_search': 'false',
-            'nd': '${DateTime.now().millisecondsSinceEpoch}',
-            'page': '1',
-            'rows': '$rows',
-            'queryModel.showCount': '$rows',
-            'queryModel.currentPage': '1',
-            'queryModel.sortName': '',
-            'queryModel.sortOrder': 'asc',
-            'sidx': '',
-            'sord': 'asc',
-            if (csrf.isNotEmpty) 'csrftoken': csrf,
-          },
+          formFor(t[0], t[1]),
           pageSize: rows,
         );
         all.addAll(items);
@@ -65,14 +67,18 @@ class JwglClient {
         lastError = e;
         failed++;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 120));
     }
 
-    // 先查「全部学期」，再补查最近 10 个学期。即使某个学期已出现，
-    // 也仍然查询补漏：全部学期接口可能只返回该学期的一部分行。
+    // 先查「全部学期」，再补查最近 10 个学期兜底（全部学期接口可能只
+    // 返回部分行）。补查按 4 路有限并行，避免 10 个学期纯串行排队；
+    // 兜底语义与去重逻辑不变。
     await addTerm(['', '']);
-    for (final t in _recentTerms(10)) {
-      await addTerm(t);
+    final terms = _recentTerms(10);
+    const concurrency = 4;
+    for (var i = 0; i < terms.length; i += concurrency) {
+      final end =
+          (i + concurrency < terms.length) ? i + concurrency : terms.length;
+      await Future.wait(terms.sublist(i, end).map(addTerm));
     }
 
     if (all.isEmpty && lastError != null) {
@@ -115,12 +121,12 @@ class JwglClient {
 
   /// 成绩查询有两个常见入口，按顺序尝试；任一入口有数据即返回。
   static Future<List<Map<String, dynamic>>> _queryGrade(
-    CampusSession session,
+    CampusSessionBase session,
     Map<String, String> form, {
     required int pageSize,
   }) async {
     Object? lastError;
-    var responded = false;
+    List<Map<String, dynamic>>? empty;
     for (final url in [
       _gradeApi,
       '$_gradePage?doType=query&gnmkdm=N305005',
@@ -128,21 +134,24 @@ class JwglClient {
       try {
         final items =
             await _queryAll(session, url, form, pageSize: pageSize);
-        responded = true;
+        // 第一个入口「成功但空」不代表这个学期没成绩：教务不同入口
+        // 的过滤条件不一致时，备用入口仍可能有数据。先记住空结果，
+        // 继续试下一个入口；两个都空才返回空。
         if (items.isNotEmpty) return items;
+        empty ??= items;
       } catch (e) {
         if (e is CampusException && e.needRelogin) rethrow;
         lastError = e;
       }
     }
-    if (responded) return const [];
+    if (empty != null) return empty;
     if (lastError != null) throw lastError;
     return const [];
   }
 
   /// 逐页拉取某个学期；服务端不认 page 时通过「没有新增行」停止。
   static Future<List<Map<String, dynamic>>> _queryAll(
-    CampusSession session,
+    CampusSessionBase session,
     String apiUrl,
     Map<String, String> form, {
     required int pageSize,
@@ -321,7 +330,7 @@ class JwglClient {
 
   /// 查询某学期考试安排。**该学期没有考试时返回空列表**（不是失败）。
   static Future<Map<String, dynamic>> queryExams(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
   ) async {
@@ -393,7 +402,7 @@ class JwglClient {
   /// 返回 `{success, message, semester, books:[...], count}`。
   /// **该学期没有教材时返回空列表**（合法响应），不算失败。
   static Future<Map<String, dynamic>> queryTextbooks(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
   ) async {
@@ -471,7 +480,7 @@ class JwglClient {
   /// 教材预订单 | 学年 | 学期 | 课程名称 | 上课教师 | 课程性质 |
   /// 教材信息 | 上课地点 | 选课时间 | 征订状态 | 预订时间
   static Future<List<Map<String, dynamic>>> _queryBooksFromHtml(
-    CampusSession session,
+    CampusSessionBase session,
     String pageUrl,
   ) async {
     final r = await session.get(pageUrl, headers: {
@@ -597,7 +606,7 @@ class JwglClient {
   // ---------------- 通用 ----------------
 
   /// 打开业务页：拿 csrftoken，并判断会话是否失效
-  static Future<String> _openPage(CampusSession session, String pageUrl) async {
+  static Future<String> _openPage(CampusSessionBase session, String pageUrl) async {
     final r = await session.get(pageUrl, headers: {
       'Referer': '$_base/jwglxt/xtgl/index_initMenu.html',
     });
@@ -608,7 +617,7 @@ class JwglClient {
   }
 
   static Future<List<Map<String, dynamic>>> _query(
-    CampusSession session,
+    CampusSessionBase session,
     String apiUrl,
     Map<String, String> form, {
     bool emptyMeansEmpty = false,

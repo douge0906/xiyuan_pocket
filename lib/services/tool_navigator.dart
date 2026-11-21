@@ -4,6 +4,7 @@ import 'auth_gate.dart';
 import 'tool_usage_storage.dart';
 import '../pages/tools/grade_query_page.dart';
 import '../pages/tools/exam_query_page.dart';
+import '../pages/tools/empty_classroom_page.dart';
 import '../pages/tools/my_study_page.dart';
 import '../pages/tools/resource_center_page.dart';
 import '../pages/tools/xyl_calendar_page.dart';
@@ -16,13 +17,17 @@ import '../pages/countdown_page.dart';
 class ToolNavigator {
   /// **需要登录**（本机已存统一认证账号）才能使用的工具。
   ///
-  /// 校历与地图不在此列 —— 前者是纯离线数据，后者是纯内置图片。
+  /// 校历与地图不在此列 —— 前者是纯离线数据，后者是纯内置 3D 白模（离线单文件）。
   /// 教材要登录（走教务「选课 → 教材预订」，未登录拿不到数据）。
+  /// 资源服务（原控制台）也要登录：未登录进去只有空列表和被拒的请求，
+  /// 不如在入口就拦下，少一层「进去了又什么都不能点」的困惑。
   static const Set<String> loginRequired = {
     'grade_push',
     'exam_query',
+    'empty_classroom',
     'textbook',
     'my_study',
+    'library',
   };
 
   static Future<void> open(
@@ -52,6 +57,10 @@ class ToolNavigator {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ExamQueryPage()));
         break;
+      case 'empty_classroom':
+        Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const EmptyClassroomPage()));
+        break;
       case 'my_study':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const MyStudyPage()));
@@ -64,7 +73,7 @@ class ToolNavigator {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ResourceCenterPage()));
         break;
-      // 地图不需要登录（纯内置图片）；教材已在上面过闸门
+      // 地图不需要登录（纯内置 3D 白模，离线单文件）；教材已在上面过闸门
       case 'textbook':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const TextbookPage()));

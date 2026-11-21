@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
+import '../../models/academic_term.dart';
 import 'campus_session.dart';
 import 'cas_client.dart';
 
@@ -87,6 +88,10 @@ class SyglClient {
     String username,
     String password,
   ) async {
+    // 换账号/重登时必须丢掉上一次的 UIToken，否则新会话可能带着旧 token
+    // 打 asmx，服务端按旧会话判定，表现为“登录成功但接口全 401”。
+    _uiToken = null;
+    _lastStatus = 0;
     // 1) 走 CAS 拿 TGT。CAS 自身永远是 https，不受 sygl 的 http 限制。
     final res = await CasClient.login(
       session,
@@ -234,14 +239,50 @@ class SyglClient {
       );
     }
 
-    final labs = _labsFromRuleManageRows(rows);
+    // getRuleManage 的 `count` 是总条数、`data` 只是当前页。超过 200 条时
+    // 只读第一页会把后面的实验课静默丢掉；逐页补到 count 或空页为止。
+    final allRows = <Map<String, Object?>>[...rows];
+    var total = _asmxCount(r.body);
+    var page = 1;
+    while (total != null && allRows.length < total && page < 10) {
+      page++;
+      try {
+        final more = await session.postForm(
+          '$base/${endpoint.path}',
+          {'page': '$page', 'limit': '200'},
+          headers: {
+            'Authorization': wanXinKey,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': '$base/${endpoint.page}',
+            if (_uiToken != null && _uiToken!.isNotEmpty) 'UIToken': _uiToken!,
+          },
+        );
+        if (more.statusCode != 200) break;
+        final pageRows = _rowsFromAsmx(more.body);
+        if (pageRows == null || pageRows.isEmpty) break;
+        allRows.addAll(pageRows);
+        total = _asmxCount(more.body) ?? total;
+      } catch (_) {
+        // 后续页失败时保留已拿到的记录；至少不要因为第 2 页断了就整份丢掉。
+        break;
+      }
+    }
+
+    final labs = _labsFromRuleManageRows(allRows);
     return SyglLabFetchResult(
       labs: labs,
       note: labs.isEmpty
-          ? '实验课表有 ${rows.length} 条记录，但没有一条能解析出星期与节次'
-          : '从实验课表接口取到 ${rows.length} 条排课，合并成 ${labs.length} 条课表记录',
+          ? '实验课表有 ${allRows.length} 条记录，但没有一条能解析出星期与节次'
+          : '从实验课表接口取到 ${allRows.length} 条排课，合并成 ${labs.length} 条课表记录',
       menuDump: 'Syjx.asmx/getRuleManage · ${endpoint.path}',
     );
+  }
+
+  /// 从 asmx 包 JSON 里取 `count` 总条数；取不到返回 null。
+  static int? _asmxCount(String body) {
+    final m = RegExp(r'"count"\s*:\s*(\d+)').firstMatch(body);
+    if (m == null) return null;
+    return int.tryParse(m.group(1)!);
   }
 
   /// 找 `getRuleManage` 的地址。
@@ -351,6 +392,13 @@ class SyglClient {
   /// 一行 = 一次排课。同一门课同一天同一节会在多周出现（`ZC` 不同），
   /// 所以要先按「课程+星期+节次+地点+教师+时间」聚成一张课表格，
   /// 再把周次并起来。
+  /// 仅供回归测试：直接喂 `getRuleManage` 行，验证分组键包含班级/学年。
+  @visibleForTesting
+  static List<SyglLab> debugLabsFromRuleManageRows(
+    List<Map<String, Object?>> rows,
+  ) =>
+      _labsFromRuleManageRows(rows);
+
   static List<SyglLab> _labsFromRuleManageRows(
     List<Map<String, Object?>> rows,
   ) {
@@ -372,12 +420,27 @@ class SyglClient {
       final place = cell('SYSMC');
       final time = _clockFromCell(cell('SKSJ'));
       final week = int.tryParse(cell('ZC')) ?? 0;
+      final className = _cleanClassName(cell('BJMC'));
 
-      final key = '$name|$weekday|${slots.$1}|${slots.$2}|$place|$teacher|$time';
+      // 🔴 实验系统一次可能返回多个学年的排课（例如补做/重修记录）。
+      //    原来分组键只有课程+星期+节次+地点+教师+时间，不同学年的
+      //    同一门课会被并成一张卡片、周次取并集 —— 用户看到的是「一门课
+      //    横跨两个学期」。现在把 SKRQ 日期推出的学年/学期一并进键。
+      final date = _dateFromCell(cell('SKRQ'));
+      final term = date == null ? null : academicTermForDate(date);
+      final academicYear = term == null ? '' : '${term.year}-${term.year + 1}';
+      final academicTerm =
+          term == null ? '' : (term.term == 3 ? '第一学期' : '第二学期');
+
+      final key = '$name|$className|$academicYear|$academicTerm|'
+          '$weekday|${slots.$1}|${slots.$2}|$place|$teacher|$time';
       final g = groups.putIfAbsent(
         key,
         () => _LabGroup(
           name: name,
+          className: className,
+          academicYear: academicYear,
+          academicTerm: academicTerm,
           weekday: weekday,
           startSlot: slots.$1,
           endSlot: slots.$2,
@@ -392,6 +455,9 @@ class SyglClient {
 
     final out = groups.values.toList()
       ..sort((a, b) {
+        // 新学年在前；同一年级内再按星期/节次/课程名。
+        final byYear = b.academicYear.compareTo(a.academicYear);
+        if (byYear != 0) return byYear;
         final byDay = a.weekday.compareTo(b.weekday);
         if (byDay != 0) return byDay;
         final bySlot = a.startSlot.compareTo(b.startSlot);
@@ -404,13 +470,16 @@ class SyglClient {
         SyglLab(
           name: g.name,
           code: g.code,
+          className: g.className,
+          academicYear: g.academicYear,
+          academicTerm: g.academicTerm,
           place: g.place,
           teacher: g.teacher,
           time: g.time,
           weekday: g.weekday,
           startSlot: g.startSlot.clamp(1, 12),
-          endSlot: (g.endSlot >= g.startSlot ? g.endSlot : g.startSlot)
-              .clamp(1, 12),
+          endSlot:
+              (g.endSlot >= g.startSlot ? g.endSlot : g.startSlot).clamp(1, 12),
           weeks: _formatWeeks(g.weeks),
           source: '我的课表',
         ),
@@ -549,7 +618,9 @@ class SyglClient {
       dotAll: true,
     ).allMatches(html)) {
       final href = m.group(1)!.trim();
-      if (href.isEmpty || href.startsWith('#') || href.startsWith('javascript:')) {
+      if (href.isEmpty ||
+          href.startsWith('#') ||
+          href.startsWith('javascript:')) {
         continue;
       }
       final text = _plainText(m.group(0)!);
@@ -725,7 +796,9 @@ class SyglClient {
   static bool _looksLikeLab(String name, String link) {
     const kw = ['实验', '实训', '排课', '课表', '预约', '实验课'];
     for (final k in kw) {
-      if (name.contains(k) || link.contains(Uri.encodeComponent(k))) return true;
+      if (name.contains(k) || link.contains(Uri.encodeComponent(k))) {
+        return true;
+      }
       if (link.contains(k)) return true;
     }
     return false;
@@ -781,12 +854,16 @@ class SyglClient {
     _MenuLink link,
   ) async {
     final urls = <String>[];
-    for (final m in RegExp(r'''url\s*:\s*["']([^"']+)["']''').allMatches(pageHtml)) {
+    for (final m
+        in RegExp(r'''url\s*:\s*["']([^"']+)["']''').allMatches(pageHtml)) {
       final u = m.group(1)!.trim();
       if (u.isEmpty) continue;
       // 只认本站 asmx / 数据方法，避免把 css/js 静态资源当接口打。
       if (!u.contains('.asmx') &&
-          !(u.contains('Get') && (u.contains('Lab') || u.contains('List') || u.contains('Data')))) {
+          !(u.contains('Get') &&
+              (u.contains('Lab') ||
+                  u.contains('List') ||
+                  u.contains('Data')))) {
         continue;
       }
       if (!urls.contains(u)) urls.add(u);
@@ -875,15 +952,35 @@ class SyglClient {
     }
 
     final name = pick(const [
-      'SYSMC', 'sysmc', 'SYMC', 'KCMC', 'kcmc', 'NAME', 'name', '实验名称', '课程名称',
+      'SYSMC',
+      'sysmc',
+      'SYMC',
+      'KCMC',
+      'kcmc',
+      'NAME',
+      'name',
+      '实验名称',
+      '课程名称',
     ]);
     if (name.isEmpty) return null;
     final time = pick(const [
-      'SJMC', 'sjmc', 'SKSJ', 'sksj', 'TIME', 'time', '时间', '上课时间', '节次', '排课时间',
+      'SJMC',
+      'sjmc',
+      'SKSJ',
+      'sksj',
+      'TIME',
+      'time',
+      '时间',
+      '上课时间',
+      '节次',
+      '排课时间',
     ]);
-    final weekday = _weekdayOf(pick(const ['XQ', 'xq', 'WEEKDAY', 'weekday', '星期']));
-    final startSlot = _slotOf(pick(const ['KJ', 'kj', 'STARTSLOT', 'startSlot', '开始节']));
-    final endSlot = _slotOf(pick(const ['JJ', 'jj', 'ENDSLOT', 'endSlot', '结束节']));
+    final weekday =
+        _weekdayOf(pick(const ['XQ', 'xq', 'WEEKDAY', 'weekday', '星期']));
+    final startSlot =
+        _slotOf(pick(const ['KJ', 'kj', 'STARTSLOT', 'startSlot', '开始节']));
+    final endSlot =
+        _slotOf(pick(const ['JJ', 'jj', 'ENDSLOT', 'endSlot', '结束节']));
     final schedule = _scheduleFromText(time);
     return SyglLab(
       name: name,
@@ -905,22 +1002,29 @@ class SyglClient {
     final out = <SyglLab>[];
     // 逐行抽出单元格。保留空列：列位置有意义，丢一列就全错位。
     final rows = <List<String>>[];
-    for (final rowMatch in RegExp('<tr[^>]*>(.*?)</tr>',
-        dotAll: true, caseSensitive: false).allMatches(html)) {
+    for (final rowMatch
+        in RegExp('<tr[^>]*>(.*?)</tr>', dotAll: true, caseSensitive: false)
+            .allMatches(html)) {
       final cells = <String>[
         for (final c in RegExp('<(?:td|th)[^>]*>(.*?)</(?:td|th)>',
-            dotAll: true, caseSensitive: false).allMatches(rowMatch.group(1)!))
+                dotAll: true, caseSensitive: false)
+            .allMatches(rowMatch.group(1)!))
           _plainText(c.group(1)!),
       ];
       if (cells.isNotEmpty) rows.add(cells);
     }
 
     // 表头驱动的列号：截图 m26006「我的课表」的真实列。
-    int weekIdx = -1, dateIdx = -1, slotIdx = -1, nameIdx = -1,
-        teacherIdx = -1, placeIdx = -1;
+    int weekIdx = -1,
+        dateIdx = -1,
+        slotIdx = -1,
+        nameIdx = -1,
+        teacherIdx = -1,
+        placeIdx = -1;
     for (final cells in rows) {
       final joined = cells.join('|');
-      if (joined.contains('周次') && joined.contains('日期') &&
+      if (joined.contains('周次') &&
+          joined.contains('日期') &&
           (joined.contains('节次') || joined.contains('实验课程'))) {
         for (var i = 0; i < cells.length; i++) {
           final c = cells[i];
@@ -957,15 +1061,15 @@ class SyglClient {
 
     for (final cells in rows) {
       // 旧形态：单元格直接写了「星期三 第5-6节 3-8周」-> 沿用原解析。
-      final legacyIdx = cells.indexWhere((c) =>
-          RegExp('(星期|周)[一二三四五六日天1-7]').hasMatch(c) &&
-          c.contains('节'));
+      final legacyIdx = cells.indexWhere(
+          (c) => RegExp('(星期|周)[一二三四五六日天1-7]').hasMatch(c) && c.contains('节'));
       if (legacyIdx >= 0) {
         final time = cells[legacyIdx];
         final schedule = _scheduleFromText(time);
         final before = cells.take(legacyIdx).toList();
         final name = before.isEmpty ? cells.first : before.last;
-        if (name.isEmpty || name.length > 80 ||
+        if (name.isEmpty ||
+            name.length > 80 ||
             _scheduleFromText(name).weekday > 0) {
           continue;
         }
@@ -989,8 +1093,10 @@ class SyglClient {
       if (name.isEmpty || name.length > 80) {
         continue;
       }
-      if (name.contains('实验课程') || name.contains('课程名称') ||
-          name.contains('周次') || name.contains('节次')) {
+      if (name.contains('实验课程') ||
+          name.contains('课程名称') ||
+          name.contains('周次') ||
+          name.contains('节次')) {
         continue;
       }
       final weekday = _weekdayFromDate(cell(cells, dateIdx));
@@ -1014,7 +1120,8 @@ class SyglClient {
   }
 
   /// 从「日期」列（yyyymmdd / yyyy-mm-dd）推星期几（1=周一 .. 7=周日）。
-  static int? _weekdayFromDate(String raw) {
+  /// 从 `SKRQ`（`20260916`）取日期；实验系统的日期是学年/学期归属的唯一依据。
+  static DateTime? _dateFromCell(String raw) {
     final digits = raw.replaceAll(RegExp('[^0-9]'), '');
     if (digits.length < 8) return null;
     final y = int.tryParse(digits.substring(0, 4));
@@ -1024,15 +1131,34 @@ class SyglClient {
     if (y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) {
       return null;
     }
-    return DateTime(y, m, d).weekday;
+    return DateTime(y, m, d);
+  }
+
+  static int? _weekdayFromDate(String raw) => _dateFromCell(raw)?.weekday;
+
+  /// 班级列规范化：`25电气1,25电气2,25电气3` → `25电气1、25电气2、25电气3`。
+  /// 单个班原样保留；空值返回空串，交给 UI 标「班级未知」。
+  static String _cleanClassName(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return '';
+    final parts = text
+        .split(RegExp(r'[，,、;；.．/]+'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final looksLikeClass = RegExp(
+      r'^\d{2,4}(?:级)?[一-龥]{1,12}\d{0,2}(?:班)?$',
+    );
+    final kept = parts.where(looksLikeClass.hasMatch).toList();
+    if (kept.length >= 2) return kept.join('、');
+    return text;
   }
 
   /// 从「节次/时间」列取起止节：先去括号里的时钟，再取第一组「7-11」。
   static (int, int) _slotsFromCell(String raw) {
     var text = raw.replaceAll(RegExp('[(（][^)）]*[)）]'), '');
     text = text.replaceAll(RegExp('[0-9]{1,2}:[0-9]{2}'), '');
-    final m = RegExp('([0-9]{1,2})[ ]*[-~—至][ ]*([0-9]{1,2})')
-        .firstMatch(text);
+    final m = RegExp('([0-9]{1,2})[ ]*[-~—至][ ]*([0-9]{1,2})').firstMatch(text);
     if (m != null) {
       return (
         int.tryParse(m.group(1)!) ?? 0,
@@ -1060,7 +1186,6 @@ class SyglClient {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
-
   /// 从「星期二 第3-4节 1-16周」这类站点文本补全排课信息。
   /// 独立字段存在时仍优先使用独立字段；这里只负责常见的合并文本形态。
   static _LabScheduleText _scheduleFromText(String raw) {
@@ -1079,8 +1204,8 @@ class SyglClient {
         end = 0;
       }
     }
-    final week = RegExp(r'(\d{1,2})(?:\s*[-~—至]\s*(\d{1,2}))?\s*周')
-        .firstMatch(text);
+    final week =
+        RegExp(r'(\d{1,2})(?:\s*[-~—至]\s*(\d{1,2}))?\s*周').firstMatch(text);
     final weeks = week == null
         ? ''
         : '${week.group(1)}${week.group(2) == null ? '' : '-${week.group(2)}'}周';
@@ -1090,22 +1215,25 @@ class SyglClient {
   static int _weekdayOf(String raw) {
     final t = raw.trim();
     if (t.isEmpty) return 0;
-    // '天' 是「星期天」的写法，站点两种都出现；只认 '日' 会让周日的实验课
-    // 全部 weekday=0 被 hasSchedule 过滤掉，而且没有任何提示。
-    const names = ['一', '二', '三', '四', '五', '六', '日'];
-    if (t.contains('星期') || t.contains('周')) {
-      // 日/天都归星期天，不能按数组下标把「天」算成星期八。
-      if (t.contains('日') || t.contains('天')) return 7;
-      for (var i = 0; i < names.length - 1; i++) {
-        // 先认中文星期，不能把「星期二 第3-4节」里的 3 当成星期三。
-        if (t.contains(names[i])) return i + 1;
-      }
-      final m = RegExp(r'(?:星期|周)\s*([1-7])').firstMatch(t);
-      if (m != null) return int.parse(m.group(1)!);
-      return 0;
+    // 先锚定「星期/周」后面的那一个字，再映射；不能在整段文本里按顺序
+    // t.contains('一')/('二')，否则「实验一 星期二」会先命中「一」。
+    final m = RegExp(r'(?:星期|周)\s*([一二三四五六日天1-7])').firstMatch(t);
+    if (m != null) {
+      final ch = m.group(1)!;
+      const names = {
+        '一': 1,
+        '二': 2,
+        '三': 3,
+        '四': 4,
+        '五': 5,
+        '六': 6,
+        '日': 7,
+        '天': 7
+      };
+      return names[ch] ?? int.parse(ch);
     }
-    final m = RegExp(r'^[1-7]$').firstMatch(t);
-    return m == null ? 0 : int.parse(m.group(0)!);
+    final single = RegExp(r'^[1-7]$').firstMatch(t);
+    return single == null ? 0 : int.parse(single.group(0)!);
   }
 
   /// 节次上限。
@@ -1125,7 +1253,11 @@ class SyglClient {
 }
 
 class _LabScheduleText {
-  const _LabScheduleText([this.weekday = 0, this.startSlot = 0, this.endSlot = 0, this.weeks = '']);
+  const _LabScheduleText(
+      [this.weekday = 0,
+      this.startSlot = 0,
+      this.endSlot = 0,
+      this.weeks = '']);
   final int weekday;
   final int startSlot;
   final int endSlot;
@@ -1152,6 +1284,9 @@ class _RuleManageEndpoint {
 class _LabGroup {
   _LabGroup({
     required this.name,
+    required this.className,
+    required this.academicYear,
+    required this.academicTerm,
     required this.weekday,
     required this.startSlot,
     required this.endSlot,
@@ -1162,6 +1297,9 @@ class _LabGroup {
   });
 
   final String name;
+  final String className;
+  final String academicYear;
+  final String academicTerm;
   final int weekday;
   final int startSlot;
   final int endSlot;
@@ -1177,6 +1315,9 @@ class SyglLab {
   const SyglLab({
     required this.name,
     this.code = '',
+    this.className = '',
+    this.academicYear = '',
+    this.academicTerm = '',
     this.place = '',
     this.teacher = '',
     this.time = '',
@@ -1185,10 +1326,21 @@ class SyglLab {
     this.endSlot = 0,
     this.weeks = '',
     this.source = '',
+    this.sourcePlace = '',
   });
 
   final String name;
   final String code;
+
+  /// 实验系统 `BJMC`（班级/合班），空串 = 站点没给。
+  final String className;
+
+  /// 由 `SKRQ` 日期推出的学年，如 `2026-2027`。
+  final String academicYear;
+
+  /// `第一学期` / `第二学期`。
+  final String academicTerm;
+
   final String place;
   final String teacher;
   final String time;
@@ -1201,6 +1353,29 @@ class SyglLab {
 
   /// 来自哪个菜单栏目（自检用）。
   final String source;
+
+  /// 实验系统给出的**原始**实验室名。
+  ///
+  /// [place] 会被「实验室对照表」自动换成人能找的「楼栋+房号」；
+  /// 去重签名要用原值，否则同一批实验在换算前后会生成两个 id、重复导入。
+  final String sourcePlace;
+
+  SyglLab copyWith({String? place, String? sourcePlace}) => SyglLab(
+        name: name,
+        code: code,
+        className: className,
+        academicYear: academicYear,
+        academicTerm: academicTerm,
+        place: place ?? this.place,
+        teacher: teacher,
+        time: time,
+        weekday: weekday,
+        startSlot: startSlot,
+        endSlot: endSlot,
+        weeks: weeks,
+        source: source,
+        sourcePlace: sourcePlace ?? this.sourcePlace,
+      );
 
   /// 结束节的安全值。
   ///

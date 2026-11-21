@@ -39,14 +39,18 @@ class AcademicTerm {
   String toString() => '$xnm/$xqm';
 }
 
-/// 按当前时间推当前学期。**全项目唯一实现**，不要在别处再写 `month >= 8`。
-AcademicTerm currentAcademicTerm([DateTime? at]) {
-  final now = at ?? DateTime.now();
-  if (now.month >= 8) return AcademicTerm(now.year, 3);
-  if (now.month >= 2) return AcademicTerm(now.year - 1, 12);
+/// 按某个日期推它所属的学期。**全项目唯一实现**，不要在别处再写
+/// `month >= 8`。用于实验课/OCR 从 `SKRQ` 日期、图片日期推学年。
+AcademicTerm academicTermForDate(DateTime at) {
+  if (at.month >= 8) return AcademicTerm(at.year, 3);
+  if (at.month >= 2) return AcademicTerm(at.year - 1, 12);
   // 1 月：寒假，仍属上一年开始的秋季学期
-  return AcademicTerm(now.year - 1, 3);
+  return AcademicTerm(at.year - 1, 3);
 }
+
+/// 按当前时间推当前学期。
+AcademicTerm currentAcademicTerm([DateTime? at]) =>
+    academicTermForDate(at ?? DateTime.now());
 
 /// 当前学期往前共 [n] 个（含当前），越往前越旧。
 List<AcademicTerm> recentAcademicTerms(int n, [DateTime? at]) {

@@ -42,8 +42,6 @@ final RouteObserver<ModalRoute> routeObserver = RouteObserver<ModalRoute>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 本地通知初始化（时区数据库 / 通知渠道）。
-  // ⚠️ 2026-10-20 审查：原注释声称"v1.4.0 全局错误上报"，但全库没有任何
-  // 错误处理器（FlutterError.onError / runZonedGuarded 均无）——已改为实话。
   await NotificationService.init();
   // 首次启动把**内置的爬取快照**写进本地缓存 → 消息页首次打开秒出内容。
   // 只在首次运行写一次，之后照常走「缓存 + 刷新」流程。
@@ -69,7 +67,6 @@ void main() async {
   WidgetSyncService.syncTodayCourses();
   // 信息型组件：考试倒计时 / 校园卡余额（本地缓存）
   WidgetSyncService.syncInfoWidgets();
-  // v2.2.14 外部打开 App（冷启动）使用次数 +1（静默，失败不影响）
   // v2.2.21 上课提醒：启动时重排未来 7 天课程提醒（后台执行，不阻塞启动）
   CourseReminderService.rescheduleAll();
   // 🔴 2026-11-04 审查 P0：冷装用户的上课提醒一条都不会响。
@@ -104,7 +101,7 @@ void main() async {
   // 不 await —— 探测最多几秒，不能挡住首屏。结果由 NetMode.notifier 广播。
   NetMode.bind(); // 全局监听校园网变化（不依赖首页卡片是否挂载）
   NetMode.probe();
-  // 控制台预热：未登录统一认证时整段空转，一次请求都不发。
+  // 控制台预热：启动后先做设备登记与版本检查；完成学校登录后才会发送学号伪名、建立账号会话。
   unawaited(ControlService.warmUp());
   runApp(const ProviderScope(child: XiYuanToolboxApp()));
 }
@@ -213,13 +210,7 @@ class _XiYuanToolboxAppState extends State<XiYuanToolboxApp>
     if (state == AppLifecycleState.resumed) {
       WidgetSyncService.syncTodayCourses();
       unawaited(ControlService.warmUp());
-      // 🔴 2026-10-31：回前台时**重排全部本地提醒**。
-      //
-      //    很多国产 ROM 的「后台清理 / 一键清理」会连 AlarmManager 里的
-      //    定时闹钟一起清掉（不只是杀进程）→ 用户回前台后闹钟已经没了，
-      //    表现就是「清除后台后收不到提醒」。
-      //    这里在回前台时重排一次，把被清掉的闹钟补回来
-      //    （重排幂等：会先取消再按当前数据重建，不会重复通知）。
+      // 本地提醒重排（待办 + 上课）。
       unawaited(_rescheduleAllReminders());
     }
   }

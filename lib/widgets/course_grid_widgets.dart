@@ -512,6 +512,15 @@ class CourseWeekGrid extends StatelessWidget {
                     )
                   : ConflictCell(
                       courses: cellCourses,
+                      // 🔴 T1：组容器高度仍取组内最长课（避免长课溢出），但组内
+                      //    每门卡片必须按**自己的**节次定位与撑高，不能再 fill
+                      //    整组 —— 否则短课会被拉到长课的高度。这里把各门
+                      //    自己的 startIdx/endIdx 一并传下去。
+                      startIdxs: g.map((e) => e.startIdx).toList(),
+                      endIdxs: g.map((e) => e.endIdx).toList(),
+                      groupStartIdx: g.first.startIdx,
+                      rowHeight: rowHeight,
+                      dividerHeight: dividerHeight,
                       selectedWeek: selectedWeek,
                       // 点击先看详情（用户以为是卡片）；解决冲突走长按，
                       // 避免「想看一眼是什么课，结果直接被问要不要删掉」。
@@ -983,6 +992,11 @@ class ConflictCell extends StatefulWidget {
   const ConflictCell({
     super.key,
     required this.courses,
+    required this.startIdxs,
+    required this.endIdxs,
+    required this.groupStartIdx,
+    required this.rowHeight,
+    required this.dividerHeight,
     required this.selectedWeek,
     required this.onOpenDetailOf,
     required this.onResolve,
@@ -990,6 +1004,18 @@ class ConflictCell extends StatefulWidget {
 
   /// 该时段重叠的课程（>=2 门，可能混合「教务 + 手动」两种来源）。
   final List<Course> courses;
+
+  /// 与 [courses] 一一对齐的各门起始/结束网格索引（0-based，对应节次块）。
+  final List<int> startIdxs;
+  final List<int> endIdxs;
+
+  /// 本组起始网格索引：用于把某门课的偏移换算成相对组容器的 top。
+  final int groupStartIdx;
+
+  /// 行高与分隔线宽（与外层网格一致），用于按各门自己的节次算卡片高度。
+  final double rowHeight;
+  final double dividerHeight;
+
   final int selectedWeek;
 
   /// 点击卡片 → 看**当前轮播到的这门**的详情。
@@ -1076,6 +1102,12 @@ class _ConflictCellState extends State<ConflictCell>
     if (widget.courses.isEmpty) return const SizedBox.shrink();
     // 双保险：即便 didUpdateWidget 尚未跑到，也保证下标不越界。
     final course = widget.courses[_i % widget.courses.length];
+    // 🔴 T1：当前门按**自己的**节次算偏移与高度，短课不再被拉到组内最长课的高度。
+    final si = (_i < widget.startIdxs.length) ? widget.startIdxs[_i] : widget.groupStartIdx;
+    final ei = (_i < widget.endIdxs.length) ? widget.endIdxs[_i] : si;
+    final cardTop = (si - widget.groupStartIdx) * (widget.rowHeight + widget.dividerHeight);
+    final cardHeight = (ei - si + 1) * widget.rowHeight +
+        (ei - si) * widget.dividerHeight;
     // 进度条与圆点：用「卡片底色的加深版」。
     //
     // 🔴 2026-11-04（第二次修正）：上一版用 `textOnColor(卡片底色)` 取对比色 ——
@@ -1088,7 +1120,11 @@ class _ConflictCellState extends State<ConflictCell>
     final trackFg = Color.alphaBlend(Colors.black.withValues(alpha: 0.32), cardBase);
     return Stack(
       children: [
-        Positioned.fill(
+        Positioned(
+          top: cardTop,
+          left: 0,
+          right: 0,
+          height: cardHeight,
           child: CourseCardWidget(
             course: course,
             // v1.0.9：点击看详情、长按才解决冲突 —— 此前整格都是「解决冲突」，
@@ -1106,7 +1142,7 @@ class _ConflictCellState extends State<ConflictCell>
         //    1.1:1，几乎看不见 —— 用户只觉得「冲突格在闪但不知道为什么」。
         //    改按卡片实际底色的对比色绘制。
         Positioned(
-          top: 0,
+          top: cardTop,
           left: 0,
           right: 0,
           child: IgnorePointer(
@@ -1122,11 +1158,13 @@ class _ConflictCellState extends State<ConflictCell>
             ),
           ),
         ),
-        // 底部指示点：共几门、当前第几个
+        // 底部指示点：共几门、当前第几个。
+        // 🔴 跟随当前门卡片自身底部定位，不再贴组容器底部 —— 短课时圆点
+        //    不能悬空落到长课的末节，否则观感上像短课被拉成了三节高。
         Positioned(
           left: 0,
           right: 0,
-          bottom: 4,
+          top: cardTop + cardHeight - 12,
           child: IgnorePointer(
             // 🔴 2026-11-04 审查 P2：每颗圆点占 6+2×2 = 10px，而格子可用宽度
             //    约 45px（360dp 屏、默认 48 时间列）→ **7 门及以上必然

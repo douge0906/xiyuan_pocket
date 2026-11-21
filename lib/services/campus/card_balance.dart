@@ -78,7 +78,7 @@ class CardBalanceClient {
 
   /// 调用门户接口（回复 JSON；解析失败返回空 Map）
   static Future<Map<String, dynamic>> _api(
-    CampusSession session,
+    CampusSessionBase session,
     String path, {
     Map<String, String>? params,
   }) async {
@@ -93,7 +93,7 @@ class CardBalanceClient {
   }
 
   /// 动态定位「学生个人信息」卡片 id（找不到返回 null）
-  static Future<String?> _findPersonalCardId(CampusSession session) async {
+  static Future<String?> _findPersonalCardId(CampusSessionBase session) async {
     String? siteId;
     try {
       final data = (await _api(session, '/api/upp/site/queryUserSiteList'))['data'];
@@ -156,7 +156,7 @@ class CardBalanceClient {
 
   /// 取卡片数据行（响应里的 `data.data` 是 JSON 字符串）
   static Future<Map<String, dynamic>> _fetchCardRow(
-      CampusSession session, String cardId) async {
+      CampusSessionBase session, String cardId) async {
     final payload = await _api(
         session, '/api/upp/contentDisplay/queryAppointCard/$cardId');
     var inner = (payload['data'] is Map)
@@ -197,8 +197,8 @@ class CardBalanceClient {
   ///
   /// 外层再包一层 `data` 由调用方处理。
   static Future<Map<String, dynamic>> fetch(
-      CampusSession session, String username, String password) async {
-    await loginPortal(session, username, password);
+      CampusSessionBase session, String username, String password) async {
+    await loginPortal(session as CampusSession, username, password);
 
     final cardId = await _findPersonalCardId(session);
     if (cardId == null || cardId.isEmpty) {

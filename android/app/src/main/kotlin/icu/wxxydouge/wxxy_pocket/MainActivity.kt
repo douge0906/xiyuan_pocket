@@ -365,6 +365,13 @@ class MainActivity : FlutterActivity() {
     /** 从 intent 里解析小组件点击的目标；不是小组件启动就什么都不做。 */
     private fun captureLaunchRoute(intent: Intent?) {
         if (intent == null) return
+        // xiyuan://invite?c=XXXX：邀请落地页「打开 App」进来的深链。
+        // 直接把完整 URI 交给 Dart，由 Dart 解析 code 并写入待填码。
+        val invite = intent.data
+        if (invite?.scheme == "xiyuan" && invite.host == "invite") {
+            pendingLaunchRoute = invite.toString()
+            return
+        }
         if (intent.action != "es.antonborri.home_widget.action.LAUNCH") return
         val host = intent.data?.host ?: return
         pendingLaunchRoute = when (host) {

@@ -11,6 +11,9 @@ enum _ImportAction {
   /// 从实验管理系统一键导入实验课（[sygl.cwxu.edu.cn]）。
   lab,
 
+  /// 从截图/照片里本地 OCR 识别课程（T3）。
+  image,
+
   /// 清空当前这份课表的全部课程（导入前的「归零」）。
   clearCurrent,
 }
@@ -173,6 +176,12 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
               title: '导入实验课',
               onTap: () =>
                   Navigator.of(context).pop(const _ImportChoice(_ImportAction.lab)),
+            ),
+            row(
+              icon: Icons.image_search_rounded,
+              title: '从图片识别导入',
+              onTap: () =>
+                  Navigator.of(context).pop(const _ImportChoice(_ImportAction.image)),
             ),
             const SizedBox(height: 4),
             row(

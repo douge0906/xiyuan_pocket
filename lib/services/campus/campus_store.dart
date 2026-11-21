@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -6,6 +7,7 @@ import 'campus_session.dart';
 import 'cas_client.dart';
 import 'card_balance.dart';
 import 'course_fetcher.dart';
+import 'empty_classroom_fetcher.dart';
 import 'jwgl_client.dart';
 import 'study_client.dart';
 import 'sygl_client.dart';
@@ -66,6 +68,7 @@ class CampusStore {
     await _secure.delete(key: _kSession);
     await _secure.delete(key: _kSessionAt);
     await _secure.delete(key: _kSessionUser);
+    EmptyClassroomFetcher.clearCache();
   }
 }
 
@@ -82,6 +85,16 @@ class LocalCampusService {
   static CampusSession? _portalSession;
   static String? _portalUser;
 
+  /// 教务登录进行中的 Future：启动时课表同步、补学生姓名等并发请求共享同一次登录。
+  ///
+  /// 没有这层合并时，两个请求会同时看到内存会话为空，各自 CAS 登录一次；后到的
+  /// 请求会被 `CasClient` 的 8 秒本地节流拦下，表现为「刚打开 App 点查询就提示登录频繁」。
+  static Future<CampusSession>? _loginInflight;
+  static String? _loginInflightUser;
+
+  /// 串行化会话获取与登录初始化，避免两个并发调用在缓存读取前后重复创建会话。
+  static Future<void> _ensureGate = Future<void>.value();
+
   /// 上一次登录说明（成功尝试次数 / 失败原因），便于排查
   static String lastLoginNote = '';
 
@@ -89,26 +102,55 @@ class LocalCampusService {
     _session?.close();
     _session = null;
     _sessionUser = null;
+    _loginInflight = null;
+    _loginInflightUser = null;
     _portalSession?.close();
     _portalSession = null;
     _portalUser = null;
+    EmptyClassroomFetcher.clearCache();
+  }
+
+  static Future<T> _ensureLocked<T>(Future<T> Function() action) async {
+    final previous = _ensureGate;
+    final completer = Completer<void>();
+    _ensureGate = completer.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      completer.complete();
+    }
   }
 
   static Future<CampusSession> _ensure(
-      String username, String password) async {
-    if (_session != null && _sessionUser == username) return _session!;
+      String username, String password) {
+    return _ensureLocked<CampusSession>(() async {
+      if (_session != null && _sessionUser == username) return _session!;
 
-    final s = CampusSession();
-    final cached = await CampusStore.loadFreshSession(username: username);
-    if (cached != null && cached.isNotEmpty) {
-      s.importCookies(cached);
-      _session = s;
-      _sessionUser = username;
-      return s;
-    }
+      final pending = _loginInflight;
+      if (pending != null && _loginInflightUser == username) {
+        return pending;
+      }
 
-    await _doLogin(s, username, password);
-    return s;
+      final s = CampusSession();
+      final cached = await CampusStore.loadFreshSession(username: username);
+      if (cached != null && cached.isNotEmpty) {
+        s.importCookies(cached);
+        _session = s;
+        _sessionUser = username;
+        return s;
+      }
+
+      final future = _doLogin(s, username, password).then((_) => s);
+      _loginInflight = future;
+      _loginInflightUser = username;
+      return future.whenComplete(() {
+        if (identical(_loginInflight, future)) {
+          _loginInflight = null;
+          _loginInflightUser = null;
+        }
+      });
+    });
   }
 
   static Future<void> _doLogin(
@@ -128,7 +170,7 @@ class LocalCampusService {
   static Future<T> _withRelogin<T>(
     String username,
     String password,
-    Future<T> Function(CampusSession) run,
+    Future<T> Function(CampusSessionBase) run,
   ) async {
     var s = await _ensure(username, password);
     try {
@@ -136,9 +178,14 @@ class LocalCampusService {
     } on CampusException catch (e) {
       if (!e.needRelogin) rethrow;
       await CampusStore.clearSession();
-      s.close();
-      s = CampusSession();
-      await _doLogin(s, username, password);
+      if (identical(_session, s)) {
+        _session?.close();
+        _session = null;
+        _sessionUser = null;
+      } else {
+        s.close();
+      }
+      s = await _ensure(username, password);
       return await run(s);
     }
   }
@@ -159,6 +206,40 @@ class LocalCampusService {
           String username, String password, String xnm, String xqm) =>
       _withRelogin(
           username, password, (s) => JwglClient.queryTextbooks(s, xnm, xqm));
+
+  /// 空教室：读取教务真实楼号、节次和学期/校区上下文。
+  static Future<EmptyClassroomOptions> fetchEmptyClassroomOptions(
+          String username, String password, {bool forceRefresh = false}) =>
+      _withRelogin(username, password,
+          (s) => EmptyClassroomFetcher.fetchOptions(
+                s,
+                forceRefresh: forceRefresh,
+                cacheKey: username,
+              ));
+
+  /// 空教室：按周次/星期/节次/楼号查询；学期、校区由教务页面上下文补齐。
+  static Future<EmptyClassroomResult> queryEmptyClassrooms(
+    String username,
+    String password, {
+    required List<int> weeks,
+    required List<int> weekdays,
+    required List<int> slots,
+    required String buildingValue,
+    EmptyClassroomOptions? options,
+  }) =>
+      _withRelogin(username, password, (s) => EmptyClassroomFetcher.query(
+            s,
+            EmptyClassroomQuery(
+              xnm: options?.xnm ?? '',
+              xqm: options?.xqm ?? '',
+              campusId: options?.campusId ?? '',
+              weeks: weeks,
+              weekdays: weekdays,
+              slots: slots,
+              buildingValue: buildingValue,
+            ),
+            cacheKey: username,
+          ));
 
   /// 校验统一认证账密（登录用）。
   ///

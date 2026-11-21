@@ -27,6 +27,7 @@ class ResourceEntry {
     required this.name,
     required this.kind,
     this.fileId = 0,
+    this.uploadId = 0,
     this.parentId = 0,
     this.size = 0,
     this.downloads = 0,
@@ -37,6 +38,9 @@ class ResourceEntry {
   final String name;
   final ResourceKind kind;
   final int fileId;
+
+  /// 所属上传批次；举报/反馈按批次定位，文件本身仍用 fileId。
+  final int uploadId;
   final int parentId;
   final int size;
   final int downloads;
@@ -46,6 +50,8 @@ class ResourceEntry {
   final String createdAt;
 
   bool get isPdf => name.toLowerCase().endsWith('.pdf');
+  bool get isDocx => name.toLowerCase().endsWith('.docx');
+  bool get isDoc => name.toLowerCase().endsWith('.doc');
 }
 
 class ResourceCourse {
@@ -59,7 +65,9 @@ class ResourceCourse {
   String book;
   final List<ResourceEntry> resources;
 
-  String get key => normalizeResourceName(name);
+  /// 课程 + 教材的组合身份。同一门课换教材时必须是两张卡，
+  /// 否则两本书的文件会被合并，书的名称也只能保留其中一个。
+  String get key => resourceKey(name, book);
   bool get hasBook => book.trim().isNotEmpty;
 
   List<ResourceEntry> of(ResourceKind kind) =>
@@ -87,6 +95,19 @@ String normalizeResourceName(String value) => value
     .replaceAll(RegExp(r'\s+'), '')
     .replaceAll(RegExp(r'[()（）\[\]【】\-—_]+'), '');
 
+/// 教材名只压缩空白，不做标点删除：不同版次/上下册不能因为标点被并掉。
+String normalizeResourceBook(String value) =>
+    value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+
+/// 资源中心实际聚合键：课程名 + 教材名。
+String resourceKey(String name, String book) =>
+    '${normalizeResourceName(name)}\u0001${normalizeResourceBook(book)}';
+
+int compareResourceCourse(ResourceCourse a, ResourceCourse b) {
+  final byName = a.name.compareTo(b.name);
+  return byName != 0 ? byName : a.book.compareTo(b.book);
+}
+
 class ResourceLoadResult {
   const ResourceLoadResult({
     required this.courses,
@@ -102,7 +123,7 @@ class ResourceLoadResult {
 }
 
 /// 资源中心数据合并：教材中心课程 + 控制台审核通过的资源。
-/// 只按课程名去重，自动合并教材与资源，不再区分“我的课程/共享课程”。
+/// 按「课程 + 教材」组合去重，同一门课换教材时保持两张卡片。
 class ResourceStore {
   ResourceStore._();
 
@@ -147,7 +168,7 @@ class ResourceStore {
     }) {
       final clean = name.trim();
       if (clean.isEmpty) return;
-      final key = normalizeResourceName(clean);
+      final key = resourceKey(clean, book);
       final existing = map[key];
       if (existing == null) {
         map[key] = ResourceCourse(
@@ -200,6 +221,7 @@ class ResourceStore {
               name: name,
               kind: kind,
               fileId: (f['id'] as num?)?.toInt() ?? 0,
+              uploadId: (f['uploadId'] as num?)?.toInt() ?? 0,
               parentId: (f['parentId'] as num?)?.toInt() ?? 0,
               size: (f['size'] as num?)?.toInt() ?? 0,
               downloads: (f['downloads'] as num?)?.toInt() ?? 0,
@@ -217,7 +239,7 @@ class ResourceStore {
     }
 
     return ResourceLoadResult(
-      courses: map.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
+      courses: map.values.toList()..sort(compareResourceCourse),
       syncedAt: prefs.getString(_cacheAtKey),
     );
   }
@@ -233,7 +255,7 @@ class ResourceStore {
     }) {
       final clean = name.trim();
       if (clean.isEmpty) return;
-      final key = normalizeResourceName(clean);
+      final key = resourceKey(clean, book);
       final existing = map[key];
       if (existing == null) {
         map[key] = ResourceCourse(
@@ -272,6 +294,7 @@ class ResourceStore {
               name: name,
               kind: kind,
               fileId: (f['id'] as num?)?.toInt() ?? 0,
+              uploadId: (f['uploadId'] as num?)?.toInt() ?? 0,
               parentId: (f['parentId'] as num?)?.toInt() ?? 0,
               size: (f['size'] as num?)?.toInt() ?? 0,
               downloads: (f['downloads'] as num?)?.toInt() ?? 0,
@@ -315,14 +338,14 @@ class ResourceStore {
       await prefs.setString(_cacheKey, jsonEncode(network.data));
       await prefs.setString(_cacheAtKey, at);
       return ResourceLoadResult(
-        courses: map.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
+        courses: map.values.toList()..sort(compareResourceCourse),
         syncedAt: at,
       );
     }
 
     applyServerData(cachedData);
     return ResourceLoadResult(
-      courses: map.values.toList()..sort((a, b) => a.name.compareTo(b.name)),
+      courses: map.values.toList()..sort(compareResourceCourse),
       failure: network.failure,
       syncedAt: cachedAt,
     );

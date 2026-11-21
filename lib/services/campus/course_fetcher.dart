@@ -26,7 +26,7 @@ class CourseFetcher {
   /// 查课表。返回结构：
   /// `{xnm, xqm, semester, courses: [...], count}`。
   static Future<Map<String, dynamic>> fetch(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
   ) async {
@@ -111,7 +111,7 @@ class CourseFetcher {
   }
 
   /// 打开课表页取 csrftoken（对应 Python `fetch_schedule_page`）。
-  static Future<String> _openKbPage(CampusSession session) async {
+  static Future<String> _openKbPage(CampusSessionBase session) async {
     final r = await session.get(_kbPage, headers: {
       'Referer': '$_base/jwglxt/xtgl/index_initMenu.html',
     });
@@ -196,7 +196,7 @@ class CourseFetcher {
   static DateTime? _campusIdAt;
 
   /// 校区代码：打印页的下拉是服务端渲染的，取第一个非空选项（缓存 30 分钟）。
-  static Future<String> _campusId(CampusSession session) async {
+  static Future<String> _campusId(CampusSessionBase session) async {
     final now = DateTime.now();
     if (_campusIdCache != null &&
         _campusIdAt != null &&
@@ -228,7 +228,7 @@ class CourseFetcher {
   }
 
   static Future<List<Map<String, dynamic>>> _classRows(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
     String xqhId,
@@ -280,7 +280,7 @@ class CourseFetcher {
   /// 跨专业自选 · 步骤1：列出全部班级（可按班名/专业/学院关键字过滤）。
   /// 返回 `{xnm, xqm, total, count, classes:[{bh_id, bj, zymc, jgmc, njdm_id, xkrs}]}`。
   static Future<Map<String, dynamic>> searchClassList(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
     String keyword,
@@ -320,7 +320,7 @@ class CourseFetcher {
   /// 跨专业自选 · 步骤2：取一个班的课表。
   /// 返回 `{xnm, xqm, class, count, courses:[...]}`，课程字段与学生课表一致。
   static Future<Map<String, dynamic>> fetchClassCourses(
-    CampusSession session,
+    CampusSessionBase session,
     String xnm,
     String xqm,
     String bhId,

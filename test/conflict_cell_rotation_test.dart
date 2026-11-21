@@ -28,6 +28,11 @@ void main() {
             height: 120,
             child: ConflictCell(
               courses: [_c('第一门课', 1, 2), _c('第二门课', 1, 2)],
+              startIdxs: const [0, 0],
+              endIdxs: const [1, 1],
+              groupStartIdx: 0,
+              rowHeight: 40,
+              dividerHeight: 1,
               selectedWeek: 1,
               onOpenDetailOf: (c) {},
               onResolve: () {},

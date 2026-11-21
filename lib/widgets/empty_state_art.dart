@@ -40,6 +40,9 @@ enum EmptyArtVariant {
 
   /// 无金额 / 无交易记录：一只钱包。
   wallet,
+
+  /// 空教室查询前：教学楼 + 门 + 窗户。
+  classroom,
 }
 
 /// 空状态手绘图（带轻微呼吸动效）。
@@ -152,6 +155,8 @@ class _EmptyArtPainter extends CustomPainter {
         _book(canvas, w, h, ink, soft);
       case EmptyArtVariant.wallet:
         _wallet(canvas, w, h, ink, soft);
+      case EmptyArtVariant.classroom:
+        _classroom(canvas, w, h, ink, soft);
     }
   }
 
@@ -333,6 +338,32 @@ class _EmptyArtPainter extends CustomPainter {
       ink,
     );
     c.drawCircle(Offset(w * .64, h * .52), w * .05, soft);
+  }
+
+  /// 空教室：教学楼轮廓 + 屋顶 + 门 + 两扇窗 + 门前台阶。
+  void _classroom(Canvas c, double w, double h, Paint ink, Paint soft) {
+    final body = Rect.fromLTRB(w * .28, h * .34, w * .72, h * .74);
+    c.drawRect(body, ink);
+
+    final roof = Path()
+      ..moveTo(w * .22, h * .36)
+      ..lineTo(w * .50, h * .20)
+      ..lineTo(w * .78, h * .36);
+    c.drawPath(roof, ink);
+
+    final door = Rect.fromLTRB(w * .44, h * .56, w * .56, h * .74);
+    c.drawRect(door, ink);
+    c.drawCircle(Offset(w * .53, h * .65), 1.8, soft);
+
+    final leftWindow = Rect.fromLTRB(w * .33, h * .43, w * .41, h * .53);
+    final rightWindow = Rect.fromLTRB(w * .59, h * .43, w * .67, h * .53);
+    c.drawRect(leftWindow, soft);
+    c.drawRect(rightWindow, soft);
+    c.drawLine(Offset(w * .37, h * .43), Offset(w * .37, h * .53), soft);
+    c.drawLine(Offset(w * .63, h * .43), Offset(w * .63, h * .53), soft);
+
+    c.drawLine(Offset(w * .40, h * .79), Offset(w * .60, h * .79), soft);
+    c.drawLine(Offset(w * .36, h * .84), Offset(w * .64, h * .84), soft);
   }
 
   @override

@@ -162,317 +162,351 @@ class _CourseFormPageState extends State<_CourseFormPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                widget.course == null ? '添加课程' : '编辑课程',
-                style: TextStyle(
-                    fontSize: AppTheme.fontHeading,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : AppTheme.textPrimaryLight), // 顶层函数无 context
-              ),
-              const SizedBox(height: 12),
-              courseField('课程名称', TextField(
-                controller: nameCtl,
-                decoration: const InputDecoration(hintText: '如：高等数学'),
-              ), isDark),
-              const SizedBox(height: 8),
-              courseField('教师', TextField(
-                controller: teacherCtl,
-                decoration: const InputDecoration(hintText: '选填'),
-              ), isDark),
-              const SizedBox(height: 8),
-              courseField('教室', TextField(
-                controller: roomCtl,
-                decoration: const InputDecoration(hintText: '如：尚善楼 201'),
-              ), isDark),
-              const SizedBox(height: 8),
-              courseField('星期', DropdownButtonFormField<int>(
-                value: weekday,
-                items: List.generate(
-                    7, (i) => DropdownMenuItem(value: i + 1, child: Text(courseDayLabels[i]))),
-                onChanged: (v) => setState(() => weekday = v ?? weekday),
-                decoration: const InputDecoration(),
-              ), isDark),
-              const SizedBox(height: 8),
-              _expandSection(
-                context,
-                title: '节数：第 $startSlot 节 到 第 $endSlot 节',
-                isDark: isDark,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('从第几节开始',
-                        style: TextStyle(
-                            fontSize: AppTheme.fontSmall,
-                            color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: List.generate(12, (i) {
-                        final n = i + 1;
-                        final on = startSlot == n;
-                        return CourseNumberChip(
-                          label: '$n',
-                          selected: on,
-                          onTap: () => setState(() {
-                            startSlot = n;
-                            if (endSlot < startSlot) endSlot = startSlot;
-                          }),
-                        );
-                      }),
-                    ),
-                    const SizedBox(height: 8),
-                    Text('到第几节结束',
-                        style: TextStyle(
-                            fontSize: AppTheme.fontSmall,
-                            color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: List.generate(12, (i) {
-                        final n = i + 1;
-                        final disabled = n < startSlot;
-                        final on = endSlot == n && !disabled;
-                        return CourseNumberChip(
-                          label: '$n',
-                          selected: on,
-                          disabled: disabled,
-                          onTap: disabled ? null : () => setState(() => endSlot = n),
-                        );
-                      }),
-                    ),
-                  ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              widget.course == null ? '添加课程' : '编辑课程',
+              style: TextStyle(
+                  fontSize: AppTheme.fontHeading,
+                  fontWeight: FontWeight.bold,
+                  color: isDark
+                      ? Colors.white
+                      : AppTheme.textPrimaryLight), // 顶层函数无 context
+            ),
+            const SizedBox(height: 12),
+            courseField(
+                '课程名称',
+                TextField(
+                  controller: nameCtl,
+                  decoration: const InputDecoration(hintText: '如：高等数学'),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _expandSection(
-                context,
-                title: weekType == CourseWeekType.every
-                    ? (selectedWeeks.isEmpty
-                        ? '请选择上课周数'
-                        : '上课周数：${formatWeeks(selectedWeeks)}')
-                    : '上课周数：${weekType.label}（1-16周）',
-                isDark: isDark,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (weekType != CourseWeekType.every)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Text('选择「单周」或「双周」时，默认覆盖 1-16 周，无需再选具体周数。',
-                            style: TextStyle(
-                                fontSize: AppTheme.fontSmall,
-                                color: isDark
-                                    ? Colors.grey.shade500
-                                    : const Color(0xFF9CA3AF))),
-                      )
-                    else
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: List.generate(
-                                CourseStorage.weekCountCache, (i) {
-                              final w = i + 1;
-                              final on = selectedWeeks.contains(w);
-                              return CourseNumberChip(
-                                label: '$w',
-                                selected: on,
-                                onTap: () => setState(() {
-                                  if (on) {
-                                    selectedWeeks.remove(w);
-                                  } else {
-                                    selectedWeeks.add(w);
-                                  }
-                                }),
-                              );
-                            }),
-                          ),
-                          const SizedBox(height: 2),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: () => setState(() => selectedWeeks = {
-                                      for (int i = 1;
-                                          i <= CourseStorage.weekCountCache;
-                                          i++)
-                                        i
-                                    }),
-                                child: const Text('全选', style: TextStyle(fontSize: AppTheme.fontSmall)),
-                              ),
-                              TextButton(
-                                // 🔴 2026-11-04 审查 P0：这里原来是
-                                //    `selectedWeeks.clear()`。清空之后保存，
-                                //    `formatWeeks({})` 返回空串 → `weeks = ''`
-                                //    → `parseWeeks('')` 返回 null → 而 null 在
-                                //    `isActiveOnWeek` 里的语义是「每周都上」。
-                                //    用户操作是「一周都不上」，落库却是「全部周都上」，
-                                //    而且没有任何提示 —— 这门课随后会出现在全部 25 周
-                                //    的课表、提醒、待办和桌面小组件里。
-                                //    改成「重置为第 1 周」：保留一个合法的非空选择，
-                                //    想改周次直接点 chip 即可。
-                                onPressed: () => setState(() => selectedWeeks = {1}),
-                                child: const Text('清空', style: TextStyle(fontSize: AppTheme.fontSmall)),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                  ],
+                isDark),
+            const SizedBox(height: 8),
+            courseField(
+                '教师',
+                TextField(
+                  controller: teacherCtl,
+                  decoration: const InputDecoration(hintText: '选填'),
                 ),
-              ),
-              const SizedBox(height: 8),
-              _expandSection(
-                context,
-                title: '主题色',
-                isDark: isDark,
-                leading: Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    // v1.6.9：跟随课节色块色彩方案，选到的颜色 = 课表里真实看到的颜色
-                    color: courseColorFor(colorValue, CourseStorage.schemeCache),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                        color: isDark ? Colors.grey.shade600 : context.borderColor),
-                  ),
+                isDark),
+            const SizedBox(height: 8),
+            courseField(
+                '教室',
+                TextField(
+                  controller: roomCtl,
+                  decoration: const InputDecoration(hintText: '如：尚善楼 201'),
                 ),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: coursePalette.map((c) {
-                    final selected = c == colorValue;
-                    return GestureDetector(
-                      onTap: () => setState(() => colorValue = c),
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: courseColorFor(c, CourseStorage.schemeCache),
-                          shape: BoxShape.circle,
-                          border: selected
-                              ? Border.all(
-                                  color: context.textPrimary,
-                                  width: 2.5)
-                              : null,
-                        ),
-                        child: selected
-                            ? const Icon(Icons.check_rounded, color: Colors.white, size: 18)
-                            : null,
-                      ),
-                    );
-                  }).toList(),
+                isDark),
+            const SizedBox(height: 8),
+            courseField(
+                '星期',
+                DropdownButtonFormField<int>(
+                  value: weekday,
+                  items: List.generate(
+                      7,
+                      (i) => DropdownMenuItem(
+                          value: i + 1, child: Text(courseDayLabels[i]))),
+                  onChanged: (v) => setState(() => weekday = v ?? weekday),
+                  decoration: const InputDecoration(),
                 ),
-              ),
-              const SizedBox(height: 14),
-              Row(
+                isDark),
+            const SizedBox(height: 8),
+            _expandSection(
+              context,
+              title: '节数：第 $startSlot 节 到 第 $endSlot 节',
+              isDark: isDark,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (widget.course != null)
-                    Expanded(
-                      child: OutlinedButton(
-                        // v2.4.0：与课程格长按删除保持一致，删除前二次确认，
-                        // 避免编辑页里误触「删除」即刻丢课。
-                        // 2026-11-04 审查 P2：**先问再关页**。原来顺序反了
-                        // （先 pop 再弹框），点「取消」时编辑页已经没了。
-                        // （widget.course 是 getter，空安全推断不跨它 —— 需 ! ）
-                        onPressed: () async {
-                          final course = widget.course;
-                          if (course == null) return;
-                          final ok = await askDeleteCourse(context, course);
-                          if (!ok) return;
-                          // 用 `context.mounted` 而不是 State.mounted：
-                          // 这里跨了 await，lint 只认与 BuildContext 绑定的那个。
-                          if (!context.mounted) return;
-                          Navigator.of(context).pop();
-                          widget.onDelete(course);
-                        },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          side: const BorderSide(color: Colors.red),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
-                        ),
-                        child: const Text('删除'),
-                      ),
-                    ),
-                  if (widget.course != null) const SizedBox(width: 10),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        final name = nameCtl.text.trim();
-                        if (name.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('请填写课程名称')));
-                          return;
-                        }
-                        // 周次文本（与 parseWeeks 互转）
-                        String weeksText;
-                        if (weekType == CourseWeekType.odd) {
-                          weeksText = '1-16周(单)';
-                        } else if (weekType == CourseWeekType.even) {
-                          weeksText = '1-16周(双)';
-                        } else {
-                          // 🔴 2026-11-04 审查 P0：空集合会被 `formatWeeks`
-                          //    写成空串，而空串在 `parseWeeks` 里等于 null、
-                          //    在 `isActiveOnWeek` 里等于「每周都上」——
-                          //    与用户「清空」的意图正好相反。落盘前必须拦住，
-                          //    否则救不回来（界面上看不出哪门课是坏的）。
-                          if (selectedWeeks.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('请至少选择一周')));
-                            return;
-                          }
-                          weeksText = formatWeeks(selectedWeeks);
-                        }
-                        final newCourse = Course(
-                          id: widget.course?.id ?? 'm_${DateTime.now().microsecondsSinceEpoch}',
-                          name: name,
-                          teacher: teacherCtl.text.trim(),
-                          classroom: roomCtl.text.trim(),
-                          // daily / workday 保留哨兵（0 / -1），
-                          // 由 pattern 决定渲染；fixed 才用具体星期。
-                          weekday: pattern == CoursePattern.fixed
-                              ? weekday
-                              : (pattern == CoursePattern.daily ? 0 : -1),
-                          startSlot: startSlot,
-                          endSlot: endSlot,
-                          weeks: weeksText,
-                          colorValue: colorValue,
-                          source: widget.course?.source ?? CourseSource.manual,
-                          weekType: weekType,
-                          pattern: pattern,
-                        );
-                        Navigator.of(context).pop();
-                        widget.onSave(newCourse);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(AppTheme.radiusMd)),
-                      ),
-                      child: Text(widget.course == null ? '添加' : '保存'),
-                    ),
+                  Text('从第几节开始',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall,
+                          color: isDark
+                              ? Colors.grey.shade400
+                              : const Color(0xFF6B7280))),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: List.generate(12, (i) {
+                      final n = i + 1;
+                      final on = startSlot == n;
+                      return CourseNumberChip(
+                        label: '$n',
+                        selected: on,
+                        onTap: () => setState(() {
+                          startSlot = n;
+                          if (endSlot < startSlot) endSlot = startSlot;
+                        }),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('到第几节结束',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall,
+                          color: isDark
+                              ? Colors.grey.shade400
+                              : const Color(0xFF6B7280))),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: List.generate(12, (i) {
+                      final n = i + 1;
+                      final disabled = n < startSlot;
+                      final on = endSlot == n && !disabled;
+                      return CourseNumberChip(
+                        label: '$n',
+                        selected: on,
+                        disabled: disabled,
+                        onTap:
+                            disabled ? null : () => setState(() => endSlot = n),
+                      );
+                    }),
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 8),
+            _expandSection(
+              context,
+              title: weekType == CourseWeekType.every
+                  ? (selectedWeeks.isEmpty
+                      ? '请选择上课周数'
+                      : '上课周数：${formatWeeks(selectedWeeks)}')
+                  : '上课周数：${weekType.label}（1-16周）',
+              isDark: isDark,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (weekType != CourseWeekType.every)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text('选择「单周」或「双周」时，默认覆盖 1-16 周，无需再选具体周数。',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              color: isDark
+                                  ? Colors.grey.shade500
+                                  : const Color(0xFF9CA3AF))),
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children:
+                              List.generate(CourseStorage.weekCountCache, (i) {
+                            final w = i + 1;
+                            final on = selectedWeeks.contains(w);
+                            return CourseNumberChip(
+                              label: '$w',
+                              selected: on,
+                              onTap: () => setState(() {
+                                if (on) {
+                                  selectedWeeks.remove(w);
+                                } else {
+                                  selectedWeeks.add(w);
+                                }
+                              }),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: () => setState(() => selectedWeeks = {
+                                    for (int i = 1;
+                                        i <= CourseStorage.weekCountCache;
+                                        i++)
+                                      i
+                                  }),
+                              child: const Text('全选',
+                                  style:
+                                      TextStyle(fontSize: AppTheme.fontSmall)),
+                            ),
+                            TextButton(
+                              // 🔴 2026-11-04 审查 P0：这里原来是
+                              //    `selectedWeeks.clear()`。清空之后保存，
+                              //    `formatWeeks({})` 返回空串 → `weeks = ''`
+                              //    → `parseWeeks('')` 返回 null → 而 null 在
+                              //    `isActiveOnWeek` 里的语义是「每周都上」。
+                              //    用户操作是「一周都不上」，落库却是「全部周都上」，
+                              //    而且没有任何提示 —— 这门课随后会出现在全部 25 周
+                              //    的课表、提醒、待办和桌面小组件里。
+                              //    改成「重置为第 1 周」：保留一个合法的非空选择，
+                              //    想改周次直接点 chip 即可。
+                              onPressed: () =>
+                                  setState(() => selectedWeeks = {1}),
+                              child: const Text('清空',
+                                  style:
+                                      TextStyle(fontSize: AppTheme.fontSmall)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            _expandSection(
+              context,
+              title: '主题色',
+              isDark: isDark,
+              leading: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  // v1.6.9：跟随课节色块色彩方案，选到的颜色 = 课表里真实看到的颜色
+                  color: courseColorFor(colorValue, CourseStorage.schemeCache),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color:
+                          isDark ? Colors.grey.shade600 : context.borderColor),
+                ),
+              ),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: coursePalette.map((c) {
+                  final selected = c == colorValue;
+                  return GestureDetector(
+                    onTap: () => setState(() => colorValue = c),
+                    child: Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: courseColorFor(c, CourseStorage.schemeCache),
+                        shape: BoxShape.circle,
+                        border: selected
+                            ? Border.all(color: context.textPrimary, width: 2.5)
+                            : null,
+                      ),
+                      child: selected
+                          ? const Icon(Icons.check_rounded,
+                              color: Colors.white, size: 18)
+                          : null,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if (widget.course != null)
+                  Expanded(
+                    child: OutlinedButton(
+                      // v2.4.0：与课程格长按删除保持一致，删除前二次确认，
+                      // 避免编辑页里误触「删除」即刻丢课。
+                      // 2026-11-04 审查 P2：**先问再关页**。原来顺序反了
+                      // （先 pop 再弹框），点「取消」时编辑页已经没了。
+                      // （widget.course 是 getter，空安全推断不跨它 —— 需 ! ）
+                      onPressed: () async {
+                        final course = widget.course;
+                        if (course == null) return;
+                        final ok = await askDeleteCourse(context, course);
+                        if (!ok) return;
+                        // 用 `context.mounted` 而不是 State.mounted：
+                        // 这里跨了 await，lint 只认与 BuildContext 绑定的那个。
+                        if (!context.mounted) return;
+                        Navigator.of(context).pop();
+                        widget.onDelete(course);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Colors.red),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusMd)),
+                      ),
+                      child: const Text('删除'),
+                    ),
+                  ),
+                if (widget.course != null) const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      final name = nameCtl.text.trim();
+                      if (name.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('请填写课程名称')));
+                        return;
+                      }
+                      // 周次文本（与 parseWeeks 互转）
+                      String weeksText;
+                      if (weekType == CourseWeekType.odd) {
+                        weeksText = '1-16周(单)';
+                      } else if (weekType == CourseWeekType.even) {
+                        weeksText = '1-16周(双)';
+                      } else {
+                        // 🔴 2026-11-04 审查 P0：空集合会被 `formatWeeks`
+                        //    写成空串，而空串在 `parseWeeks` 里等于 null、
+                        //    在 `isActiveOnWeek` 里等于「每周都上」——
+                        //    与用户「清空」的意图正好相反。落盘前必须拦住，
+                        //    否则救不回来（界面上看不出哪门课是坏的）。
+                        if (selectedWeeks.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('请至少选择一周')));
+                          return;
+                        }
+                        weeksText = formatWeeks(selectedWeeks);
+                      }
+                      final newCourse = Course(
+                        id: widget.course?.id ??
+                            'm_${DateTime.now().microsecondsSinceEpoch}',
+                        name: name,
+                        teacher: teacherCtl.text.trim(),
+                        classroom: roomCtl.text.trim(),
+                        // 表单不编辑班级/学年，但编辑已有课程时必须原样带回，
+                        // 否则 OCR / 实验课导入的归属信息一编辑就丢。
+                        className: widget.course?.className ?? '',
+                        academicYear: widget.course?.academicYear ?? '',
+                        academicTerm: widget.course?.academicTerm ?? '',
+                        // daily / workday 保留哨兵（0 / -1），
+                        // 由 pattern 决定渲染；fixed 才用具体星期。
+                        weekday: pattern == CoursePattern.fixed
+                            ? weekday
+                            : (pattern == CoursePattern.daily ? 0 : -1),
+                        startSlot: startSlot,
+                        endSlot: endSlot,
+                        weeks: weeksText,
+                        colorValue: colorValue,
+                        source: widget.course?.source ?? CourseSource.manual,
+                        weekType: weekType,
+                        pattern: pattern,
+                      );
+                      Navigator.of(context).pop();
+                      widget.onSave(newCourse);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppTheme.radiusMd)),
+                    ),
+                    child: Text(widget.course == null ? '添加' : '保存'),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -515,8 +549,8 @@ void showCourseDetailSheet(
                     height: 14,
                     decoration: BoxDecoration(
                       // v1.6.9：详情卡里的小色块同样跟随色彩方案
-                      color: courseColorFor(course.colorValue,
-                          CourseStorage.schemeCache),
+                      color: courseColorFor(
+                          course.colorValue, CourseStorage.schemeCache),
                       borderRadius: BorderRadius.circular(3),
                     ),
                   ),
@@ -553,16 +587,23 @@ void showCourseDetailSheet(
                       if (course.teacher.isNotEmpty)
                         _detailRow(Icons.person_outline_rounded, '教师',
                             course.teacher, isDark),
+                      if (course.className.isNotEmpty)
+                        _detailRow(Icons.groups_outlined, '班级',
+                            course.className, isDark),
+                      if (course.academicYear.isNotEmpty)
+                        _detailRow(
+                            Icons.school_outlined,
+                            '学年',
+                            '${course.academicYear}'
+                                '${course.academicTerm.isEmpty ? '' : ' ${course.academicTerm}'}',
+                            isDark),
                       if (course.classroom.isNotEmpty)
-                        _detailRow(Icons.place_outlined, '地点',
-                            course.classroom, isDark),
+                        _detailRow(Icons.place_outlined, '地点', course.classroom,
+                            isDark),
                       _detailRow(Icons.schedule_rounded, '节次',
                           '第${course.startSlot}-${course.endSlot}节', isDark),
-                      _detailRow(
-                          Icons.date_range_outlined,
-                          '周次',
-                          course.weeks.isEmpty ? '全部' : course.weeks,
-                          isDark),
+                      _detailRow(Icons.date_range_outlined, '周次',
+                          course.weeks.isEmpty ? '全部' : course.weeks, isDark),
                     ],
                   ),
                 ),
@@ -629,7 +670,9 @@ Future<bool> askDeleteCourse(BuildContext context, Course course) async {
       title: const Text('删除课程'),
       content: Text('确定要删除「${course.name}」吗？'),
       actions: [
-        TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消')),
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(true),
           child: const Text('删除', style: TextStyle(color: Colors.red)),
@@ -650,24 +693,30 @@ Future<void> confirmDeleteCourse(
 }
 
 /// 详情卡里的一行「图标 + 标签 + 值」。
-Widget _detailRow(IconData icon, String label, String value, bool isDark) => Padding(
+Widget _detailRow(IconData icon, String label, String value, bool isDark) =>
+    Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: isDark ? Colors.grey.shade500 : const Color(0xFF6B7280)),
+          Icon(icon,
+              size: 18,
+              color: isDark ? Colors.grey.shade500 : const Color(0xFF6B7280)),
           const SizedBox(width: 10),
           Text(label,
               style: TextStyle(
                   fontSize: AppTheme.fontBody,
-                  color: isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
+                  color:
+                      isDark ? Colors.grey.shade400 : const Color(0xFF6B7280))),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               value,
               style: TextStyle(
                   fontSize: AppTheme.fontBody,
-                  color: isDark ? Colors.white : AppTheme.textPrimaryLight), // 顶层函数无 context
+                  color: isDark
+                      ? Colors.white
+                      : AppTheme.textPrimaryLight), // 顶层函数无 context
             ),
           ),
         ],
@@ -700,7 +749,8 @@ Widget _expandSection(
         ),
         leading: leading,
         iconColor: AppTheme.primaryColor,
-        collapsedIconColor: isDark ? Colors.grey.shade500 : Colors.grey.shade600,
+        collapsedIconColor:
+            isDark ? Colors.grey.shade500 : Colors.grey.shade600,
         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         expandedCrossAxisAlignment: CrossAxisAlignment.start,

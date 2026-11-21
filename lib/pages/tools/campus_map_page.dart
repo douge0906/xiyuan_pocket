@@ -2,14 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../theme/app_theme.dart';
+// 3D 地图实现：WebView 加载 assets 里的单文件 HTML（campus3d_view_io.dart）。
+// webview_flutter 只有 android / ios 实现，本项目只发安卓，因此不再保留
+// Web 端 iframe 方案与占位实现（条件导入已取消）。
+import 'campus3d_view_io.dart';
 
-/// 校园地图（内置图片，纯离线）。
+/// 校园地图（3D 白模，内置离线单文件）。
 ///
-/// 默认显示手绘版（`assets/images/campus_map_illustrated.png`，1244×1073），
-/// 通过右上角「切换地图」可切到卫星图（`assets/images/campus_map.jpg`，1920×1004）。
+/// 页面内容是 `assets/map/campus3d.html` —— 796 KB 的完全自包含单文件，
+/// 内联了 63 栋建筑的施工轮廓（来源 OpenStreetMap，ODbL 许可）与地物名。
+/// 双指缩放、拖动、点楼看详情、按分类筛选都在 HTML 内部实现；
+/// 不联网、不需要定位权限、不调用任何地图 SDK。
+///
 /// 「切换方向」在竖屏 / 横屏之间切换，默认竖屏。
-/// 进入页面时整张地图完整可见（contain，不裁切）；双指放大后可拖动查看细节，
-/// 图片文字始终不旋转。不联网、不需要定位权限、不调用任何地图 SDK。
 class CampusMapPage extends StatefulWidget {
   const CampusMapPage({super.key});
 
@@ -18,9 +23,9 @@ class CampusMapPage extends StatefulWidget {
 }
 
 class _CampusMapPageState extends State<CampusMapPage> {
-  static const String _illustratedAsset =
-      'assets/images/campus_map_illustrated.png';
-  static const String _satelliteAsset = 'assets/images/campus_map.jpg';
+  /// 3D 地图资源。WebView 的 loadFlutterAsset 与 Web 的 iframe 用的是同一个
+  /// 相对路径（就是 pubspec.yaml 里 assets 段写的那个）。
+  static const String _map3dAsset = 'assets/map/campus3d.html';
 
   static const List<DeviceOrientation> _portrait = [
     DeviceOrientation.portraitUp,
@@ -30,11 +35,6 @@ class _CampusMapPageState extends State<CampusMapPage> {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ];
-
-  final TransformationController _tc = TransformationController();
-
-  /// 默认显示手绘地图。
-  bool _useIllustrated = true;
 
   /// 默认竖屏（false）；true 为横屏。
   bool _landscape = false;
@@ -48,7 +48,6 @@ class _CampusMapPageState extends State<CampusMapPage> {
 
   @override
   void dispose() {
-    _tc.dispose();
     // 离开页面务必还原竖屏与系统栏，否则会影响其它页面。
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(_portrait);
@@ -68,26 +67,10 @@ class _CampusMapPageState extends State<CampusMapPage> {
   void _toggleOrientation() {
     setState(() => _landscape = !_landscape);
     _applyOrientation();
-    // 换了方向视口尺寸变了，缩放平移一并复位，保证整张图仍然完整可见。
-    _tc.value = Matrix4.identity();
-  }
-
-  void _toggleMap() {
-    setState(() => _useIllustrated = !_useIllustrated);
-    // 换图回到「整张完整显示」的初始状态。
-    _tc.value = Matrix4.identity();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_useIllustrated ? '已切换为手绘地图' : '已切换为卫星地图'),
-        duration: const Duration(milliseconds: 1500),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final asset = _useIllustrated ? _illustratedAsset : _satelliteAsset;
-
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
@@ -102,55 +85,9 @@ class _CampusMapPageState extends State<CampusMapPage> {
                 ? Icons.stay_current_portrait_rounded
                 : Icons.stay_current_landscape_rounded),
           ),
-          IconButton(
-            onPressed: _toggleMap,
-            tooltip: '切换地图',
-            icon: Icon(
-                _useIllustrated ? Icons.satellite_rounded : Icons.map_rounded),
-          ),
         ],
       ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            // 默认整张图完整显示（contain，不裁切）；放大后可拖动看细节。
-            // boundaryMargin 为 0，缩放、拖动都不会露出空白以外的内容。
-            child: InteractiveViewer(
-              transformationController: _tc,
-              minScale: 1.0,
-              maxScale: 5.0,
-              boundaryMargin: EdgeInsets.zero,
-              clipBehavior: Clip.hardEdge,
-              child: SizedBox.expand(
-                child: Image.asset(
-                  asset,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.high,
-                ),
-              ),
-            ),
-          ),
-          // 底部提示
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: IgnorePointer(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                child: Text(
-                  '双指缩放 · 拖动 · 右上角可切换方向或切换地图',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: AppTheme.fontSmall,
-                    color: context.textSecondary,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+      body: buildCampus3DWebView(assetKey: _map3dAsset),
     );
   }
 }

@@ -1,38 +1,103 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 考试本地缓存：把「考试查询」结果存到 SharedPreferences，
 /// 供首页「今日概览」计算最近一场考试的倒计时（离线可用，无需每次联网）。
+///
+/// ## 来源标记（v1.7.x）
+/// 每项带 `source`：`server`=教务同步，`manual`=用户手动添加。
+/// 同步教务结果时只替换 `server` 项，**手动项原样保留、不被覆盖**；
+/// 手动项也可单独删除。旧缓存没有 `source`/`id`，读取时按 `server` 规范化补齐。
 class ExamStorage {
   static const String _kExams = 'exam_cache_list';
   static const String _kSemester = 'exam_cache_semester';
   static const String _kUpdatedAt = 'exam_cache_updated_at';
 
-  /// 保存考试列表（原样保存查询返回的 Map 列表）。
+  /// 教务同步项来源。
+  static const String sourceServer = 'server';
+
+  /// 用户手动添加项来源。
+  static const String sourceManual = 'manual';
+
+  /// 生成教务项稳定指纹 id（同名同学期同时间视为同一场，便于去重/替换）。
+  static String _serverId(Map<String, dynamic> e) {
+    String p(String k) => (e[k] ?? '').toString().trim();
+    return 'server|${p('name')}|${p('date')}|${p('start_time')}|${p('classroom')}';
+  }
+
+  /// 手动项稳定 id。
+  static String _manualId() =>
+      'manual_${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(1 << 30)}';
+
+  /// 规范化单条：补 `source`（缺省 server）与 `id`（旧缓存兼容）。
+  static Map<String, dynamic> _normalize(Map<String, dynamic> e) {
+    final out = Map<String, dynamic>.from(e);
+    final source = (out['source'] ?? '').toString().trim();
+    out['source'] = source == sourceManual ? sourceManual : sourceServer;
+    if ((out['id'] ?? '').toString().isEmpty) {
+      out['id'] = out['source'] == sourceManual ? _manualId() : _serverId(out);
+    }
+    return out;
+  }
+
+  /// 保存教务同步结果：**保留已有手动项，整体替换教务项**。
   ///
-  /// ⚠️ **空列表不写**：教务维护或改版时，`JwglClient.queryExams` 会**返回空而不是抛错**
-  /// （见其 `emptyMeansEmpty: true`），页面若照写就会把已有缓存清空 ——
-  /// 这正是本项目最高频的 bug 模式（「失败 → 静默返回空 → 空被当有效结果写回 → 抹掉好东西」）。
-  /// 与 `TextbookStorage.saveBooks` 保持同一守卫。
+  /// ⚠️ **合并后为空才不写**：教务维护或改版时查询返回空而不是抛错，
+  /// 页面若照写就会把已有缓存（含手动项）清空 —— 这正是本项目最高频的 bug 模式
+  /// （「失败 → 静默返回空 → 空被当有效结果写回 → 抹掉好东西」）。
   static Future<void> saveExams(
-    List<Map<String, dynamic>> exams, {
+    List<Map<String, dynamic>> serverExams, {
     String? semester,
   }) async {
-    if (exams.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kExams, jsonEncode(exams));
+    final existing = await loadExams();
+    final manual = existing.where((e) => e['source'] == sourceManual).toList();
+    final server = [
+      for (final e in serverExams) _normalize(Map<String, dynamic>.from(e)),
+    ];
+    final all = [...manual, ...server];
+    if (all.isEmpty) return;
+    await prefs.setString(_kExams, jsonEncode(all));
     if (semester != null) await prefs.setString(_kSemester, semester);
     await prefs.setString(_kUpdatedAt, DateTime.now().toIso8601String());
   }
 
-  /// 读取缓存的考试列表
+  /// 添加一场手动考试（持久化，教务同步不会覆盖）。
+  static Future<List<Map<String, dynamic>>> addManualExam(
+    Map<String, dynamic> exam,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = await loadExams();
+    final entry = _normalize(Map<String, dynamic>.from(exam));
+    entry['source'] = sourceManual;
+    entry['id'] = _manualId();
+    list.add(entry);
+    await prefs.setString(_kExams, jsonEncode(list));
+    await prefs.setString(_kUpdatedAt, DateTime.now().toIso8601String());
+    return list;
+  }
+
+  /// 按 id 删除一场考试（手动项 / 教务项均可）。
+  static Future<List<Map<String, dynamic>>> removeExam(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = await loadExams()
+      ..removeWhere((e) => (e['id'] ?? '').toString() == id);
+    await prefs.setString(_kExams, jsonEncode(list));
+    await prefs.setString(_kUpdatedAt, DateTime.now().toIso8601String());
+    return list;
+  }
+
+  /// 读取缓存的考试列表（旧数据规范化补齐来源与 id）。
   static Future<List<Map<String, dynamic>>> loadExams() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_kExams);
     if (raw == null || raw.isEmpty) return [];
     try {
       final list = jsonDecode(raw) as List;
-      return list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+      return list
+          .map((e) => _normalize((e as Map).cast<String, dynamic>()))
+          .toList();
     } catch (_) {
       return [];
     }
