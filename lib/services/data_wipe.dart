@@ -1,9 +1,14 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/app_theme.dart';
+import '../widgets/hand_drawn_backgrounds.dart';
+import 'app_locale.dart';
 import 'dorm_service.dart';
 import 'home_prefs.dart';
 import 'nav_prefs.dart';
+import 'ui_prefs.dart';
 
 /// 本地数据清理 —— 「退出登录」与「恢复出厂」共用。
 ///
@@ -49,6 +54,37 @@ class DataWipe {
       DormService.clearToken();
     } catch (_) {}
 
+    // 外观 8 项：磁盘清了、内存静态值还挂着，用户点完「清除全部数据」看到的
+    // 仍是旧主题色 / 旧背景 / 旧字号，要杀进程才恢复 —— 与导航布局同一类问题。
+    // 这里显式写默认值（不重新读盘）：SP 刚清空，读出来也是这些默认值，
+    // 但少一次 I/O，也不会因为读失败而静默留在旧外观上。
+    try {
+      resetAppearanceInMemory();
+    } catch (_) {}
+
     return removed;
   }
+}
+
+/// 把**内存里**的外观相关静态值全部回默认。
+///
+/// 与 `main.dart` 的 `loadAppearance()` 一一对应（那边负责「启动时按盘上设置
+/// 恢复」，这边负责「数据清空后按默认值复位」）。两处的默认值必须一致，
+/// 一致性由 `test/data_wipe_appearance_test.dart` 守住。
+///
+/// 不写盘：调用方 [DataWipe.wipeAll] 已经把 SharedPreferences 清空了，
+/// 这里再写一遍反而会把刚清掉的键又加回去。
+void resetAppearanceInMemory() {
+  AppTheme.setMode(ThemeMode.light);
+  AppTheme.setPrimary(AppTheme.defaultPrimary);
+  AppTheme.setBackground(null);
+  AppTheme.setBackgroundDark(null);
+  handDrawnBackgroundNotifier.value = HandDrawnBackground.none;
+  AppTheme.setRadiusScale(AppTheme.defaultRadiusScale);
+  UiPrefs.setTextScale(1.0);
+  UiPrefs.setMotion(1.0);
+  UiPrefs.setHapticLevel(2);
+  UiPrefs.setFontFamily('');
+  AppLocale.current = AppLanguage.zh;
+  AppLocale.notifier.value++;
 }

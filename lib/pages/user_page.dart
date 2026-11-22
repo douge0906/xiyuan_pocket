@@ -589,9 +589,10 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       container.invalidate(userConfigProvider);
     }
 
-    // 外观回默认（浅色 + 墨黑）
-    AppTheme.setMode(ThemeMode.light);
-    AppTheme.setPrimary(AppTheme.defaultPrimary);
+    // 外观全部回默认（浅色 + 墨黑 + 默认背景 + 默认圆角/字号/动效/振动/字体/语言）。
+    // 走 `resetAppearanceInMemory()` 而不是在这里逐个 set：与 DataWipe 共用一份，
+    // 以后加新的外观项只改一处，不会再漏。
+    resetAppearanceInMemory();
 
     if (!mounted) return;
     _usernameCtl.clear();
