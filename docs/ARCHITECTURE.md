@@ -89,9 +89,16 @@
   → Provider / setState → 页面展示
 ```
 
-消息页走另一条：`MessageSource`（教务处 / 校园资讯 / 控制台公告）
-→ `MessageRepository` → `MessageArchive` 归档 → 页面。四个源共用同一套
-列表、已读、搜索与详情容器，**不各自做一套页面**。
+消息页走另一条：`MessageSource` → `MessageRepository` → `MessageArchive` 归档 → 页面。
+
+`services/sources/` 下是 **1 个抽象基类 + 3 个具体实现**：
+`CachedMessageSource`（abstract，`implements MessageSource`）被
+`JwcSource`（教务处）、`CampusSource`（校园资讯，**按栏目 id 循环实例化**：
+每订阅一个校园栏目就 new 一个，见 `message_repository.dart:245-248`）、
+`ControlAnnouncementSource`（控制台公告）继承。
+
+所以**运行时到底有几个源取决于用户订阅了哪些栏目**，不是固定 3 或 4 个。
+但它们共用同一套列表、已读、搜索与详情容器，**不各自做一套页面**。
 
 ## 构建与发布
 
@@ -102,8 +109,17 @@
   它按年份/版本重命名产物、做 AAPT 校验、落到 `C:/build_ws/delivery/`
 - 分发链路：本机签出 APK → 上传 CDN `static.wxxydouge.icu`（文件名必须带版本号，
   CDN 缓存一年）→ 控制端 `/api/v1/app/release` 下发版本信息 → App 内检查更新
+- ⚠️ **CDN 的裸链拿不到文件**：EdgeOne 开了 Type D token 鉴权，没签名的直链一律
+  `403 Forbidden`（实测 `…/xiyuan-pocket-v1.0.9.apk` 就是 403）。
+  唯一可用的下载入口是控制端 `GET /api/v1/app/download`，
+  它会现签一个带 `sign` + `t` 的 URL 再 307 过去（签名 TTL 900 秒，
+  所以没法把签名后的链接写死在任何页面里）。
+  文档/脚本里凡是「验证下载」的步骤，都必须走控制端入口，别直接 curl CDN。
 - CI（`.github/workflows/ci.yml`）：push 到 `main` / `master` / `work/**` / `feat/**`
-  与 PR 都会跑 `flutter analyze lib test` + `flutter test`；只有 main/master 才构建 APK
+  与 PR 都会跑 `flutter analyze lib test` + `flutter test`。
+  其中 `build-apk` 这个 job 的 `if` 是「push 到 main/master、**任何 PR**、**手动触发**」
+  （`ci.yml:67-70`）—— 只有 push 到 `work/**` / `feat/**` 这类开发分支才是
+  「只体检不构建」，别的地方都会顺带花 5~8 分钟出一个校验 APK。
 
 ## 已知债务（改之前先知道）
 
