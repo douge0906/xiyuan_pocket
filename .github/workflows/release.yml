@@ -59,11 +59,30 @@ jobs:
           echo "$KEY_PROPERTIES_B64" | base64 -d > android/key.properties
           echo "已还原正式签名材料"
 
+      - name: 校验 tag 与 pubspec 版本一致
+        # 这个包会以 ${{ github.ref_name }} 为名发布，但 APK 里的 versionName 来自
+        # pubspec.yaml。两者对不上就会产出「标题写 A、装上去显示 B」的包
+        # —— AGENTS.md R6 记录过这类事故（v1.7.2 发版 1.0.5+19）。
+        # workflow_dispatch 手动触发时没有 tag，跳过。
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          PKG_VER=$(grep -E '^version:' pubspec.yaml | head -1 | sed -E 's/^version:[[:space:]]*//' | cut -d+ -f1)
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "pubspec versionName: $PKG_VER"
+          echo "tag           版本: $TAG_VER"
+          if [ "$PKG_VER" != "$TAG_VER" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 pubspec 的 $PKG_VER 不一致 —— 打 tag 前先把 pubspec.yaml 的 version: 改成 $TAG_VER+<versionCode>"
+            exit 1
+          fi
+          echo "::notice::tag 与 pubspec 版本一致"
+
       - name: 拉取依赖
         run: flutter pub get
 
       - name: 静态检查
-        run: flutter analyze lib
+        # 与 ci.yml 保持同一口径。之前这里只查 lib，ci.yml 查 lib test，
+        # 两处口径不一致，容易在 tag 发版时才发现测试文件本身有 error。
+        run: flutter analyze lib test
 
       - name: 单元测试
         run: flutter test

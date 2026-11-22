@@ -7,7 +7,14 @@ name: CI
 # 目的：任何贡献者的改动都在干净的机器上先体检一遍，不依赖维护者本地环境。
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+      # R16 规定开发在 work/<版本>-<主题> 或 feat/<主题> 分支上。
+      # 只写 [main, master] 的话，分支上每次 push 都不触发 CI ——
+      # 第一次体检就发生在合并进 main 的那一刻，已经晚了。
+      - 'work/**'
+      - 'feat/**'
   pull_request:
   workflow_dispatch: # 也可在 Actions 页面手动触发
 
@@ -54,6 +61,13 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     needs: analyze-and-test # 检查与测试通过才构建
+    # 只在「要进 main」的场景构建：main/master 上的 push、PR、手动触发。
+    # 分支（work/** feat/**）上只跑 analyze-and-test —— 那里要的是快速反馈，
+    # 不是一个几分钟才能出、且不进发布的校验 APK。
+    if: >
+      github.event_name != 'push'
+      || github.ref == 'refs/heads/main'
+      || github.ref == 'refs/heads/master'
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
