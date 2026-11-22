@@ -57,6 +57,10 @@ class _MyResourceDownloadsPageState extends State<MyResourceDownloadsPage> {
         builder: (_) => ResourceTextPreviewPage(
           title: item.name,
           fileId: item.fileId,
+          // 本地兜底：正文是服务端抽的，断网或者服务端没抽出来时，
+          // 这个文件明明就在本机，得给一个直接打开的出口。
+          onDownload: () => _share(item),
+          downloadLabel: '用其他应用打开本地文件',
         ),
       ));
       return;

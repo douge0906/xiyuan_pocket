@@ -11,11 +11,16 @@ class ResourceTextPreviewPage extends StatefulWidget {
     required this.title,
     required this.fileId,
     this.onDownload,
+    this.downloadLabel = '下载后用 Word 打开',
   });
 
   final String title;
   final int fileId;
   final Future<void> Function()? onDownload;
+
+  /// [onDownload] 按钮的文案。默认是资源中心的「再下载一次」语境；
+  /// 「我的下载」页传的是「用其他应用打开本地文件」，因为那里文件就在本机。
+  final String downloadLabel;
 
   @override
   State<ResourceTextPreviewPage> createState() =>
@@ -93,7 +98,7 @@ class _ResourceTextPreviewPageState extends State<ResourceTextPreviewPage> {
                         if (widget.onDownload != null)
                           FilledButton.tonal(
                             onPressed: () => widget.onDownload!(),
-                            child: const Text('下载后用 Word 打开'),
+                            child: Text(widget.downloadLabel),
                           ),
                         TextButton(onPressed: _load, child: const Text('重试')),
                       ],

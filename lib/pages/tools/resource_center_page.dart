@@ -494,6 +494,10 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   late final ResourceCourse _course;
   ResourceQuota? _quota;
 
+  /// 下载/打开闸门：进度框是 barrierDismissible: false，连点会叠出第二层，
+  /// 而两层各拿一个 CancelToken，取消一层另一层还在跑，关不干净。
+  bool _busy = false;
+
   /// 试卷区简易检索关键词（匹配试卷文件名，忽略大小写与空白）。
   final TextEditingController _paperController = TextEditingController();
   String _paperQuery = '';
@@ -590,6 +594,24 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   }
 
   Future<String?> _downloadWithProgress(
+    ResourceEntry entry, {
+    required bool save,
+  }) async {
+    if (_busy) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('上一个文件还在处理，请等它完成')),
+      );
+      return null;
+    }
+    _busy = true;
+    try {
+      return await _downloadWithProgressInner(entry, save: save);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<String?> _downloadWithProgressInner(
     ResourceEntry entry, {
     required bool save,
   }) async {
