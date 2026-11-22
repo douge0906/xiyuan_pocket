@@ -101,7 +101,19 @@ class _NotificationPageState extends State<NotificationPage>
     _repo.addListener(_onRepoChanged);
     // 用户真正切到消息页时才更新（App 启动会预热所有 Tab，预热不联网）。
     _unsubEntered = CurrentTab.addListener(_onEntered);
+    // 从「我的 → 设置 → 消息设置」改开关时没有本页的 repository，
+    // 只能靠信号把「内存镜像过期了」传回来（见 MessageSettingsSignals）。
+    MessageSettingsSignals.autoRefreshChanged.addListener(_onAutoRefreshSignal);
     _boot();
+  }
+
+  /// 另一个入口改了「每次进入自动更新」→ 把开关重读进内存镜像。
+  ///
+  /// `initSettings()` 只读存储并 `_notify()`，幂等；本页已 dispose 时它也安全
+  /// （内部判 `_disposed`），这里再判一次 mounted 是防 setState 落到死树上。
+  void _onAutoRefreshSignal() {
+    if (!mounted) return;
+    unawaited(_repo.initSettings());
   }
 
   void _onRepoChanged() {
@@ -201,6 +213,8 @@ class _NotificationPageState extends State<NotificationPage>
 
   @override
   void dispose() {
+    MessageSettingsSignals.autoRefreshChanged
+        .removeListener(_onAutoRefreshSignal);
     _unsubEntered?.call();
     _noticeTimer?.cancel();
     _repo.removeListener(_onRepoChanged);
