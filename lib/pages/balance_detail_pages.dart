@@ -87,6 +87,11 @@ class _CardBalancePageState extends State<CardBalancePage> {
 
   /// 返回是否成功；只刷新列表，不负责「加载更多」的按钮态。
   Future<bool> _fetch({bool refresh = false}) async {
+    // 必须在任何 setState 之前判：`_init()` 里 `await ensureFresh()` 与
+    // `await loadTurnoverCache()` 之间有几秒的异步间隙，用户在这期间按返回
+    // 就会让下面的 setState 落在已 dispose 的 State 上
+    // （`setState() called after dispose()`）。
+    if (!mounted) return false;
     if (refresh) {
       setState(() {
         _loading = true;
