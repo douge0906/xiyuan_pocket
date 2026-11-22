@@ -19,7 +19,7 @@ Android · Flutter
 | | |
 |---|---|
 | 下载页 | **https://wxxydouge.icu/pocket** |
-| 系统要求 | Android 8.0 及以上 · arm64 |
+| 系统要求 | Android 5.0 及以上 · arm64 |
 | 当前版本 | 见下载页（App 内也会提示更新） |
 | 许可 | GPLv3 · 永久免费 · 无广告 |
 
