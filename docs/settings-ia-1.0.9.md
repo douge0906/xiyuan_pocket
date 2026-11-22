@@ -1,9 +1,24 @@
-# 设置页信息架构（v1.0.9）
+# 设置页信息架构（v1.0.9 · 已落地）
 
-> 依据：`lib/pages/settings_page.dart`（801 行，5 个顶层区块）、
-> `lib/pages/display_settings_page.dart`（650 行）、`lib/pages/service_settings_page.dart`（236 行）、
-> `lib/services/ui_prefs.dart`（145 行）、`lib/services/app_locale.dart`（200 行）。
-> 本次只做「任务四 / 任务五」：界面与显示总入口 + 交互形态纠正 + 振动 + 语言。
+> **状态：本文提出的方案已在 1.0.9 / 1.0.10 实现完毕**，下面是当初的设计依据，
+> 留着是为了「为什么这么排」有据可查，不是待办清单。
+>
+> 依据（2026-11-22 复核后的实际行数）：
+> `lib/pages/settings_page.dart`（434 行）、
+> `lib/pages/display_settings_page.dart`（760 行）、
+> `lib/pages/general_settings_page.dart`（160 行，1.0.9 拆出来的新页）、
+> `lib/pages/service_settings_page.dart`（236 行）、
+> `lib/services/ui_prefs.dart`（135 行）、`lib/services/app_locale.dart`（244 行）、
+> `lib/services/haptics.dart`（71 行，1.0.9 新增）。
+>
+> 实际落地与原方案的差异（以代码为准）：
+> 1. 设置页首屏最终是**三个分区小字标题**「通用 / 功能 / 帮助与反馈」，不是「4 个无标题区块」——
+>    见 `settings_page.dart:125-135` 的注释，用户第三次明确要求按这三类划分。
+> 2. 分区改名：「界面与显示」实际叫「外观与个性化」（`item_appearance` → `DisplaySettingsPage`），
+>    「通用设置」是独立页 `general_settings_page.dart`（字体 / 字号 / 语言 / 振动四行）。
+> 3. 「数据与存储」没有单独成区块，而是「清理缓存 + 清除所有数据」同卡放进「功能」区。
+> 4. 语言最终留在**通用设置**内部，没有提到「界面与显示」直属行（与 M5 的建议相反）。
+> 5. 服务管理入口在「外观与个性化」页底部（`display_settings_page.dart:548`）。
 
 ## 0. 三条口径（先定，后面照做）
 
@@ -73,6 +88,9 @@
 - 过渡仍用 `AnimatedSize`（`AppTheme.durBase` + `curveStandard`），收起态保持 `SizedBox(width: double.infinity)` 撑宽。
 
 ## 2. 合并 / 删除 / 保留
+
+> ⚠️ 本节表格里的行号是**改造前**那一版的，现在对照会偏几行到几十行（文件已从 801 行缩到 434 行）。
+> 按「删什么」的语义理解即可，别拿行号去定位。
 
 ### 2.1 合并
 
