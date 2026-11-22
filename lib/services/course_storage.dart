@@ -467,7 +467,9 @@ class CourseStorage {
         }
         if (!overlapWeek) continue;
         var overlapSlotWeek = false;
-        for (var w = 1; w <= weekCountCache; w++) {
+        // 上界用协议硬上限，与 [detectSelfConflicts] 一致：
+        // 用 weekCountCache（默认 20）会让第 21 周以后的冲突永远检不出来。
+        for (var w = 1; w <= maxTeachingWeek; w++) {
           if (s.isActiveOnWeek(w) && l.isActiveOnWeek(w)) {
             overlapSlotWeek = true;
             break;
@@ -694,9 +696,11 @@ class CourseStorage {
         .difference(DateTime(start.year, start.month, start.day))
         .inDays;
     if (diff < 0) return 1;
-    // 夹到用户设定的显示周数：开学日久远（如误选 2020 年）时，
-    // 算出「第 132 周」会让表头与网格对不上。
-    return (diff ~/ 7 + 1).clamp(1, weekCountCache);
+    // 夹到协议硬上限 [maxTeachingWeek]（25），**不能用 weekCountCache**：
+    // weekCountCache 只是「显示几页」（默认 20，可调 16~25），把它当逻辑上界会让
+    // 第 21 周起这里全算成第 20 周 —— 课程不显示、提醒不响、待办不生成。
+    // 显示侧各自 clamp(0, weekCountCache - 1)，不依赖这里。
+    return (diff ~/ 7 + 1).clamp(1, maxTeachingWeek);
   }
 
   /// 根据学年/学期自动估算开学日期，用于「自动定位」：
