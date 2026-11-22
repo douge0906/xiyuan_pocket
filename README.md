@@ -134,7 +134,7 @@ lib/
 ├── database/            待办持久化
 ├── constants/           控制端地址
 └── repositories/        待办仓储
-test/                    97 个文件 / 677 个用例
+test/                    97 个文件 / 687 个用例（flutter test 实跑）
 android/                 Kotlin 侧（桌面小组件 9 个文件）
 third_party/             两个本地 fork 的插件（原因见 pubspec.yaml 注释）
 ```
