@@ -334,24 +334,29 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
           ),
           content: SizedBox(
             width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _textField(nameCtl, '科目名称'),
-                _dateField(dateCtl, '选择考试日期', ctx),
-                _timeField(timeCtl, '开始时间', ctx),
-                _timeField(endTimeCtl, '结束时间（可选）', ctx),
-                _textField(roomCtl, '地点'),
-                _textField(teacherCtl, '教师'),
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(error!,
-                        style: const TextStyle(
-                            color: Color(0xFFEF4444),
-                            fontSize: AppTheme.fontSmall)),
-                  ),
-              ],
+            // 🔴 2026-11-22 审查 P1：6 个输入框 + 错误提示原来是不可滚动的
+            //    Column，小屏（或键盘弹起时）底部字段会被直接裁掉，
+            //    用户根本填不完。这里包一层滚动，键盘弹起也够用。
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _textField(nameCtl, '科目名称'),
+                  _dateField(dateCtl, '选择考试日期', ctx),
+                  _timeField(timeCtl, '开始时间', ctx),
+                  _timeField(endTimeCtl, '结束时间（可选）', ctx),
+                  _textField(roomCtl, '地点'),
+                  _textField(teacherCtl, '教师'),
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(error!,
+                          style: const TextStyle(
+                              color: Color(0xFFEF4444),
+                              fontSize: AppTheme.fontSmall)),
+                    ),
+                ],
+              ),
             ),
           ),
           actions: [

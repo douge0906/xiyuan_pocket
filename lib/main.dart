@@ -42,19 +42,40 @@ final RouteObserver<ModalRoute> routeObserver = RouteObserver<ModalRoute>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 本地通知初始化（时区数据库 / 通知渠道）。
-  await NotificationService.init();
+  // 🔴 2026-11-22 审查 P0：启动链上原来所有 await 都没有 try，
+  //    任一环节抛异常都会让 runApp 永远执行不到 —— App 永久停在启动图。
+  //    通知初始化尤其危险：它初始化时区数据库与通知渠道，是插件侧的
+  //    原生调用，最可能抛 LateInitializationError（现有日志里已出现过）。
+  //    这里逐段兜住：失败只降级该功能，不阻断启动。
+  try {
+    await NotificationService.init();
+  } catch (_) {
+    // 通知不可用不影响启动；后续用到时 notification_service 内部会再试
+  }
   // 首次启动把**内置的爬取快照**写进本地缓存 → 消息页首次打开秒出内容。
   // 只在首次运行写一次，之后照常走「缓存 + 刷新」流程。
   // 🔴 顺序不能反：先把老键的缓存迁到新档案键，再让种子补缺位。
   // 反了的话，种子会给老用户写回一份**更旧**的快照。
-  await MessageMigration.ensureMigrated();
-  await SeedData.ensureApplied();
+  try {
+    await MessageMigration.ensureMigrated();
+    await SeedData.ensureApplied();
+  } catch (_) {
+    // 消息迁移 / 种子失败：消息页会退化成「首次打开现拉」，不影响启动
+  }
   // v1.7.0 底部导航布局（顺序 / 隐藏）：**首帧之前**读完，
   // 否则启动会先按出厂顺序画一遍导航条、再跳成用户的顺序，肉眼可见地闪。
-  await NavPrefs.ensureLoaded();
+  try {
+    await NavPrefs.ensureLoaded();
+  } catch (_) {
+    // 导航布局读失败：退回出厂顺序，不阻断启动
+  }
   // v1.7.2 首页板块显隐（首页个性化设置）：同样在**首帧之前**读完 ——
   // 否则被隐藏掉的板块会先按默认画一帧再消失，肉眼可见地闪。
-  await HomePrefs.ensureLoaded();
+  try {
+    await HomePrefs.ensureLoaded();
+  } catch (_) {
+    // 首页板块显隐读失败：退回全显示，不阻断启动
+  }
   // 🔴 2026-11-04 审查 P1：**外观也必须在首帧之前读完**。
   //
   //    原来这些（明暗 / 主题色 / 背景色 / 圆角 / 字号 / 字体 / 语言）
@@ -62,7 +83,11 @@ void main() async {
   //    `runApp` 前一次都没读过。于是深色 / 自定义背景 / 自定义主题色用户
   //    每次冷启动都会先看到一帧**纯白 + 墨黑主题色 + 默认字号 + 中文**，
   //    然后整树跳变到真实主题 —— 夜间启动非常刺眼。
-  await loadAppearance();
+  try {
+    await loadAppearance();
+  } catch (_) {
+    // 外观读失败：退回默认主题（会有一帧默认色，但不白屏）
+  }
   // v2.2.13 桌面小组件：启动时同步一次「今日课程」到桌面
   WidgetSyncService.syncTodayCourses();
   // 信息型组件：考试倒计时 / 校园卡余额（本地缓存）
