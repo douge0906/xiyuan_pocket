@@ -91,6 +91,13 @@ class CourseFetcher {
               'semester': '${_academicYear(xnm)} 第${semesterLabel(xqm)}学期',
               'courses': parsed,
               'count': parsed.length,
+              // 正方把学生信息挂在同一次响应里（`xsxx` 块，字段名大写）。
+              // 借这一次请求顺手带出去：姓名唯一的另一条来源是成绩查询的
+              // `student.xm`，而新生没有成绩记录，那条路永远空。
+              // ⚠️ 已知边界：本学年一门课都没有时 `parsed.isEmpty` 成立，
+              //    整个方法会走到最后那句「未能解析课程表数据」的 throw，
+              //    这条控制流本次不重构 —— 即课表全空的新生仍拿不到姓名。
+              'student': _parseStudentBlock(j),
             };
           }
         }
@@ -125,6 +132,39 @@ class CourseFetcher {
   ///
   /// 字段别名覆盖：课程名 `kcmc/courseName/KCMC`、教师 `jsxm/xm/teacher/teaxms`、
   /// 教室 `cdmc/classroom/room`、星期 `xqj/weekday/xq`、节次 `jcor/jcs/jc`。
+  /// 从课表响应的 `xsxx` 块里取学生信息。
+  ///
+  /// 正方教务把这个块挂在同一个响应上，字段名是**大写**（`XM` 姓名、
+  /// `BJMC` 班级、`ZYMC` 专业、`NJDM_ID` 年级）。各校/各版本大小写不一，
+  /// 这里统一按「大写优先、小写兜底」取。
+  ///
+  /// 取不到返回空 Map（调用方按「没有姓名」处理），**绝不抛异常** ——
+  /// 课表能不能用和姓名能不能显示是两件事。
+  static Map<String, dynamic> _parseStudentBlock(Object data) {
+    if (data is! Map) return const <String, dynamic>{};
+    final xsxx = data['xsxx'] ?? data['XSXX'];
+    if (xsxx is! Map) return const <String, dynamic>{};
+
+    String pick(List<String> names) {
+      for (final n in names) {
+        final v = xsxx[n];
+        if (v != null && v.toString().trim().isNotEmpty) {
+          return v.toString().trim();
+        }
+      }
+      return '';
+    }
+
+    final xm = pick(['XM', 'xm', 'Xm']);
+    if (xm.isEmpty) return const <String, dynamic>{};
+    return <String, dynamic>{
+      'xm': xm,
+      'bjmc': pick(['BJMC', 'bjmc']),
+      'zymc': pick(['ZYMC', 'zymc']),
+      'njdm_id': pick(['NJDM_ID', 'njdm_id', 'NJDM']),
+    };
+  }
+
   static List<Map<String, dynamic>> _parseZhengfang(Object data) {
     List<dynamic> raw;
     if (data is List) {

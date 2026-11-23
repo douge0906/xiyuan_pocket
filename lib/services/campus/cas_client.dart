@@ -65,6 +65,19 @@ class CasClient {
   static String _throttleUser = '';
   static DateTime _throttleAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// 距离该账号节流窗口结束还差多久；不受节流返回 null。
+  ///
+  /// 单独抽出来是为了让 [login] 里那段「等一次」的逻辑读起来只有一件事：
+  /// 差多久 → 等一下 → 重来。8 秒这个常量本身不动（学校按登录失败次数计锁号，
+  /// 放宽它等于把账号往锁上推）。
+  static Duration? _throttleRemaining(String username, DateTime now) {
+    if (username != _throttleUser) return null;
+    const window = Duration(seconds: 8);
+    final elapsed = now.difference(_throttleAt);
+    if (elapsed >= window) return null;
+    return window - elapsed;
+  }
+
   static Future<CasLoginResult> login(
     CampusSession session,
     String username,
@@ -72,11 +85,22 @@ class CasClient {
     String service = jwglService,
     int maxAttempts = 3,
   }) async {
-    final startedAt = DateTime.now();
-    if (username == _throttleUser &&
-        startedAt.difference(_throttleAt) < const Duration(seconds: 8)) {
-      return const CasLoginResult(
-          throttled, null, '登录操作过于频繁，请等几秒再试');
+    var startedAt = DateTime.now();
+    final wait = _throttleRemaining(username, startedAt);
+    if (wait != null) {
+      // 首登会在几秒内并发发起三次 CAS 登录（登录校验 / 一卡通预取 / 电费预取），
+      // 后两次必然撞上节流窗口。**等窗口过去再试一次**，而不是直接把
+      // 「登录操作过于频繁」抛给用户 —— 否则新用户首登必然看到电费与一卡通
+      // 双双「暂不可用」，而且要等下次冷启动才可能好转。
+      //
+      // 只等一次：等完仍被别的调用抢先占窗口就老实返回 throttled，
+      // 不无限排队（那比直接失败更糟）。
+      if (wait > const Duration(seconds: 8)) {
+        return const CasLoginResult(
+            throttled, null, '登录操作过于频繁，请等几秒再试');
+      }
+      await Future<void>.delayed(wait + const Duration(milliseconds: 150));
+      startedAt = DateTime.now();
     }
     _throttleUser = username;
     _throttleAt = startedAt;

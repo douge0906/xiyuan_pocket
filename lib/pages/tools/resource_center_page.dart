@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../services/cancel_token.dart';
 import '../../services/control_service.dart';
@@ -585,12 +586,139 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   }
 
   Future<void> _download(ResourceEntry entry) async {
+    // 先看本机有没有：有就别再下一遍（费流量，也费用户等待）。
+    // `listDownloads()` 已经过滤掉文件已被删掉的条目，命中的一定点得开。
+    final local = await _findLocalCopy(entry);
+    if (!mounted) return;
+    if (local != null) {
+      final again = await _askReuseLocal(local);
+      if (!mounted || again == null) return;
+      if (!again) {
+        // 「直接打开」：不再联网，走本地文件。
+        await _openLocal(local);
+        return;
+      }
+      // 「重新下载」：落到下面原来的流程。
+    }
     final path = await _downloadWithProgress(entry, save: true);
     if (path == null || !mounted) return;
     unawaited(_loadQuota());
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已保存到：$path')),
     );
+  }
+
+  /// 本机是否已有这个文件（按服务端 fileId 认，同名不同课不会串）。
+  Future<DownloadedResource?> _findLocalCopy(ResourceEntry entry) async {
+    if (entry.fileId <= 0) return null;
+    try {
+      final items = await ResourceDownloadService.listDownloads();
+      for (final it in items) {
+        if (it.fileId == entry.fileId) return it;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 「这个文件已经下载过了」→ true = 重新下载，false = 直接打开，null = 取消。
+  Future<bool?> _askReuseLocal(DownloadedResource local) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          side: BorderSide(color: context.borderColor),
+        ),
+        title: Row(
+          children: [
+            const Expanded(
+              child: Text('这个文件已经下载过了',
+                  style: TextStyle(fontSize: AppTheme.fontTitle)),
+            ),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.pop(ctx),
+              icon: Icon(Icons.close_rounded,
+                  size: 20, color: context.textTertiary),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(local.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: AppTheme.fontSmall)),
+            const SizedBox(height: 8),
+            Text('本机已保存，可以直接打开，不用再下一遍。',
+                style: TextStyle(
+                    fontSize: AppTheme.fontCaption,
+                    color: context.textSecondary)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('重新下载'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('直接打开'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 打开本机已保存的那份（不联网）。
+  Future<void> _openLocal(DownloadedResource local) async {
+    final lower = local.name.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ResourceViewerPage(
+          title: local.name,
+          filePath: local.path,
+        ),
+      ));
+      return;
+    }
+    if (lower.endsWith('.docx')) {
+      // 正文是服务端抽的：抽不到时（断网 / 服务端没存正文）必须还有出口，
+      // 所以两个参数都要给 —— 只给 downloadLabel 不给 onDownload 的话，
+      // `ResourceTextPreviewPage` 压根不会渲染那个按钮。
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ResourceTextPreviewPage(
+          title: local.name,
+          fileId: local.fileId,
+          onDownload: () => _shareLocal(local),
+          downloadLabel: '用其他应用打开本地文件',
+        ),
+      ));
+      return;
+    }
+    // .doc 等：本机有文件但没法在 App 内看，直接甩给系统打开。
+    await _shareLocal(local);
+  }
+
+  /// 把本机这份文件交给系统（选其他 App 打开 / 发给自己）。
+  Future<void> _shareLocal(DownloadedResource local) async {
+    try {
+      await Share.shareXFiles([XFile(local.path)], text: local.name);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              '打开失败：${e.toString().replaceFirst('Exception: ', '')}'),
+        ),
+      );
+    }
   }
 
   Future<String?> _downloadWithProgress(

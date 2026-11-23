@@ -9,7 +9,7 @@ import 'campus3d_view_io.dart';
 
 /// 校园地图（3D 白模，内置离线单文件）。
 ///
-/// 页面内容是 `assets/map/campus3d.html` —— 796 KB 的完全自包含单文件，
+/// 页面内容是 `assets/map/campus3d.html` —— 1.8 MB 的完全自包含单文件，
 /// 内联了 63 栋建筑的施工轮廓（来源 OpenStreetMap，ODbL 许可）与地物名。
 /// 双指缩放、拖动、点楼看详情、按分类筛选都在 HTML 内部实现；
 /// 不联网、不需要定位权限、不调用任何地图 SDK。

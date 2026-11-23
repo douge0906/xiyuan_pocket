@@ -16,6 +16,27 @@ enum _ImportAction {
 
   /// 清空当前这份课表的全部课程（导入前的「归零」）。
   clearCurrent,
+
+  /// 导入掌上锡院自己导出的方案文件（课表 / 外观 / 两者）。
+  /// 选中后还会再问一次「导入哪一部分」，见 [_BundleImportKind]。
+  bundle,
+}
+
+/// 「导入掌上锡院专属方案」之后的三选。
+///
+/// 三种文件在磁盘上都是同一套 JSON（schema 不同），用户不需要先判断文件里
+/// 装的是什么 —— 他想只要课表就选课表，只要配色就选外观。分开的另一个原因：
+/// [_BundleImportKind.all] 走 `importBundle()` 会连课表一起写进去，
+/// 而「只想换个配色」的人绝不该被顺手覆盖课表。
+enum _BundleImportKind {
+  /// 只导课表（`CourseTransferService.importTables`）。
+  tables,
+
+  /// 只导外观（`CourseTransferService.importAppearance`），不碰课表。
+  appearance,
+
+  /// 课表 + 外观一起导（`CourseTransferService.importBundle`）。
+  all,
 }
 
 /// 用户在某次导入面板里做出的选择。
@@ -183,6 +204,12 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
               onTap: () =>
                   Navigator.of(context).pop(const _ImportChoice(_ImportAction.image)),
             ),
+            row(
+              icon: Icons.inventory_2_outlined,
+              title: '导入掌上锡院专属方案',
+              onTap: () => Navigator.of(context)
+                  .pop(const _ImportChoice(_ImportAction.bundle)),
+            ),
             const SizedBox(height: 4),
             row(
               icon: Icons.delete_outline_rounded,
@@ -194,6 +221,119 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
                   : () => Navigator.of(context)
                       .pop(const _ImportChoice(_ImportAction.clearCurrent)),
               danger: true,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消', style: TextStyle(color: Colors.grey)),
+        ),
+      ],
+    );
+  }
+}
+
+/// 「导入掌上锡院专属方案」的三选面板。
+///
+/// 居中盒子（用户 m06905 第 2 条：「居中新盒子」），样式与导入面板一致：
+/// 白底 + 1px 细边框 + 圆角 + 右上角 ×。
+class _BundleImportSheet extends StatelessWidget {
+  const _BundleImportSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final fg = isDark ? Colors.white : context.textPrimary;
+    final sub = isDark ? Colors.grey.shade400 : const Color(0xFF6B7280);
+
+    Widget row({
+      required IconData icon,
+      required String title,
+      required String hint,
+      required _BundleImportKind kind,
+    }) {
+      return InkWell(
+        onTap: () => Navigator.of(context).pop(kind),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+            border: Border.all(
+                color: isDark ? Colors.grey.shade700 : const Color(0xFFE5E7EB)),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+          ),
+          child: Row(children: [
+            Icon(icon, size: 17, color: AppTheme.primaryColor),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: TextStyle(fontSize: AppTheme.fontBody, color: fg)),
+                  const SizedBox(height: 2),
+                  Text(hint,
+                      style: TextStyle(fontSize: AppTheme.fontSmall, color: sub)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                size: 18, color: isDark ? Colors.grey.shade600 : sub),
+          ]),
+        ),
+      );
+    }
+
+    return AlertDialog(
+      backgroundColor: context.cardColor,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        side: BorderSide(
+            color: isDark ? Colors.grey.shade800 : const Color(0xFFE5E7EB)),
+      ),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 8, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+      actionsPadding: const EdgeInsets.fromLTRB(12, 0, 16, 10),
+      title: Row(children: [
+        const Expanded(
+          child: Text('导入掌上锡院专属方案',
+              style: TextStyle(
+                  fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
+        ),
+        IconButton(
+          tooltip: '关闭',
+          icon: Icon(Icons.close_rounded, size: 20, color: context.textTertiary),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ]),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            row(
+              icon: Icons.table_chart_rounded,
+              title: '导入课程方案',
+              hint: '只导入课表，不改当前外观',
+              kind: _BundleImportKind.tables,
+            ),
+            row(
+              icon: Icons.palette_outlined,
+              title: '导入个性化外观方案',
+              hint: '只换配色与显示设置，不碰课表',
+              kind: _BundleImportKind.appearance,
+            ),
+            row(
+              icon: Icons.inventory_2_outlined,
+              title: '导入课表整体方案',
+              hint: '课表 + 外观一起导入',
+              kind: _BundleImportKind.all,
             ),
           ],
         ),

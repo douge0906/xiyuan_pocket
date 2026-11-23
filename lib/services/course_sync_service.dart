@@ -8,6 +8,7 @@ import '../providers/course_provider.dart';
 import 'api_service.dart';
 import 'course_reminder_service.dart';
 import 'course_storage.dart';
+import 'storage_service.dart';
 
 /// 一次课表同步的结果。
 ///
@@ -105,6 +106,18 @@ class CourseSyncService {
         if (item is! Map) continue;
         final c = courseFromRaw(Map<String, dynamic>.from(item));
         if (c != null) parsed.add(c);
+      }
+
+      // 借这次课表同步顺手把姓名落缓存：新生没有成绩记录，成绩查询那条路
+      // 拿不到 `student.xm`，而课表响应里带着 `xsxx`（见 CourseFetcher）。
+      // 放在下面 `parsed.isEmpty` 的失败返回**之前** —— 课表能不能排进格子，
+      // 和「这个人叫什么」是两件事。
+      final student = data['student'];
+      if (student is Map) {
+        final name = (student['xm'] ?? '').toString().trim();
+        if (name.isNotEmpty) {
+          await StorageService.saveStudentName(name);
+        }
       }
 
       // 🔴 失败 ≠ 空：教务没返回课程 → 明确告知，且**不动**已有课表。

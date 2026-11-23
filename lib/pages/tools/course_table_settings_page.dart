@@ -344,6 +344,21 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
     }
   }
 
+  /// 导出「整体方案」：课表 + 当前外观 + 已存外观方案，一个文件全带走。
+  ///
+  /// `CourseTransferService.exportBundle()` 一直存在但**全仓没有调用点**
+  /// （只有 `importBundle()` 被「导入方案」用着），所以「完整方案」这个名字
+  /// 此前只能导不能出。用户 m06905 第 2 条要的三选里补上它。
+  Future<void> _exportBundle() async {
+    try {
+      final n = await CourseTransferService.exportBundle();
+      _toast('已准备整体方案（$n 份课表 + 外观），选择保存位置');
+    } catch (e) {
+      debugPrint('[CourseTableSettings] 导出整体方案失败: $e');
+      _toast('导出失败：$e');
+    }
+  }
+
   /// 导入「完整方案」；也兼容只有课表的旧文件。
   Future<void> _importBundle() async {
     try {
@@ -465,6 +480,41 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       appBar: AppBar(
         title: const Text('课表设置',
             style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
+        // 用户 m06905 第 2 条：右上角导出按钮，向左下方弹三种导出方式。
+        // 页内「完整方案」板块原样保留，两处入口等价（用户要求「做好适配」）。
+        actions: [
+          PopupMenuButton<_ExportKind>(
+            tooltip: '导出方案',
+            icon: const Icon(Icons.ios_share_rounded),
+            // under = 菜单挂在按钮下方、右边缘对齐 → 视觉上向左下方展开
+            position: PopupMenuPosition.under,
+            onSelected: (kind) {
+              switch (kind) {
+                case _ExportKind.tables:
+                  _exportTablesOnly();
+                case _ExportKind.appearance:
+                  _exportAppearanceOnly();
+                case _ExportKind.all:
+                  _exportBundle();
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: _ExportKind.tables,
+                child: Text('导出课程方案'),
+              ),
+              PopupMenuItem(
+                value: _ExportKind.appearance,
+                child: Text('导出个性化外观方案'),
+              ),
+              PopupMenuItem(
+                value: _ExportKind.all,
+                child: Text('导出课表整体方案'),
+              ),
+            ],
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _future,
@@ -1532,3 +1582,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       );
 
 }
+
+/// 右上角导出菜单的三个选项。
+///
+/// 与 [_BundleImportKind] 一一对应：导出分三种，导入也分三种，
+/// 用户看到的名字一致（课程方案 / 个性化外观方案 / 整体方案）。
+enum _ExportKind { tables, appearance, all }

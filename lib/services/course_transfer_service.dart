@@ -260,6 +260,81 @@ class CourseTransferService {
     return (tables: tables.length, appearance: appliedAppearance);
   }
 
+  /// 导入「仅外观」：只把外观设置与已存外观方案搬过来，**一个课表都不碰**。
+  ///
+  /// 认两种文件：
+  /// - `xiyuan.appearance`：`exportAppearance()` 产出的纯外观文件
+  /// - `xiyuan.bundle`：完整方案文件，只取里面的 appearance / appearancePresets
+  ///
+  /// 为什么单独开一个而不是复用 [importBundle]：完整方案文件里带着课表，
+  /// 用户如果只想先看看这套配色，用 importBundle 会顺手把课表也写进去、
+  /// 覆盖掉对方已有的课表。这个函数保证「导入外观」这件事没有课表副作用。
+  ///
+  /// 返回带入的外观项数（0 表示文件里没有外观）。
+  static Future<int> importAppearance() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return 0;
+
+    final pickedFile = picked.files.first;
+    final bytes = pickedFile.bytes ??
+        (pickedFile.path == null
+            ? null
+            : await File(pickedFile.path!).readAsBytes());
+    if (bytes == null) throw const CourseTransferException('无法读取文件');
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(utf8.decode(bytes));
+    } catch (_) {
+      throw const CourseTransferException('文件不是有效的 JSON');
+    }
+    if (decoded is! Map) throw const CourseTransferException('文件结构不正确');
+    final map = Map<String, dynamic>.from(decoded);
+
+    final sch = '${map['schema'] ?? ''}';
+    if (sch != appearanceSchema && sch != bundleSchema) {
+      throw const CourseTransferException('这不是外观方案文件');
+    }
+    final version = (map['version'] as num?)?.toInt() ?? 0;
+    if (version != formatVersion) {
+      throw CourseTransferException('方案版本不支持：$version');
+    }
+
+    var applied = 0;
+    final appearance = map['appearance'];
+    if (appearance is Map) {
+      final patch = Map<String, dynamic>.from(appearance);
+      if (patch.isNotEmpty) {
+        final display = await CourseStorage.loadDisplaySettings();
+        final merged = <String, dynamic>{...display, ...patch};
+        // 用户主动导入 = 明确选了这套外观，打上标记防止默认方案覆盖回去
+        merged['schemeUserPicked'] = true;
+        await CourseStorage.saveDisplaySettings(merged);
+        CourseStorage.applyDisplayToCache(merged);
+        applied += patch.length;
+      }
+    }
+    final presets = map['appearancePresets'];
+    if (presets is Map && presets.isNotEmpty) {
+      final existing = await CourseStorage.loadAppearancePresets();
+      final merged = <String, Map<String, dynamic>>{...existing};
+      presets.forEach((k, v) {
+        if (v is Map) merged['$k'] = Map<String, dynamic>.from(v);
+      });
+      await CourseStorage.saveAppearancePresets(merged);
+      applied += presets.length;
+    }
+
+    if (applied == 0) {
+      throw const CourseTransferException('文件里没有外观设置');
+    }
+    return applied;
+  }
+
   static Future<int> importTables() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.any,

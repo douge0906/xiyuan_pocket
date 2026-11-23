@@ -267,10 +267,19 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
               : '${d.display} 电费余额 ¥${info.balance!.toStringAsFixed(2)}',
         );
       } else {
-        _snack('已记录 ${d.display}（余额稍后自动获取）');
+        // 查不到也把原因说出来：节流 / 楼栋不在预置表 / 票据失败，这三种
+        // 用户该做的事完全不同（等几秒 / 换楼栋 / 重新登录），一句
+        // 「余额稍后自动获取」让人除了干等没有别的选择。
+        final reason = DormService.lastLoginError.trim();
+        _snack(reason.isEmpty
+            ? '已记录 ${d.display}（余额稍后自动获取）'
+            : '已记录 ${d.display}，电费：$reason');
       }
-    } catch (_) {
-      _snack('已记录 ${d.display}');
+    } catch (err) {
+      final reason = DormService.lastLoginError.trim();
+      _snack(reason.isEmpty
+          ? '已记录 ${d.display}'
+          : '已记录 ${d.display}，电费：$reason');
     }
   }
 
@@ -503,6 +512,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
             r.ok ? LoginSyncStatus.done : LoginSyncStatus.failed,
             note: r.ok ? '${r.totalCourses} 门课' : r.message,
           );
+          // 课表同步会顺手把姓名写进缓存（含新生），这里立刻读回来显示，
+          // 否则要等下次冷启动 _load() 才看得到。
+          if (r.ok) unawaited(_reloadStudentName());
         }).catchError((Object e) {
           LoginSyncProgress.failed(LoginSyncStep.courses, note: '网络异常');
         }).whenComplete(
@@ -539,6 +551,20 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   /// 正方教务的成绩行里没有学生信息。**不弹错、不阻塞**。
   Future<void> _ensureStudentName() async {
     if (!_loggedIn || _studentName.isNotEmpty) return;
+
+    // 先看缓存：课表同步会把课表响应里的 `xsxx.XM` 落进 `student_name`
+    // （见 CourseSyncService.sync），新生没有成绩记录也能拿到姓名。
+    // 不先读这一步的话，新生这个方法是必空的 —— 成绩查询那条路对他们无效。
+    try {
+      final cached = await StorageService.loadStudentName();
+      if (cached.isNotEmpty) {
+        if (mounted) setState(() => _studentName = cached);
+        return;
+      }
+    } catch (_) {
+      // 读缓存失败不阻塞下面的成绩查询
+    }
+
     try {
       final info = await ApiService.tryFetchStudentInfo();
       final name = (info?['xm'] ?? '').toString().trim();
@@ -547,6 +573,20 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       if (mounted) setState(() => _studentName = name);
     } catch (_) {
       // 静默：姓名只是展示信息，拿不到不影响任何功能
+    }
+  }
+
+  /// 登录成功、课表同步成功后，从缓存重读姓名并刷新。
+  ///
+  /// `_load()` 只在页面初始化时读一次缓存，而登录在它之后 —— 不补这一步，
+  /// 新生要冷启动一次才看得到自己的名字。
+  Future<void> _reloadStudentName() async {
+    if (!mounted || _studentName.isNotEmpty) return;
+    try {
+      final name = await StorageService.loadStudentName();
+      if (name.isNotEmpty && mounted) setState(() => _studentName = name);
+    } catch (_) {
+      // 静默
     }
   }
 
@@ -961,6 +1001,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                       return _widgetEntry(
                         icon: Icons.widgets_rounded,
                         title: '桌面小组件',
+                        subtitle: added > 0
+                            ? '已添加 $added / 3 个，点进去可以换样式'
+                            : '把课表、考试、余额放到桌面，不用打开 App',
                         installed: added > 0,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -977,6 +1020,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     child: _widgetEntry(
                       icon: Icons.people_alt_rounded,
                       title: '邀请同学',
+                      // 与 invite/invite_page.dart 里那句措辞保持一致：
+                      // 服务端 resource_invite_bonus_per_invite 默认 10。
+                      subtitle: '每成功邀请 1 人，资源中心每日下载额度 +10 次',
                       installed: null,
                       onTap: () => _openInvite(context),
                     ),
