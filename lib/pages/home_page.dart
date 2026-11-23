@@ -9,6 +9,9 @@ import '../models/todo.dart';
 import '../repositories/todo_repository.dart';
 import '../providers/course_provider.dart';
 import '../services/course_todo_service.dart';
+// 学习通同步：启动时顺手检查一次（服务内部有 6 小时间隔与开关判断，
+// 未绑定/已关闭/距上次不足 6 小时都会直接返回，不发任何请求）。
+import '../services/chaoxing/chaoxing_sync_service.dart';
 import '../services/storage_service.dart';
 import '../services/app_locale.dart';
 import '../services/course_storage.dart';
@@ -121,6 +124,15 @@ class HomePageState extends ConsumerState<HomePage>
     // 放到首帧之后：不要和首屏的当天加载抢同一把锁，否则首屏要多等 7 天。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       CourseTodoService.syncCoursesForWeek(_selectedDate);
+      // 学习通同步：放这里是为了不跟首屏抢 IO，也不阻塞 runApp。
+      // 服务自己会判断「有没有绑定 / 开关关没关 / 距上次是否满 6 小时」，
+      // 三个条件任一不满足就直接返回，平时连一次网络请求都不会发。
+      unawaited(ChaoxingSyncService.syncIfDue().then((r) {
+        if (r == null || r.error != null || !mounted) return;
+        // 只有真的写入了东西才提示，否则每次冷启动都弹一条「没有新的」很吵。
+        if (r.addedTodos == 0 && r.exams == 0) return;
+        setState(() {});
+      }));
     });
     _rescheduleAll();
     _loadOverview();
@@ -492,6 +504,11 @@ class HomePageState extends ConsumerState<HomePage>
     if (todo.id.startsWith('course_')) {
       await CourseTodoService.suppress(todo.id, todo.date);
     }
+    // 学习通同步来的待办同理：不登记抑制键的话，下次同步会原样重建一条，
+    // 用户看到的就是「删了又回来」—— 课程待办当年栽过的同一个坑。
+    if (todo.id.startsWith(ChaoxingSyncService.todoIdPrefix)) {
+      await ChaoxingSyncService.suppress(todo.id, todo.date);
+    }
     await TodoRepository.instance.delete(todo);
     _load(); // 从存储重新加载，确保持久化生效
     _loadOverview();
@@ -509,6 +526,9 @@ class HomePageState extends ConsumerState<HomePage>
               // 反着来的话，中间窗口里同步会把它当成「用户不要了」跳过。
               if (todo.id.startsWith('course_')) {
                 await CourseTodoService.unsuppress(todo.id, todo.date);
+              }
+              if (todo.id.startsWith(ChaoxingSyncService.todoIdPrefix)) {
+                await ChaoxingSyncService.unsuppress(todo.id, todo.date);
               }
               await TodoRepository.instance.add(todo);
               await _load();

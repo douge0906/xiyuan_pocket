@@ -8,7 +8,13 @@ class InfoColumn {
   final String name;
   final String host;
   final String listUrl;
-  final String kind; // main / xgc / tw_list
+  /// 列表页模板。**5 种**，必须分别解析：
+  ///   · `main`    —— 主站三栏目（`<div class="time">` + `<a title>`）
+  ///   · `xgc`     —— 学工处（`<p class="day">` + 英文月）
+  ///   · `tw_list` —— 团委子栏（`<span>日期</span><a><em>标题</em></a>`）
+  ///   · `li_block`—— 教务处/图书馆那套（`<li>` + `<a>` + `<span>日期</span>`）
+  ///   · `dd_block`—— 信息化中心（`<dd>` + `<a class="fl">` + `<span class="fr">`）
+  final String kind; // main / xgc / tw_list / li_block / dd_block
   final String pagePattern;
 
   const InfoColumn({
@@ -80,6 +86,35 @@ class CampusInfoCrawler {
       kind: 'tw_list',
       pagePattern: 'https://tw.cwxu.edu.cn/index/tzgg/{n}.htm',
     ),
+    // ---- 2026-11-23 新增三栏（都实测过：首页 200、模板已比对、翻页链接存在） ----
+    InfoColumn(
+      id: 'xkjs',
+      name: '学科竞赛',
+      host: 'https://jwc.cwxu.edu.cn',
+      listUrl: 'https://jwc.cwxu.edu.cn/cxcy/xkjs.htm',
+      kind: 'li_block',
+      // 实测：每页 12 条、共 338 条、翻页 `xkjs/{n}.htm`（首页最大页 28）
+      pagePattern: 'https://jwc.cwxu.edu.cn/cxcy/xkjs/{n}.htm',
+    ),
+    InfoColumn(
+      id: 'library',
+      name: '图书馆',
+      host: 'https://lib.cwxu.edu.cn',
+      listUrl: 'https://lib.cwxu.edu.cn/index/tzgg.htm',
+      kind: 'li_block',
+      // 实测：15 条/页、翻页 `tzgg/{n}.htm`（最大页 21）；
+      // ⚠️ 这一栏的日期是 `YYYY/MM/DD`（斜杠），其余栏目是短横线 —— 解析里两种都收。
+      pagePattern: 'https://lib.cwxu.edu.cn/index/tzgg/{n}.htm',
+    ),
+    InfoColumn(
+      id: 'nic',
+      name: '校园网与一卡通',
+      host: 'https://nic.cwxu.edu.cn',
+      listUrl: 'https://nic.cwxu.edu.cn/index/tzgg.htm',
+      kind: 'dd_block',
+      // 实测：10 条/页、共 84 条、翻页 `tzgg/{n}.htm`（最大页 8）
+      pagePattern: 'https://nic.cwxu.edu.cn/index/tzgg/{n}.htm',
+    ),
   ];
 
   static InfoColumn? columnById(String id) {
@@ -123,7 +158,7 @@ class CampusInfoCrawler {
 
     // 翻页（页码越大越新 → 从最大页往小翻，得到从最新连续往旧的一段）
     if (col.pagePattern.isNotEmpty && items.length < targetItems) {
-      final maxp = _detectMaxPage(html);
+      final maxp = _detectMaxPage(html, col);
       var pages = 1; // 首页已算一页
       var failures = 0;
       for (var n = maxp; n >= 1; n--) {
@@ -164,6 +199,10 @@ class CampusInfoCrawler {
         return _parseXgc(html, host);
       case 'tw_list':
         return _parseTwList(html, host);
+      case 'li_block':
+        return _parseLiBlock(html, host);
+      case 'dd_block':
+        return _parseNic(html, host);
       default:
         return _parseMain(html, host);
     }
@@ -276,6 +315,85 @@ class CampusInfoCrawler {
     return out;
   }
 
+  /// 教务处 / 图书馆那一套：`<li>` 里放 `<a href>`，日期在 `<span>`。
+  ///
+  /// 两种变体一次收掉：
+  ///   · `<a><em>标题</em><span>2026-11-23</span></a>`（教务处/学科竞赛，span 在 a 内）
+  ///   · `<a>标题</a><span>2026/11/23</span>`          （图书馆，span 在 a 外）
+  /// ⇒ 日期从**整个 li 块**里找，标题只从 `<a>` 里取（有 em 用 em，没有就剥掉 span）。
+  static List<NoticeItem> _parseLiBlock(String html, String host) {
+    final out = <NoticeItem>[];
+    final aRe = RegExp(r'''<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)</a>''',
+        dotAll: true, caseSensitive: false);
+    final emRe = RegExp(r'<em[^>]*>(.*?)</em>', dotAll: true, caseSensitive: false);
+    final spanRe =
+        RegExp(r'<span[^>]*>.*?</span>', dotAll: true, caseSensitive: false);
+    final dateRe = RegExp(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})');
+
+    for (final block in _splitItems(html)) {
+      final am = aRe.firstMatch(block);
+      if (am == null) continue;
+      final href = am.group(1)!.trim();
+      if (href.isEmpty || href == '#' || href.contains('index.htm')) continue;
+
+      final dm = dateRe.firstMatch(block);
+      if (dm == null) continue;
+
+      final em = emRe.firstMatch(am.group(2)!);
+      var title = em != null
+          ? CampusWeb.stripTags(em.group(1)!)
+          : CampusWeb.stripTags(am.group(2)!.replaceAll(spanRe, ''));
+      title = title.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (title.length < 6) continue;
+      if (title.length > 80) title = title.substring(0, 80);
+
+      final url = CampusWeb.resolveUrl(href, host);
+      out.add(NoticeItem(
+        id: _noticeId(url),
+        title: title,
+        date: '${dm.group(1)}-${dm.group(2)!.padLeft(2, '0')}-'
+            '${dm.group(3)!.padLeft(2, '0')}',
+        url: url,
+      ));
+    }
+    return out;
+  }
+
+  /// 信息化中心那一套：`<dd id="line_u8_N"><a class="fl">标题</a><span class="fr">日期</span></dd>`。
+  ///
+  /// ⚠️ 这一栏**不是 `<li>`**，[_splitItems] 切不到，必须按 `<dd>` 切。
+  static List<NoticeItem> _parseNic(String html, String host) {
+    final out = <NoticeItem>[];
+    final aRe = RegExp(r'''<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)</a>''',
+        dotAll: true, caseSensitive: false);
+    final dateRe = RegExp(r'(\d{4})-(\d{1,2})-(\d{1,2})');
+
+    for (final block in _splitItemsByTag(html, 'dd')) {
+      final am = aRe.firstMatch(block);
+      if (am == null) continue;
+      final href = am.group(1)!.trim();
+      if (href.isEmpty || href == '#' || href.contains('index.htm')) continue;
+
+      final dm = dateRe.firstMatch(block);
+      if (dm == null) continue;
+
+      var title = CampusWeb.stripTags(am.group(2)!);
+      title = title.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (title.length < 6) continue;
+      if (title.length > 80) title = title.substring(0, 80);
+
+      final url = CampusWeb.resolveUrl(href, host);
+      out.add(NoticeItem(
+        id: _noticeId(url),
+        title: title,
+        date: '${dm.group(1)}-${dm.group(2)!.padLeft(2, '0')}-'
+            '${dm.group(3)!.padLeft(2, '0')}',
+        url: url,
+      ));
+    }
+    return out;
+  }
+
   /// 抓详情（复用教务处那套：标题/日期/正文 Markdown/附件）。
   static Future<NoticeDetail?> fetchDetail({
     required Future<Object?> Function(String, Map<String, String>) fetcher,
@@ -288,11 +406,14 @@ class CampusInfoCrawler {
   // ---------- 内部工具 ----------
 
   /// 按 `<li>` 切分（**必须**，否则日期会配错条目）。
-  static List<String> _splitItems(String html) => RegExp(r'<li[^>]*>(.*?)</li>',
-          dotAll: true, caseSensitive: false)
-      .allMatches(html)
-      .map((m) => m.group(1)!)
-      .toList();
+  static List<String> _splitItems(String html) => _splitItemsByTag(html, 'li');
+
+  /// 按任意标签切分（信息化中心那栏用的是 `<dd>`）。
+  static List<String> _splitItemsByTag(String html, String tag) =>
+      RegExp('<$tag[^>]*>(.*?)</$tag>', dotAll: true, caseSensitive: false)
+          .allMatches(html)
+          .map((m) => m.group(1)!)
+          .toList();
 
   /// 标题优先级：title 属性 → h2 → em → 纯文本。
   static String _pickTitle(String attrs, String inner) {
@@ -328,10 +449,26 @@ class CampusInfoCrawler {
     return s.length > 40 ? s.substring(s.length - 40) : s;
   }
 
-  static int _detectMaxPage(String html) {
-    final tp = RegExp(r'totalpage=(\d+)').allMatches(html).map((m) => int.tryParse(m.group(1)!) ?? 0);
+  /// 从首页里的翻页链接推最大页码（页码越大越新）。
+  ///
+  /// 🔴 以前这里把路径段**写死**成 `(?:xyyw|xykx|tzgg)`。2026-11-23 加「学科竞赛」
+  /// 时它的路径是 `xkjs/{n}.htm`，写死的正则一条也匹配不到 → 永远只抓到首页
+  /// （用户看到的就是「这一栏只有 12 条」）。现在从栏目自己的
+  /// [InfoColumn.pagePattern] 里取出 `{n}` 前面那段路径名现拼正则，
+  /// 以后加栏目不用再改这个函数。
+  static int _detectMaxPage(String html, InfoColumn col) {
+    final tp = RegExp(r'totalpage=(\d+)')
+        .allMatches(html)
+        .map((m) => int.tryParse(m.group(1)!) ?? 0);
     if (tp.isNotEmpty) return tp.reduce((a, b) => a > b ? a : b);
-    final nums = RegExp(r'(?:xyyw|xykx|tzgg)/(\d+)\.htm')
+
+    if (col.pagePattern.isEmpty) return 1;
+    final seg = RegExp(r'([A-Za-z0-9_]+)/\{n\}')
+        .firstMatch(col.pagePattern)
+        ?.group(1);
+    if (seg == null || seg.isEmpty) return 1;
+
+    final nums = RegExp('$seg/(\\d+)\\.htm')
         .allMatches(html)
         .map((m) => int.tryParse(m.group(1)!) ?? 0);
     if (nums.isEmpty) return 1;

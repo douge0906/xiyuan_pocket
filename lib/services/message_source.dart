@@ -123,6 +123,20 @@ abstract class MessageSource {
 /// 统一成短 id 后已读键、档案键、页签索引全都用同一个值，不必再维护映射表。
 const String kJwcChannelId = 'jwc';
 
+/// 「每日消息」—— 汇总视图，**不是可订阅栏目**。
+///
+/// 它不出现在订阅面板里（那里面是「去哪儿抓」的清单），也不写自己的档案；
+/// 它只把已订阅栏目近几天的条目合并显示。详见 [DailyDigestSource]。
+const String kDailyChannelId = 'daily';
+
+/// 「每日消息」栏目的定义（固定排在最前面）。
+const MessageChannel kDailyChannel = MessageChannel(
+  id: kDailyChannelId,
+  name: '每日消息',
+  desc: '近 3 天各栏目的新消息汇总',
+  badge: '每日消息',
+);
+
 /// 站点每页**最少**给多少条 —— 把「用户填的条数」换算成「页码预算」时用。
 ///
 /// ## 为什么是 8（2026-10-08 逐页实测）

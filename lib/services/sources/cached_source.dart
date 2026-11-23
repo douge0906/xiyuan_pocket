@@ -64,6 +64,13 @@ abstract class CachedMessageSource implements MessageSource {
   /// 抓取失败时页面上显示的名字。
   String get displayName => channel.name;
 
+  /// **纯本地源**（一个请求都不发）。
+  ///
+  /// 用途：批量更新时把这类源排到**最后**跑 —— 它读的是别人的档案，
+  /// 排在前面就会拿到本轮还没刷新的旧数据（表现为「每日消息里没有
+  /// 刚在教务处刷出来的新公告」）。目前只有「每日消息」是纯本地源。
+  bool get isLocalOnly => false;
+
   /// 本机档案里**有没有东西**（**不联网**）。
   ///
   /// 用途：批量更新时先判断「这个源值不值得读一趟档案」。

@@ -10,12 +10,19 @@ import 'cached_source.dart';
 /// 列表、已读、搜索与详情容器，不另做页面。
 const String kControlAnnouncementChannelId = 'control_notice';
 
+/// ⚠️ **名称 2026-11-23 从「公告」改成「应用公告」**，id 一个字没动。
+///
+/// 理由：消息页同时存在「教务处」「校园要闻」等六七个栏目，一个页签只叫
+/// 「公告」时，用户分不清它是**学校**发的通知还是**这个 App** 发的维护通知
+/// （实测内容全是「内测群」「版本更新」这类）。改名后一眼能对上。
+/// 🔴 只改 name/badge，**绝不能改 id** —— id 是订阅集合的键，
+/// 改 id 等于把老用户的订阅清空。
 const MessageChannel kControlAnnouncementChannel = MessageChannel(
   id: kControlAnnouncementChannelId,
-  name: '公告',
-  desc: '掌上锡院公告与维护通知',
+  name: '应用公告',
+  desc: '掌上锡院自身的版本更新与维护通知',
   defaultSubscribed: true,
-  badge: '公告',
+  badge: '应用公告',
 );
 
 class ControlAnnouncementSource extends CachedMessageSource {

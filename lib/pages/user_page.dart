@@ -998,13 +998,14 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                       final added = (_widgetInstalled == true ? 1 : 0) +
                           (_examWidgetInstalled == true ? 1 : 0) +
                           (_cardWidgetInstalled == true ? 1 : 0);
+                      // 2026-11-23：副标题按用户要求去掉 —— 右侧的
+                      // 「已添加 / 未添加」胶囊已经把状态说清了，再加一行
+                      // 小字只是把行高从 42 撑到 62，卡片显得空。
                       return _widgetEntry(
                         icon: Icons.widgets_rounded,
                         title: '桌面小组件',
-                        subtitle: added > 0
-                            ? '已添加 $added / 3 个，点进去可以换样式'
-                            : '把课表、考试、余额放到桌面，不用打开 App',
                         installed: added > 0,
+                        compact: true,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => const WidgetHubPage(),
@@ -1020,10 +1021,11 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                     child: _widgetEntry(
                       icon: Icons.people_alt_rounded,
                       title: '邀请同学',
-                      // 与 invite/invite_page.dart 里那句措辞保持一致：
-                      // 服务端 resource_invite_bonus_per_invite 默认 10。
-                      subtitle: '每成功邀请 1 人，资源中心每日下载额度 +10 次',
+                      // 额度规则（+10 次/人）不再写在这里：入口页负责「拉人」，
+                      // 规则留给 invite_page 说明，入口只放一句轻的话。
+                      subtitle: '让更多人使用到掌上锡院吧！',
                       installed: null,
+                      compact: true,
                       onTap: () => _openInvite(context),
                     ),
                   ),
@@ -1097,28 +1099,33 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   ///
   /// **不加内边距** —— 行内的分割线要左右贯通到卡片边缘；左右留白由每行自己控制。
   /// 否则「一行文字的卡片」会凭空多出 32px 高，整页显得很空。
+  /// [compact] 压缩上下留白：无副标题的单行入口（桌面小组件 / 邀请同学）
+  /// 用默认的 13 上下留白会显得空旷 —— 一行正文只有 20 高，撑成 42+26=68
+  /// 的卡片高度，四周全是空的。这两个入口传 true，其余调用点不受影响。
   Widget _widgetEntry({
     required IconData icon,
     required String title,
     String? subtitle,
     required bool? installed,
     required VoidCallback onTap,
+    bool compact = false,
   }) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 13, 10, 13),
+        padding: EdgeInsets.fromLTRB(14, compact ? 8 : 13, 10, compact ? 8 : 13),
         child: Row(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: compact ? 36 : 42,
+              height: compact ? 36 : 42,
               decoration: BoxDecoration(
                 color: AppTheme.primaryColor.withValues(alpha: .10),
                 borderRadius: BorderRadius.circular(AppTheme.radiusSm),
               ),
-              child: Icon(icon, size: 22, color: AppTheme.primaryColor),
+              child: Icon(icon,
+                  size: compact ? 19 : 22, color: AppTheme.primaryColor),
             ),
             const SizedBox(width: 12),
             Expanded(

@@ -11,6 +11,7 @@ import '../pages/tools/xyl_calendar_page.dart';
 import '../pages/tools/textbook_page.dart';
 import '../pages/tools/campus_map_page.dart';
 import '../pages/tools/handbook_page.dart';
+import '../pages/tools/chaoxing_sync_page.dart';
 import '../pages/countdown_page.dart';
 
 /// 全 App 共用的工具跳转逻辑（服务页复用）。
@@ -28,6 +29,9 @@ class ToolNavigator {
     'textbook',
     'my_study',
     'library',
+    // 学习通同步：要先把学校账号登进来（App 的登录闸门），
+    // 进页面后它自己再要一份学习通账号。两道门是分开的。
+    'chaoxing_sync',
   };
 
   static Future<void> open(
@@ -91,6 +95,11 @@ class ToolNavigator {
       // 桌面倒数日组件点击会落到 default 弹「该工具正在开发中」——
       // 用户从来没从组件真正进过倒数日页（用户 m24495 #3 报的
       // 「载入窗口小组件时出现问题」就是这个）。
+      // 学习通同步：独立的服务项页面（绑定 / 同步 / 解绑都在页内）。
+      case 'chaoxing_sync':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const ChaoxingSyncPage()));
+        break;
       case 'countdown':
         Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => CountdownPage(

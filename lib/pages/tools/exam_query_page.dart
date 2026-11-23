@@ -16,6 +16,8 @@ import '../../widgets/loading_overlay.dart';
 import '../../widgets/semester_picker.dart';
 import '../../widgets/site_links.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/course_date_picker.dart';
+import '../../widgets/course_time_picker.dart';
 
 /// 考试安排（v2.4.5 起与「成绩查询」彻底分开，各自独立页面）。
 ///
@@ -252,11 +254,14 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
         readOnly: true,
         onTap: () async {
           final now = DateTime.tryParse(ctl.text.trim()) ?? DateTime.now();
-          final d = await showDatePicker(
+          // App 内自制选择器（同 course_date_picker.dart 的主题化对话框），
+          // 系统那个的圆角/配色/字号都不跟主题走，和旁边的输入框格格不入。
+          final d = await showCourseDatePicker(
             context: ctx,
             initialDate: now,
             firstDate: DateTime(2000),
             lastDate: DateTime(2100),
+            helpText: '选择考试日期',
           );
           if (d != null) ctl.text = _fmtDate(d);
         },
@@ -286,9 +291,12 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
         controller: ctl,
         readOnly: true,
         onTap: () async {
-          final t = await showTimePicker(
+          // 同样是自制滚轮（course_time_picker.dart）：系统 showTimePicker
+          // 是 Material 3 表盘，配色与圆角跟 App 完全不搭。
+          final t = await showCourseTimePicker(
             context: ctx,
             initialTime: initial ?? TimeOfDay.now(),
+            helpText: hint,
           );
           if (t != null) ctl.text = _fmtTime(t);
         },
