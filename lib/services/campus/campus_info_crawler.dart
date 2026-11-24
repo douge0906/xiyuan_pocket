@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'campus_http_fetcher.dart' show CampusFetchException;
 import 'campus_web.dart';
 import 'jwc_crawler.dart' show NoticeItem, NoticeDetail;
@@ -8,7 +10,7 @@ class InfoColumn {
   final String name;
   final String host;
   final String listUrl;
-  /// 列表页模板。**5 种**，必须分别解析：
+  /// 列表页模板。**5 种**（9 个栏目按这 5 种模板归并），必须分别解析：
   ///   · `main`    —— 主站三栏目（`<div class="time">` + `<a title>`）
   ///   · `xgc`     —— 学工处（`<p class="day">` + 英文月）
   ///   · `tw_list` —— 团委子栏（`<span>日期</span><a><em>标题</em></a>`）
@@ -107,6 +109,30 @@ class CampusInfoCrawler {
       pagePattern: 'https://lib.cwxu.edu.cn/index/tzgg/{n}.htm',
     ),
     InfoColumn(
+      // 讲座与学术报告：日期结构与 `main` 模板逐字段一致
+      // （`<div class="time"><p>日</p><p>年-月</p></div>`），所以零改动复用
+      // `_parseMain`，只有翻页前缀是 `xsdt1/{n}.htm`。
+      // 内容全是「鼎新大讲堂第 N 期」「明湖人才·科技沙龙」，学生能直接去的活动。
+      id: 'xsdt',
+      name: '讲座与学术',
+      host: _mainHost,
+      listUrl: '$_mainHost/index/xsdt1.htm',
+      kind: 'main',
+      pagePattern: '$_mainHost/index/xsdt1/{n}.htm',
+    ),
+    InfoColumn(
+      // 奖学金与资助：模板与学工处主栏同一个（`<p class="day">日</p>` +
+      // `<p class="month">英文月</p>`），所以 kind 也复用 `xgc`。
+      // 单独成栏而不是并进「学工处」的理由：实测两页 10 条里只重复 2 条，
+      // 而这里的每一条都带截止时间与金额，漏看一条可能直接损失一笔钱。
+      id: 'zzgl',
+      name: '奖学金与资助',
+      host: 'https://xgc.cwxu.edu.cn',
+      listUrl: 'https://xgc.cwxu.edu.cn/xszz1/tzgg.htm',
+      kind: 'xgc',
+      pagePattern: 'https://xgc.cwxu.edu.cn/xszz1/tzgg/{n}.htm',
+    ),
+    InfoColumn(
       id: 'nic',
       name: '校园网与一卡通',
       host: 'https://nic.cwxu.edu.cn',
@@ -193,6 +219,16 @@ class CampusInfoCrawler {
   }
 
   /// 按模板类型分派解析。
+  /// 只给测试用的入口：把一份已经抓下来的 HTML 按模板解析。
+  ///
+  /// 生产路径永远走 [fetchList]；这个包装存在的唯一理由是单测里不该联网，
+  /// 但又必须验证「新栏目页面的真实结构能被解析」—— 各校二级站点模板漂移
+  /// 是本模块历史上最容易静默出错的点。
+  @visibleForTesting
+  static List<NoticeItem> debugParse(
+          String kind, String html, String host) =>
+      _parse(kind, html, host);
+
   static List<NoticeItem> _parse(String kind, String html, String host) {
     switch (kind) {
       case 'xgc':

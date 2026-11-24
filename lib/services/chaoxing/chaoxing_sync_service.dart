@@ -69,6 +69,13 @@ class ChaoxingSyncService {
   /// 用户主动删除过的学习通待办，键与同步层同一套（见 [_idOn]）。
   static const String _kSuppressed = 'chaoxing_todo_suppressed_v1';
 
+  /// 最近一次抓到的作业 / 考试列表（JSON 数组）。
+  ///
+  /// 存它们的唯一理由是**让页面秒开**：进页面先用它渲染，同步完成再覆盖。
+  /// 不存的话每次进页面都是空白 + 转圈，而这份数据一小时前和现在几乎没差别。
+  static const String _kWorks = 'chaoxing_works_v1';
+  static const String _kExamsCache = 'chaoxing_exams_cache_v1';
+
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   /// 待办 id 前缀。`home_page` 的删除流程据此决定要不要登记抑制键。
@@ -354,6 +361,60 @@ class ChaoxingSyncService {
   /// 到点才同步：距上次同步超过 [minInterval] 才真的跑。
   ///
   /// 由课表/首页这类「用户本来就会打开的页面」顺手触发，不注册任何后台任务。
+  /// 最近一次同步抓到的**作业**（不只是进待办的那些）。
+  ///
+  /// 页面要展示全貌：待做的排前面，交完的、过期的也要能看到，否则用户
+  /// 会以为「我明明交过这次的作业，怎么列表里没有」。
+  static Future<List<CxTaskRow>> works() async {
+    final sp = await SharedPreferences.getInstance();
+    return _decodeRows(sp.getString(_kWorks));
+  }
+
+  /// 最近一次同步抓到的**考试**。
+  static Future<List<CxTaskRow>> exams() async {
+    final sp = await SharedPreferences.getInstance();
+    return _decodeRows(sp.getString(_kExamsCache));
+  }
+
+  static List<CxTaskRow> _decodeRows(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      final out = <CxTaskRow>[];
+      for (final item in decoded) {
+        if (item is! Map) continue;
+        out.add(CxTaskRow.fromJson(item.cast<String, dynamic>()));
+      }
+      return out;
+    } catch (_) {
+      // 缓存坏了就当没有 —— 它只负责秒开，不是真相来源。
+      return const [];
+    }
+  }
+
+  /// 把本轮抓到的原始条目落盘（页面秒开用）。
+  ///
+  /// ⚠️ 传进来的必须是**归一化之前**的原始 `ChaoxingTaskItem` 列表：
+  /// 页面上要显示「已批阅 95 分」这种真实状态，而写待办那条链已经把
+  /// 状态压成了三态。所以同步时两条数据流分开走，这里存全貌。
+  static Future<void> _saveRows(String key, List<CxTaskRow> rows) async {
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString(key, jsonEncode([for (final r in rows) r.toJson()]));
+    } catch (_) {}
+  }
+
+  static CxTaskRow _toRow(ChaoxingTaskItem t) => CxTaskRow(
+        id: t.id,
+        title: t.title,
+        courseName: t.courseName,
+        type: t.type,
+        status: t.status,
+        deadline: t.endTime.millisecondsSinceEpoch > 0 ? t.endTime : null,
+        url: t.doTaskUrl,
+      );
+
   static Future<ChaoxingSyncResult?> syncIfDue({
     Duration minInterval = const Duration(hours: 6),
   }) async {
@@ -397,6 +458,17 @@ class ChaoxingSyncService {
 
     final todos = await _writeTodos(items);
     final exams = await _writeExams(items);
+    // 全貌落盘（页面秒开用）。刻意放在写待办/考试**之后**：
+    // 那两步可能因为 IO 失败提前抛，宁可缓存不更新，也不要在业务动作
+    // 没做完的时候就告诉用户「已同步」。
+    await _saveRows(_kWorks, [
+      for (final t in items)
+        if (t.type == 'work') _toRow(t),
+    ]);
+    await _saveRows(_kExamsCache, [
+      for (final t in items)
+        if (t.type == 'exam') _toRow(t),
+    ]);
     final summary = _summaryOf(todos, exams);
     await _recordSync(summary);
     return ChaoxingSyncResult(
@@ -521,6 +593,68 @@ class ChaoxingSyncService {
   /// 「开考/截止」。所以这里做两件事：
   /// - 用正则从文本里尽力捞出一个日期时间；
   /// - 捞不到就交 0，由写入侧决定怎么降级（作业放今天、考试跳过）。
+  // ───────── 学习通 task status 的语义（实测，不是猜的）─────────
+  //
+  // 2026-11-24 用真实账号（37 门课 / 37 条作业 / 3 场考试）把每个 status
+  // 对应的页面原文抓下来核对过，对照表如下：
+  //
+  //   status | 页面上那格显示的       | 真实含义
+  //   -------|------------------------|---------------------------
+  //     1    | <b>做作业</b>          | 待做
+  //     2    | 已过期                 | 过期没交
+  //     3    | 待批阅                 | 交了、等老师批
+  //     4    | 95.0 / 100.0           | 已批阅（数字就是分数）
+  //     5    | --- + 客户端           | 待考（要在客户端里打开）
+  //
+  // ⚠️ 之前用 `<b>` 的文案判断「已完成」，但 `parseWorkList` 只读 `<b>`，
+  // 而 `<b>` **只在 status=1 时存在** —— 其余三种状态的文案全在 `<span>`
+  // 里、被解析器丢掉了。于是 37 条作业**全部**被当成待办写进待办列表，
+  // 包括早交完的，还有已出分的。
+  static const int statusTodo = 1;
+  static const int statusExpired = 2;
+  static const int statusAwaitingReview = 3;
+  static const int statusGraded = 4;
+  static const int statusExamPending = 5;
+
+  // 以下是**本服务内部**的归一化状态，不是超星原始值。
+  //
+  // 为什么要自己再编一套：`ChaoxingTaskItem.status` 的既有契约是
+  // 0=pending / 1=submitted / 2=graded，塞不下「过期没交」这一档；
+  // 而「过期没交」恰恰是最不能进待办的一种（它永远不会再变成「要动手」）。
+  // 归一之后 `_writeTodos` 只放行 [cxTodo]，其余一律不进列表。
+  static const int cxTodo = 0;
+  static const int cxSubmitted = 1;
+  static const int cxGraded = 2;
+  static const int cxOverdue = 3;
+
+  /// 把超星的 `status` 属性映射成本服务的四态。
+  ///
+  /// 唯一可信的是 `status` 属性本身 —— 页面 `<span>` 里的文案（已过期 /
+  /// 待批阅 / 分数）一个都不在 `ChaoxingCourseTask` 里（解析器只读 `<b>`，
+  /// 而 `<b>` 只在 status=1 时存在）。
+  static int _normalizeStatus(ChaoxingCourseTask t) {
+    switch (t.status) {
+      case statusTodo:
+        return cxTodo;
+      case statusExpired:
+        return cxOverdue;
+      case statusAwaitingReview:
+        return cxSubmitted;
+      case statusGraded:
+        return cxGraded;
+      case statusExamPending:
+        // 待考：还没考，对用户来说「要去做」，按待办处理。
+        return cxTodo;
+      default:
+        // status 属性缺失（接口改版）→ 退回文案，但只认明确的「没交」字样。
+        // 认不出来的一律当已提交，**宁可不进待办，也不要把交完的塞进去**。
+        if (t.statusText.contains('做作业') || t.statusText.contains('未交')) {
+          return cxTodo;
+        }
+        return cxSubmitted;
+    }
+  }
+
   static ChaoxingTaskItem _courseTaskToItem(
     ChaoxingCourseTask t, {
     required String courseName,
@@ -528,15 +662,18 @@ class ChaoxingSyncService {
   }) {
     final when = _parseWhen(t.detail) ?? _parseWhen(t.statusText);
     final start = when ?? DateTime.fromMillisecondsSinceEpoch(0);
-    // 状态文案归一：包含「已完成/已交/已批阅」就当交过了。
-    final done = ['已完成', '已交', '已提交', '已批阅', '已评分']
-        .any(t.statusText.contains);
+    // 判据是 status 属性，不是文案（理由见上面的归一化注释）。
+    // 归一值直接写进 `status`：`_writeTodos` 靠 `isPending`（== 0）筛，
+    // 于是「过期没交」这一档天然被挡在待办外面，不用再写一遍日期判断。
+    final normalized = _normalizeStatus(t);
     return ChaoxingTaskItem(
       id: t.url.isNotEmpty ? t.url.hashCode.toRadixString(16) : t.title.hashCode.toRadixString(16),
       title: t.title,
       courseName: courseName,
       type: t.type,
-      status: done ? 1 : 0,
+      status: normalized,
+      // openTime/endTime 在按课 HTML 页这条路上是同一个日期：
+      // 作业页的 `<p>` 只有一个日期（就是截止日），没有开题时间。
       openTime: start,
       endTime: start,
       doTaskUrl: t.url,
@@ -779,6 +916,84 @@ class _ChaoxingCourseRef {
   final String courseId;
   final String classId;
   final String courseName;
+}
+
+/// 页面上要展示的一条作业/考试（同步后落盘、进页面先读它）。
+///
+/// 与 [ChaoxingTaskItem] 的区别：那个是**超星接口的形状**（一堆用不上的
+/// 字段、状态还是原始枚举），这个是**界面真正需要的五样东西**，而且能
+/// 直接 jsonEncode 存盘。两者刻意分开，接口改版时只需改映射函数。
+class CxTaskRow {
+  const CxTaskRow({
+    required this.id,
+    required this.title,
+    required this.courseName,
+    required this.type,
+    required this.status,
+    this.deadline,
+    this.url = '',
+  });
+
+  final String id;
+  final String title;
+  final String courseName;
+
+  /// `work` / `exam`。
+  final String type;
+
+  /// 本服务归一化后的四态：[ChaoxingSyncService.cxTodo] 等。
+  final int status;
+
+  /// 截止（作业）或开考（考试）时间；解析不出来就是 null。
+  final DateTime? deadline;
+
+  /// 点进去在 WebView 里打开的地址。
+  final String url;
+
+  bool get isExam => type == 'exam';
+  bool get isTodo => status == ChaoxingSyncService.cxTodo;
+  bool get isOverdue => status == ChaoxingSyncService.cxOverdue;
+  bool get isGraded => status == ChaoxingSyncService.cxGraded;
+  bool get isSubmitted => status == ChaoxingSyncService.cxSubmitted;
+
+  /// 列表右侧那格的状态字。刻意只有四个词 —— 用户在列表上不该读长句。
+  String get statusLabel {
+    if (isOverdue) return '已过期';
+    if (isGraded) return '已批阅';
+    if (isSubmitted) return '已提交';
+    return isExam ? '待考试' : '待完成';
+  }
+
+  /// 排序键：待办的排最前，然后按截止时间从近到远。
+  /// 没有截止时间的排最后（它们不知道该插在哪儿）。
+  int get sortRank {
+    if (isTodo) return 0;
+    if (isOverdue) return 2;
+    return 1;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'course_name': courseName,
+        'type': type,
+        'status': status,
+        'deadline': deadline?.toIso8601String() ?? '',
+        'url': url,
+      };
+
+  factory CxTaskRow.fromJson(Map<String, dynamic> j) {
+    final raw = (j['deadline'] ?? '').toString();
+    return CxTaskRow(
+      id: (j['id'] ?? '').toString(),
+      title: (j['title'] ?? '').toString(),
+      courseName: (j['course_name'] ?? '').toString(),
+      type: (j['type'] ?? 'work').toString(),
+      status: int.tryParse((j['status'] ?? '0').toString()) ?? 0,
+      deadline: raw.isEmpty ? null : DateTime.tryParse(raw),
+      url: (j['url'] ?? '').toString(),
+    );
+  }
 }
 
 class ChaoxingBindResult {

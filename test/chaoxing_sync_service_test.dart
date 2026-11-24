@@ -125,9 +125,18 @@ void main() {
           File('lib/services/chaoxing/chaoxing_sync_service.dart').readAsStringSync();
       expect(src.contains('fetchTaskFeed'), isTrue);
       expect(src.contains('fetchCourseTasks'), isTrue);
-      // 不允许出现「提交/发送」类方法
-      expect(src.contains('submit'), isFalse);
-      expect(src.contains('.post('), isFalse);
+
+      // 判据必须落在「HTTP 提交调用」上，不能落在「有没有出现这个词」上：
+      // 本服务有 `cxSubmitted` 状态、有解释 status 语义的注释（`1=submitted`），
+      // 还有 `addAll` 这种纯集合操作 —— 按子串判定会全部误杀。
+      // 真正要禁的是**发起写请求**：`.submitXxx(` 或 `.post*(`。
+      final forbiddenCall = RegExp(r'\.\s*(?:submit[A-Za-z]*|post[A-Za-z]*)\s*\(');
+      final hit = forbiddenCall.firstMatch(src);
+      expect(
+        hit,
+        isNull,
+        reason: '同步服务里出现了写请求调用：${hit?.group(0)}',
+      );
     });
   });
 }

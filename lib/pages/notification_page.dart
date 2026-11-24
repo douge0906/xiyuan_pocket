@@ -223,10 +223,22 @@ class _NotificationPageState extends State<NotificationPage>
   /// - 关 → 只读档案（[FetchMode.archive]），**档案为空才兜底抓一次**
   ///   （否则全新安装的用户面对一个空页面，且怎么点都没有内容）。
   ///
-  /// 两条路都会亮同一条更新条、走同一套计时 —— 只是抓不抓网络不同。
-  Future<void> _refreshFromEntry() => _repo.autoRefresh
-      ? _repo.syncAll()
-      : _repo.refreshAll(mode: FetchMode.archive);
+  /// 🔴 两条路都必须 `silent: true`（用户 2026-11-24 报的实机问题：
+  /// 「开启自动刷新时，会触发不加载缓存的重新刷新，影响视觉体验」）。
+  ///
+  /// 进页面这一趟属于「后台补一次网」：本机档案先原样显示，数字悄悄变新。
+  /// 之前传的是非静默，于是每进一次页面就亮更新条、每个源都置 loading，
+  /// 列表先被清成骨架再填回来 —— 用户看到的就是「白闪一下 + 重排」。
+  /// 用户主动下拉刷新走 [_buildChannelContent] 的 RefreshIndicator，
+  /// 那里才是非静默（要看到进度、要拿到「共 N 条」的提示）。
+  /// [silent] 默认 true（后台补一次网，不动界面）。
+  ///
+  /// **只有「用户刚改完订阅」那一处传 false**：那时被新勾上的栏目从没加载过，
+  /// 静默跑会让它先显示「这个栏目还没有消息」，等网络回来才变出内容 ——
+  /// 用户刚点的动作却先得到一句「没有消息」，比转圈更让人困惑。
+  Future<void> _refreshFromEntry({bool silent = true}) => _repo.autoRefresh
+      ? _repo.syncAll(silent: silent)
+      : _repo.refreshAll(mode: FetchMode.archive, silent: silent);
 
   @override
   void dispose() {
@@ -280,10 +292,11 @@ class _NotificationPageState extends State<NotificationPage>
     if (!mounted) return;
     setState(() => _subscribedIds = picked);
     _syncActiveTab();
-    // 新勾上的栏目还是空的（从没加载过）—— 顺手走一次总的更新，别让用户
-    // 切过去看到一个转圈。取消订阅不会走到这里造成多余请求：注册表里已经
-    // 没有那个源了。
-    unawaited(_refreshFromEntry());
+    // 新勾上的栏目还是空的（从没加载过）—— 顺手走一次总的更新。
+    // 这里**必须非静默**：用户刚勾完就想看到东西，转圈是正确反馈；
+    // 静默会让新页签先冒出一句「还没有消息」。取消订阅不会走到这里造成
+    // 多余请求：注册表里已经没有那个源了。
+    unawaited(_refreshFromEntry(silent: false));
   }
 
   /// 让「当前页签」始终有效：被取消订阅后落到第一个栏目。
