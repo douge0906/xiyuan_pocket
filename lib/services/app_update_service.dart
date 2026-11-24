@@ -99,8 +99,14 @@ class AppUpdateService {
   /// 三种结果都必须给反馈：有新版本（弹窗）/ 已是最新（提示）/ 查不到
   /// （提示网络问题），不能静默返回。
   static Future<void> checkManually(BuildContext context) async {
-    if (kIsWeb || !Platform.isAndroid) {
-      if (!kIsWeb) _toast(context, '当前平台不支持检查更新');
+    if (kIsWeb) {
+      // Web 端没有应用商店式更新：版本随网页资源一起发布，
+      // 「更新」等价于「重新加载页面」。这里直接给反馈，不静默返回。
+      await reloadWebPage(context);
+      return;
+    }
+    if (!Platform.isAndroid) {
+      _toast(context, '当前平台不支持检查更新');
       return;
     }
     final release = await ControlService.fetchAppRelease();
@@ -186,6 +192,38 @@ class AppUpdateService {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// Web 端「重新加载页面」。
+  ///
+  /// Web 版没有应用商店式更新：新版本随网页资源一起发布，
+  /// 所以「检查更新」在 Web 上就等于重新拉一次页面。
+  ///
+  /// 这里用已有的 `url_launcher` 把当前地址在**当前标签页**打开
+  /// （`webOnlyWindowName: '_top'`），不引新依赖；也不用 `dart:js_util`
+  /// ——那个只能在 Web 编译，本文件要同时编进安卓包。
+  static Future<void> reloadWebPage(BuildContext context) async {
+    if (!kIsWeb) return;
+    // 先把 messenger 抓出来：await 之后不能再用 BuildContext（lint 会报
+    // use_build_context_synchronously）。
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text('正在重新加载页面…')));
+    var ok = false;
+    try {
+      ok = await launchUrl(
+        Uri.parse(Uri.base.toString()),
+        webOnlyWindowName: '_top',
+      );
+    } catch (_) {
+      ok = false;
+    }
+    if (!ok) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('页面刷新失败，请手动刷新浏览器')));
+    }
   }
 
   static int _compare(String a, String b) {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../pages/balance_detail_pages.dart';
@@ -126,7 +127,8 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     if (_loading || _refreshing) return;
 
     if (!_canQuery) {
-      _error = '未连接校园网';
+      // Web 端不需要校园网：能不能查只取决于控制端在不在线。
+      _error = kIsWeb ? '服务暂不可用' : '未连接校园网';
       if (mounted) setState(() {});
       return;
     }
@@ -273,8 +275,10 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
       //    用户点电费卡片完全没反应（首次使用、校外都会撞上）。
       if (!mounted) return;
       if (!_canQuery) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('未连接校园网，电费需在校园网内查询'),
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(kIsWeb
+              ? '服务暂不可用，请稍后重试'
+              : '未连接校园网，电费需在校园网内查询'),
         ));
         return;
       }
@@ -488,8 +492,12 @@ class UserBalanceCards extends StatelessWidget {
       cardHint = '获取中…';
     } else {
       cardValue = '¥ --';
+      // Web 端没有「校园网」这个概念，写「未连接校园网」只会让用户
+      // 以为要连校园网才能用；这里改成与实际相符的「点击查询 / 重试」。
       cardHint = balanceError ??
-          (campusOnline ? '暂无数据' : '未连接校园网');
+          (campusOnline
+              ? '暂无数据'
+              : (kIsWeb ? '点击查询' : '未连接校园网'));
     }
 
     // 电费：必须先连校园网，再填宿舍号，才查得到。
@@ -509,7 +517,8 @@ class UserBalanceCards extends StatelessWidget {
     } else if (dorm == null) {
       elecHint = '填写宿舍号';
     } else if (!campusOnline) {
-      elecHint = '未连接校园网';
+      // 同上：Web 端不存在「未连接校园网」这个状态。
+      elecHint = kIsWeb ? '服务暂不可用，点击重试' : '未连接校园网';
     } else if (elecLoading) {
       elecHint = '获取中…';
     } else {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -49,11 +50,16 @@ class LegalConsentService {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '使用掌上锡院前，请阅读并同意《隐私政策》和《用户协议》。\n\n'
-                'App 会在你主动使用时，使用学校统一认证账号查询课表、成绩、考试、余额等数据，并保存在本机。\n\n'
-                '不同意将无法进入 App。',
-                style: TextStyle(fontSize: AppTheme.fontBody, height: 1.55),
+              Text(
+                kIsWeb
+                    ? '使用掌上锡院前，请阅读并同意《隐私政策》和《用户协议》。\n\n'
+                      '本网页应用会在你主动使用时，使用学校统一认证账号查询课表、成绩、考试、余额等数据，并保存在本机。\n\n'
+                      '账号密码将发送到服务器代为请求学校系统。\n\n'
+                      '不同意将无法进入本网页应用。'
+                    : '使用掌上锡院前，请阅读并同意《隐私政策》和《用户协议》。\n\n'
+                      'App 会在你主动使用时，使用学校统一认证账号查询课表、成绩、考试、余额等数据，并保存在本机。\n\n'
+                      '不同意将无法进入 App。',
+                style: const TextStyle(fontSize: AppTheme.fontBody, height: 1.55),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -88,8 +94,11 @@ class LegalConsentService {
         ),
         actions: [
           TextButton(
+            // 🔴 Web 端不能「退出」：Flutter Web 没有退出 App 的概念，
+            // 跳离页面等于把用户送离本站（浏览器后退 / 白屏）。
+            // 所以 Web 端只关掉弹窗并留在首页，由调用方（app.dart）决定后续动作。
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('不同意并退出'),
+            child: Text(kIsWeb ? '返回首页' : '不同意并退出'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),

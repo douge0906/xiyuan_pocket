@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app.dart' show AppTabs;
 import 'auth_gate.dart';
 import 'tool_usage_storage.dart';
 import '../pages/tools/grade_query_page.dart';
@@ -42,9 +43,13 @@ class ToolNavigator {
     // 其余工具用不到，保持可选、默认 null，老调用点一行不用改。
     Object? arguments,
   }) async {
-    // ① 需要登录的先过闸门：未登录 → 下方弹横条「请登录后才能使用」，**不跳转**
+    // ① 需要登录的先过闸门：未登录 → 下方弹横条「请登录后才能使用」，
+    //    横条上带「去登录」按钮，点它切到「我的」页（未登录时那一页就是登录页）。
     if (loginRequired.contains(toolId)) {
-      final ok = await AuthGate.ensureLoggedIn(context);
+      final ok = await AuthGate.ensureLoggedIn(
+        context,
+        onGoLogin: AppTabs.goUser,
+      );
       if (!ok) return;
     }
     if (!context.mounted) return;

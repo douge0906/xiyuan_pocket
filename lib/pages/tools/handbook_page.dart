@@ -39,10 +39,15 @@ class _HandbookPageState extends State<HandbookPage> {
     try {
       final d = await HandbookRepository.instance.load();
       if (!mounted) return;
-      setState(() => _data = d);
+      setState(() {
+        _error = null;
+        _data = d;
+      });
     } catch (e) {
+      // 异常原文只留在 debugPrint 里，界面上只给一句用户能看懂的话。
+      debugPrint('[handbook] 载入失败: $e');
       if (!mounted) return;
-      setState(() => _error = '手册数据载入失败：$e');
+      setState(() => _error = '手册数据载入失败，请稍后重试');
     }
   }
 
@@ -64,7 +69,18 @@ class _HandbookPageState extends State<HandbookPage> {
 
   Widget _buildBody(BuildContext context) {
     final err = _error;
-    if (err != null) return _centered(context, Icons.error_outline_rounded, err);
+    if (err != null) {
+      return _centered(
+        context,
+        Icons.error_outline_rounded,
+        err,
+        action: TextButton(
+          onPressed: _load,
+          child: const Text('重试',
+              style: TextStyle(fontSize: AppTheme.fontSmall)),
+        ),
+      );
+    }
     final d = _data;
     if (d == null) {
       return const Center(child: CircularProgressIndicator());
@@ -72,7 +88,9 @@ class _HandbookPageState extends State<HandbookPage> {
     return _home(context, d);
   }
 
-  Widget _centered(BuildContext context, IconData icon, String text) {
+  Widget _centered(BuildContext context, IconData icon, String text,
+      {Widget? action}) {
+    final actionWidget = action;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppTheme.gapXl),
@@ -85,6 +103,10 @@ class _HandbookPageState extends State<HandbookPage> {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     fontSize: AppTheme.fontBody, color: context.textSecondary)),
+            if (actionWidget != null) ...[
+              const SizedBox(height: AppTheme.gapSm),
+              actionWidget,
+            ],
           ],
         ),
       ),

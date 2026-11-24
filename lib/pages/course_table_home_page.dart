@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/course_model.dart';
@@ -445,12 +446,16 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
                   ? '已导入 ${r.tables} 份课表与外观设置'
                   : '已导入 ${r.tables} 份课表（文件里没有外观设置）'));
       }
-    } catch (err) {
+    } on CourseTransferException catch (err) {
       // CourseTransferException 自带可读文案（「不是掌上锡院的方案文件」等），
-      // 直接摊给用户；其他异常也只说一句，不打堆栈到界面上。
+      // 直接摊给用户；其他异常一律只说一句人话，不把异常原文甩给用户。
       debugPrint('[import bundle] 失败: $err');
       if (!mounted) return;
-      _toast('$err'.replaceFirst('Exception: ', ''));
+      _toast(err.message);
+    } catch (err) {
+      debugPrint('[import bundle] 失败: $err');
+      if (!mounted) return;
+      _toast('导入失败，请稍后重试');
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
@@ -506,7 +511,8 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       // 这里必须把内存态拉回磁盘真相，避免界面显示成功而重启后消失。
       debugPrint('[import] PDF 导入失败: $e');
       if (mounted) {
-        _toast('导入失败：$e');
+        // 只给用户一句人话，异常原文只留在 debugPrint 里。
+        _toast('导入失败，请稍后重试');
         await _load();
       }
     } finally {

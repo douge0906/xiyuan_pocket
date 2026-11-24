@@ -22,4 +22,28 @@
 //
 // 另外：Service Worker 版本号那个占位符在这里不再需要（写上去反而会让
 // 构建工具提示 deprecated 的老写法）。
-_flutter.loader.load();
+//
+// 字体回退基址本地化（R5）：
+// Flutter 引擎在遇到系统里没有的字符时，会从 fontFallbackBaseUrl 拉
+// Noto 回退字体，默认基址是 https://fonts.gstatic.com/s/ —— 跨境线路，
+// 国内手机上要么慢要么直接不通，于是中文一直显示成豆腐块。
+// 我们把引擎会用到的 725 个分片镜像到本站 api 站（该段已带
+// Access-Control-Allow-Origin: * 与一年 immutable 缓存），把基址指过去。
+//
+// 注意两个坑：
+// 1) 引擎是用 fetch() 跨域拉字体的，必须对方返回 CORS 头；
+//    本站 api 站的 /static/ 段已经有 Access-Control-Allow-Origin: *。
+// 2) 不能用 window.flutterConfiguration —— 它已被引擎标记 deprecated，
+//    会打弃用警告，而且与 initializeEngine(config) 互斥（引擎里是断言，
+//    同时用直接抛错）。所以走 engineInitializer.initializeEngine(config)。
+//
+// 基址必须带结尾斜杠：引擎是直接拼 prefix + 'notosanssc/v37/xxx.woff2'。
+//
+// loader 收到 config 之后，会在主包注入完成后自动调用
+// engineInitializer.initializeEngine(config) 并 runApp —— 这正是引擎推荐的
+// 新配置通道，不需要我们再包一层 onEntrypointLoaded。
+_flutter.loader.load({
+  config: {
+    fontFallbackBaseUrl: 'https://api.wxxydouge.icu/static/fonts/',
+  },
+});

@@ -553,61 +553,108 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     if (!mounted) return;
     if (start.loggedIn) return;
     final code = await _showCaptchaDialog(start.captchaB64);
-    if (code == null || code.isEmpty) {
-      throw Exception('已取消登录');
-    }
+    // 2026-11-25 Web UX 审查 P1：用户主动取消验证码时**不当作错误**。
+    // 原来这里 throw Exception('已取消登录')，会被 _login() 的 catch 接住并
+    // 渲染成红色报错 —— 用户明明是自己点的取消，却看到一句红色错误。
+    if (code == null || code.isEmpty) return;
     await ApiService.submitWebCaptcha(code);
   }
 
   /// Web 验证码回填弹窗：展示代理取回的验证码图，用户识别后回填。
+  ///
+  /// 软键盘适配（2026-11-25 Web UX 审查 P0）：原来用 AlertDialog，
+  /// 键盘弹起时在窄屏（手机上）验证码输入框会被键盘顶出可视区，用户
+  /// 看不见自己输的内容。这里改成 **居中自定义弹窗**（R8：白底 / 1px 边框 /
+  /// 20 圆角 / 右上角 ×），内容区自己加 `MediaQuery.viewInsets.bottom`
+  /// 避让键盘，并允许整体滚动。
   Future<String?> _showCaptchaDialog(String captchaB64) {
     final ctl = TextEditingController();
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          side: BorderSide(color: context.borderColor),
-        ),
-        title: Row(
-          children: [
-            const Expanded(child: Text('输入验证码')),
-            IconButton(
-              tooltip: '关闭',
-              onPressed: () => Navigator.of(ctx).pop(),
-              icon: Icon(Icons.close_rounded,
-                  size: 20, color: context.textTertiary),
-            ),
-          ],
-        ),
-        content: StatefulBuilder(
-          builder: (ctx, setDlg) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (captchaB64.isNotEmpty)
-                Image.memory(base64Decode(captchaB64), height: 64),
-              const SizedBox(height: 12),
-              TextField(
-                controller: ctl,
-                decoration: const InputDecoration(labelText: '验证码'),
-                textAlign: TextAlign.center,
-                autofocus: true,
+      builder: (ctx) {
+        // 图片 base64 坏了就退化成「没有验证码图」，不让整个登录流程炸掉。
+        Widget captchaImage = const SizedBox.shrink();
+        if (captchaB64.isNotEmpty) {
+          try {
+            captchaImage = Image.memory(base64Decode(captchaB64), height: 64);
+          } catch (_) {
+            captchaImage = const SizedBox(
+              height: 64,
+              child: Center(
+                child: Text(
+                  '验证码图片加载失败，请重新登录',
+                  style: TextStyle(fontSize: AppTheme.fontSmall),
+                ),
               ),
-            ],
+            );
+          }
+        }
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            side: BorderSide(color: context.borderColor),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Padding(
+            // 键盘避让：把可视区被键盘占掉的高度补回来，内容不会被遮住。
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 16,
+              bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '输入验证码',
+                          style: TextStyle(fontSize: AppTheme.fontTitle),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭',
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        icon: Icon(Icons.close_rounded,
+                            size: 20, color: context.textTertiary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  captchaImage,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: ctl,
+                    decoration: const InputDecoration(labelText: '验证码'),
+                    textAlign: TextAlign.center,
+                    autofocus: true,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('取消'),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            Navigator.of(ctx).pop(ctl.text.trim()),
+                        child: const Text('确定'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(ctl.text.trim()),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -736,7 +783,27 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     if (_loading) {
       return Scaffold(
         backgroundColor: context.scaffoldColor,
-        body: const SizedBox.shrink(),
+        // 别再返回空白页（手机上表现为「点了没反应」）：给一个转圈 + 一行小字，
+        // 告诉用户正在拉取本机数据。
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppTheme.primaryColor,
+              ),
+              const SizedBox(height: AppTheme.gapMd),
+              Text(
+                '正在加载…',
+                style: TextStyle(
+                  fontSize: AppTheme.fontSmall,
+                  color: context.textTertiary,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
     return _loggedIn ? _buildProfilePage(isDark) : _buildLoginPage(isDark);
@@ -749,7 +816,16 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
       backgroundColor: context.scaffoldColor,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          // 2026-11-25 Web UX 审查 P0：软键盘避让。
+          // 手机上键盘弹起后，可视高度只剩一半，密码框与登录按钮容易被顶到
+          // 屏幕外（表现为一打开键盘就「看不见要输的框」）。这里在滚动内容
+          // 底部补一段键盘高度，保证内容能完整滚上来。
+          padding: EdgeInsets.fromLTRB(
+            24,
+            0,
+            24,
+            24 + MediaQuery.of(context).viewInsets.bottom,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

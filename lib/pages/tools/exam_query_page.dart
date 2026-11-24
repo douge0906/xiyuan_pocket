@@ -602,6 +602,11 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
                   ),
                 ),
               ),
+              TextButton(
+                onPressed: _querying ? null : _query,
+                child: const Text('重试',
+                    style: TextStyle(fontSize: AppTheme.fontSmall)),
+              ),
             ],
           ),
         ),

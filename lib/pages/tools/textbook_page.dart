@@ -339,16 +339,12 @@ class _TextbookPageState extends ConsumerState<TextbookPage> {
                           color: context.textPrimary),
                     ),
                   ),
+                  TextButton(
+                    onPressed: _loading ? null : _query,
+                    child: const Text('重试',
+                        style: TextStyle(fontSize: AppTheme.fontSmall)),
+                  ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 42,
-                child: OutlinedButton(
-                  onPressed: _loading ? null : _query,
-                  child: const Text('重新获取'),
-                ),
               ),
             ],
           ),

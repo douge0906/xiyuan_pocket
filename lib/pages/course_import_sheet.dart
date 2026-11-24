@@ -170,12 +170,22 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
         side: BorderSide(
             color: isDark ? Colors.grey.shade800 : const Color(0xFFE5E7EB)),
       ),
-      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 8, 0),
       contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
       actionsPadding: const EdgeInsets.fromLTRB(12, 0, 16, 10),
-      title: const Text('导入课表',
-          style: TextStyle(
-              fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
+      // R8：弹窗右上角要有 ×，和同文件里的「导入专属方案」弹窗一致。
+      title: Row(children: [
+        const Expanded(
+          child: Text('导入课表',
+              style: TextStyle(
+                  fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
+        ),
+        IconButton(
+          tooltip: '关闭',
+          icon: Icon(Icons.close_rounded, size: 20, color: context.textTertiary),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ]),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -192,12 +202,17 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
               title: _parsingPdf ? '正在解析 PDF…' : '从 PDF 课表导入',
               onTap: _parsingPdf ? null : _pickPdf,
             ),
-            row(
-              icon: Icons.science_rounded,
-              title: '导入实验课',
-              onTap: () =>
-                  Navigator.of(context).pop(const _ImportChoice(_ImportAction.lab)),
-            ),
+            // 🔴 「导入实验课」依赖实验管理系统接口，Web 上必然被守卫拒绝
+            //    （CampusException: 网页版暂不支持该功能，请使用安卓 App），
+            //    所以 Web 下整个入口不显示。
+            //    ⚠️ 图片识别导入 / PDF 课表导入在 Web 上是可用的，别一起藏掉。
+            if (!kIsWeb)
+              row(
+                icon: Icons.science_rounded,
+                title: '导入实验课',
+                onTap: () => Navigator.of(context)
+                    .pop(const _ImportChoice(_ImportAction.lab)),
+              ),
             row(
               icon: Icons.image_search_rounded,
               title: '从图片识别导入',

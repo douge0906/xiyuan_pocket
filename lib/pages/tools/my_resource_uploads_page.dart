@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/auth_gate.dart';
 import '../../services/control_service.dart';
 import '../../theme/app_theme.dart';
 
@@ -46,13 +47,23 @@ class _MyResourceUploadsPageState extends State<MyResourceUploadsPage>
         _error = null;
       });
     }
+    // 先分清「没登录」和「连不上」：控制端在两种情况下都返回 null，
+    // 混成一句话会让用户以为是网络问题，反复重试也解不开。
+    if (!await AuthGate.isLoggedIn()) {
+      if (!mounted || silent) return;
+      setState(() {
+        _loading = false;
+        _error = '请先登录后再查看';
+      });
+      return;
+    }
     final data = await ControlService.fetchMyUploads();
     if (!mounted) return;
     if (data == null) {
       if (silent) return;
       setState(() {
         _loading = false;
-        _error = '无法连接资源服务：可能无网络或尚未登录';
+        _error = '无法连接资源服务，请检查网络后重试';
       });
       return;
     }

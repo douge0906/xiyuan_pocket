@@ -116,23 +116,42 @@
     // 于是慢网用户看到的是**一片空白**（底色由 body 兜住但没有 logo 与提示），
     // 看起来像页面坏了。改成「网络较慢仍在加载…」后，即使引擎还没就绪，
     // 用户也知道是加载中而不是白屏。
+    // R1：60 秒兜底**不再删除占位**。
+    //
+    // 旧写法超时后直接 `el.remove()`，于是弱网用户看到的是**一片纯白**
+    // （body 底色兜住了，但 logo、标题、提示全没了），看起来像页面彻底坏了，
+    // 而且没有任何可以点的出口，只能手动刷新。
+    //
+    // 改成「加载失败，点击重试」：占位一直保留到**真正首帧**（flutter-first-frame），
+    // 超时后只换文案，并把整块占位变成可点击 —— 点击即 location.reload()。
     (function () {
       var el = document.getElementById('app-loading');
       var sub = el ? el.querySelector('.loader-sub') : null;
       var hidden = false;
+      var failed = false;
       function hide() {
         if (hidden) return;
         hidden = true;
         if (el) { el.remove(); el = null; sub = null; }
       }
       function slowHint() {
-        if (hidden || !sub) return;
+        if (hidden || failed || !sub) return;
         sub.textContent = '网络较慢，仍在加载…';
+      }
+      // 60 秒还没首帧：保留占位，换成可点击的「加载失败，点击重试」。
+      function failHint() {
+        if (hidden || failed || !el) return;
+        failed = true;
+        if (sub) sub.textContent = '加载失败，点击重试';
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', function () {
+          location.reload();
+        });
       }
       window.addEventListener('flutter-first-frame', hide, { once: true });
       setTimeout(slowHint, 10000);
-      // 再兜一层：60 秒还没首帧就放行页面，别把用户永远挡在占位后面。
-      setTimeout(hide, 60000);
+      // 再兜一层：60 秒还没首帧就换文案（**不删占位**），给用户一个重试出口。
+      setTimeout(failHint, 60000);
     })();
   </script>
   <script>

@@ -144,7 +144,24 @@ void main() async {
   }
   // 控制台预热：启动后先做设备登记与版本检查；完成学校登录后才会发送学号伪名、建立账号会话。
   unawaited(ControlService.warmUp());
-  runApp(const ProviderScope(child: XiYuanToolboxApp()));
+  // 🔴 2026-11-25 Web UX 审查 P0：全局错误兜底。
+  //
+  // 原来 main() 里每一段 await 都单独 try/catch 了，但**框架层**抛出的错误
+  // （build 里的异常、Future 里没 await 的异常）没有任何出口：Web 端只会在
+  // 浏览器控制台留一句红字，用户看到的是「白屏 + 什么都没发生」，无从重试。
+  //
+  // FlutterError.onError 拦框架/构建期错误；runZonedGuarded 拦异步 gap 里的
+  // 异常 —— 两者缺一不可（只挂前者，async/await 链外的异常照样静默丢掉）。
+  FlutterError.onError = (details) {
+    // 先照常上报（保留 Flutter 默认的堆栈打印），再记一条便于排查。
+    FlutterError.presentError(details);
+    debugPrint('[main] 未捕获的框架异常: ${details.exception}');
+  };
+  runZonedGuarded(() {
+    runApp(const ProviderScope(child: XiYuanToolboxApp()));
+  }, (error, stack) {
+    debugPrint('[main] 未捕获的异步异常: $error');
+  });
 }
 
 /// 首帧之前把**外观相关**的全部设置读进来。

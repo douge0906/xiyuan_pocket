@@ -371,10 +371,15 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
       if (_localCourses.isNotEmpty) {
         return _buildLocalFallback(isDark);
       }
-      return const EmptyState(
+      return EmptyState(
         message: '还没有学业数据',
-        hint: '点右上角刷新，从教务系统读取一次',
+        hint: '点下面的「立即查询」按钮，从教务系统读取一次',
         artVariant: EmptyArtVariant.report,
+        action: OutlinedButton.icon(
+          onPressed: _refresh,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('立即查询'),
+        ),
       );
     }
 

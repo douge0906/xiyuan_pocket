@@ -1,12 +1,17 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../services/dorm_service.dart';
 import '../services/elec_unit.dart';
 import '../services/net_mode.dart';
+import '../services/web_recharge_flow.dart';
 import '../theme/app_theme.dart';
 import '../widgets/empty_state_art.dart';
 import '../widgets/card_spending_chart.dart';
-import 'recharge_webview_page.dart';
+// webview_flutter 只有 android / ios 实现，浏览器里没有 WebView：
+// web 编译路径走 stub（同名同参，只是永远不会被构造）。
+import 'recharge_webview_page_stub.dart'
+    if (dart.library.io) 'recharge_webview_page.dart';
 
 /// 今天 / 昨天 / MM-DD。
 String dayTagOf(DateTime t) {
@@ -23,6 +28,17 @@ String dayTagOf(DateTime t) {
 /// `14:32`
 String hmOf(DateTime t) =>
     '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+/// 顶部浮一条提示（Web 端充值三段跳的进度提示用）。
+void _toast(BuildContext context, String message) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) return;
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
+    );
+}
 
 /// 一卡通余额详情（2026-10-24）。
 ///
@@ -217,7 +233,11 @@ class _CardBalancePageState extends State<CardBalancePage> {
             ),
             _historyCard(context),
             const SizedBox(height: 12),
-            Text('校园网微弱情况下卡顿属于正常状态',
+            // Web 端没有「校园网微弱」这个场景，写网络延迟更贴切。
+            Text(
+                kIsWeb
+                    ? '网络不稳定时数据可能有延迟'
+                    : '校园网微弱情况下卡顿属于正常状态',
                 style: TextStyle(
                     fontSize: AppTheme.fontSmall, color: context.textTertiary)),
           ],
@@ -306,6 +326,24 @@ class _CardBalancePageState extends State<CardBalancePage> {
     }
     if (_items.isEmpty) {
       // 空态也用手绘插画，与全 App 的空状态观感统一。
+      //
+      // Web 端拿不到交易流水（平台侧接口在浏览器里不可用），这是
+      // **功能边界**而不是「网络坏了」—— 原来统一写「暂时无法获取 /
+      // 检查网络后重试」，会把用户引去反复重试一个永远不会成功的操作。
+      if (kIsWeb) {
+        return Container(
+          decoration: base,
+          padding: const EdgeInsets.symmetric(vertical: 18),
+          child: AppEmptyState(
+            variant: EmptyArtVariant.wallet,
+            title: '网页版暂不支持交易流水',
+            subtitle: '余额与充值在网页版照常可用，明细请在手机 App 内查看',
+            actionLabel: '刷新余额',
+            onAction: _updating ? null : _manualUpdate,
+            compact: true,
+          ),
+        );
+      }
       return Container(
         decoration: base,
         padding: const EdgeInsets.symmetric(vertical: 18),
@@ -535,11 +573,33 @@ class _CardBalancePageState extends State<CardBalancePage> {
       if (!context.mounted) return;
       if (warmup == null || url == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(NetMode.current == CampusNetMode.offline
-                ? '网络不可用，请连接校园网或检查网络后重试'
-                : (DormService.lastLoginError.isEmpty
-                    ? '充值页准备失败，请稍后重试'
-                    : DormService.lastLoginError))));
+            content: Text(kIsWeb
+                // Web 端没有「校园网」概念，失败原因多半是服务端不可用。
+                ? '服务器暂不可用，请稍后重试'
+                : NetMode.current == CampusNetMode.offline
+                    ? '网络不可用，请连接校园网或检查网络后重试'
+                    : (DormService.lastLoginError.isEmpty
+                        ? '充值页准备失败，请稍后重试'
+                        : DormService.lastLoginError))));
+        return;
+      }
+      if (kIsWeb) {
+        // 浏览器里没有 WebView：走「网关登录 → 预热 → 充值页」三段跳转。
+        // 详见 lib/services/web_recharge_flow.dart。
+        final bundle = DormService.webCardBundle;
+        final err = await WebRechargeFlow.launch(
+          url: url,
+          gatewayLoginUrl: bundle?.gatewayLoginUrl,
+          warmupUrl: warmup,
+          onProgress: (msg) {
+            if (context.mounted) _toast(context, msg);
+          },
+        );
+        if (!context.mounted) return;
+        if (err != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
         return;
       }
       await Navigator.of(context).push(
@@ -756,7 +816,11 @@ class _ElectricityPageState extends State<ElectricityPage> {
             _recordsCard(context),
           ],
           const SizedBox(height: 12),
-          Text('校园网微弱情况下卡顿属于正常状态',
+          // Web 端没有「校园网微弱」这个场景，写网络延迟更贴切。
+          Text(
+              kIsWeb
+                  ? '网络不稳定时数据可能有延迟'
+                  : '校园网微弱情况下卡顿属于正常状态',
               style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary)),
         ],
       ),
@@ -946,11 +1010,32 @@ class _ElectricityPageState extends State<ElectricityPage> {
       if (!mounted) return;
       if (url == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(NetMode.current == CampusNetMode.offline
-                ? '网络不可用，请连接校园网或检查网络后重试'
-                : (DormService.lastLoginError.isEmpty
-                    ? '充值页准备失败，请稍后重试'
-                    : DormService.lastLoginError))));
+            content: Text(kIsWeb
+                // Web 端没有「校园网」概念，失败原因多半是服务端不可用。
+                ? '服务器暂不可用，请稍后重试'
+                : NetMode.current == CampusNetMode.offline
+                    ? '网络不可用，请连接校园网或检查网络后重试'
+                    : (DormService.lastLoginError.isEmpty
+                        ? '充值页准备失败，请稍后重试'
+                        : DormService.lastLoginError))));
+        return;
+      }
+      if (kIsWeb) {
+        // 浏览器里没有 WebView：走「网关登录 → 充值页」两段跳转。
+        // 详见 lib/services/web_recharge_flow.dart。
+        final bundle = DormService.webRechargeBundle;
+        final err = await WebRechargeFlow.launch(
+          url: url,
+          gatewayLoginUrl: bundle?.gatewayLoginUrl,
+          onProgress: (msg) {
+            if (mounted) _toast(context, msg);
+          },
+        );
+        if (!mounted) return;
+        if (err != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
         return;
       }
       await Navigator.of(context).push(

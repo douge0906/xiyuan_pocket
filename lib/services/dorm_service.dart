@@ -5,8 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'campus/campus_session.dart';
+import 'campus/campus_store.dart';
 import 'campus/cas_client.dart';
+import 'campus/jwgl_client.dart' show CampusException;
+import 'campus/web_campus_client.dart' show SessionProbe;
 import 'campus/webvpn.dart';
+import 'dorm_web_client.dart';
 import 'net_mode.dart';
 import 'storage_service.dart';
 part 'dorm_models.dart';
@@ -76,8 +80,52 @@ class DormService {
   /// 已登录会话（[ensureLogin] 成功后非空）。
   static CampusSession? get activeSession => _session;
 
+  // ---------------- Web 端（浏览器）会话状态 ----------------
+  //
+  // 浏览器连不到内网：整条链（CAS → TGT → WebVPN 换票 → 网关 cookie →
+  // 平台 ST → 平台票 → oauth token → getThirdData）跑在控制端，客户端只持有一个
+  // `session_id`（服务端会话的句柄）。它**不落日志、不进 URL**。
+  static String? _webSid;
+  static String? _webSidUser;
+  static DateTime? _webSidAt;
+
+  /// 待人工回填验证码的会话（服务端三轮自动识别失败时）。
+  static String? _webPendingSid;
+  static String? _webPendingUser;
+
+  /// Web 端待人工识别的验证码图片（base64）。
+  static String? _webCaptchaB64;
+
+  /// 一卡通充值地址缓存（一次 D5 调用同时给出预热地址与充值页地址）。
+  static DormCardRechargeUrl? _webCardBundle;
+
+  /// Web 端最近一次拿到的电费充值地址（含网关登录地址）。
+  static DormRechargeUrl? _webRechargeBundle;
+
+  static const String _kWebSid = 'dorm_web_sid';
+  static const String _kWebSidUser = 'dorm_web_sid_user';
+  static const String _kWebSidAt = 'dorm_web_sid_at';
+
+  /// 服务端会话 TTL（12 小时，与控制端一致）。
+  static const Duration _webSidTtl = Duration(hours: 12);
+
+  /// Web 端：待人工识别的验证码图片（base64）；为空 = 不需要人工回填。
+  static String? get webCaptchaB64 => _webCaptchaB64;
+
+  /// 测试用：读当前 Web 端会话 id。
+  @visibleForTesting
+  static String? get debugWebSid => _webSid;
+
+  /// 测试接缝：把 Web 分支在普通（dart:io）环境下也打开，用于离线跑契约测试。
+  @visibleForTesting
+  static bool debugWebPlatform = false;
+
+  /// 当前是不是「浏览器」运行环境。
+  static bool get _isWeb => kIsWeb || debugWebPlatform;
+
   /// 内网可达性（2 秒超时）。不在校园网时用它快速短路，避免弹窗卡住。
   static Future<bool> isAvailable() async {
+    if (_isWeb) return DormWebClient.controlReachable();
     final s = _newSession();
     try {
       final r = await s
@@ -134,8 +182,180 @@ class DormService {
     }
   }
 
-  static Future<String?> loginOrError() =>
-      _authLocked(_loginSingleFlight);
+  static Future<String?> loginOrError() {
+    if (_isWeb) return _authLocked(_webLoginRun);
+    return _authLocked(_loginSingleFlight);
+  }
+
+  // ---------------- Web 端登录（会话在控制端） ----------------
+
+  /// Web 端登录：整条内网链在控制端跑，客户端只拿一个 `session_id`。
+  ///
+  /// 返回 null = 登录成功；非 null = 失败原因（中文）。
+  static Future<String?> _webLoginRun() async {
+    lastLoginError = '';
+    String sno;
+    String pwd;
+    if (debugSno != null) {
+      sno = debugSno!.trim();
+      pwd = debugPwd ?? '';
+    } else {
+      final cfg = await StorageService.loadUserConfig();
+      sno = cfg.username.trim();
+      pwd = cfg.password;
+    }
+    if (sno.isEmpty || pwd.isEmpty) {
+      lastLoginError = '登录失败(缺账密)';
+      return lastLoginError;
+    }
+
+    // 已有可用会话就复用（同账号新登录会踢掉旧会话，别乱踢）。
+    final sid = _webSid;
+    if (sid != null && sid.isNotEmpty && _webSidUser == sno) {
+      final probe = await DormWebClient.ping(sid);
+      if (probe == SessionProbe.alive) return null;
+      if (probe == SessionProbe.unreachable) {
+        // 控制端不可达：会话状态未知，**不要**作废（否则断网就等于掉登录）。
+        lastLoginError = '服务暂不可用，请稍后重试';
+        return lastLoginError;
+      }
+      _webSid = null;
+    }
+
+    try {
+      final start = await DormWebClient.startSession(sno, pwd);
+      if (!start.loggedIn) {
+        // 服务端自动识别验证码失败 → 需要人工回填。
+        _webPendingSid = start.sessionId;
+        _webPendingUser = sno;
+        _webCaptchaB64 = start.captchaB64;
+        lastLoginError = '登录失败(验证码)';
+        return lastLoginError;
+      }
+      _webPendingSid = null;
+      _webPendingUser = null;
+      _webCaptchaB64 = null;
+      _webSid = start.sessionId;
+      _webSidUser = sno;
+      _webSidAt = DateTime.now();
+      await _persistWebSid();
+      return null;
+    } on CampusException catch (e) {
+      lastLoginError = e.message;
+      return lastLoginError;
+    } catch (_) {
+      lastLoginError = '登录失败(网络)';
+      return lastLoginError;
+    }
+  }
+
+  /// Web 端：回填人工识别的验证码（服务端三轮自动识别失败时用）。
+  ///
+  /// 成功返回 null；失败返回中文原因。
+  static Future<String?> submitWebCaptcha(String code) async {
+    final sid = _webPendingSid;
+    final user = _webPendingUser;
+    if (sid == null || sid.isEmpty) {
+      lastLoginError = '登录失败(验证码)';
+      return lastLoginError;
+    }
+    try {
+      await DormWebClient.submitCaptcha(sid, code.trim());
+      _webPendingSid = null;
+      _webPendingUser = null;
+      _webCaptchaB64 = null;
+      _webSid = sid;
+      _webSidUser = user;
+      _webSidAt = DateTime.now();
+      await _persistWebSid();
+      lastLoginError = '';
+      return null;
+    } on CampusException catch (e) {
+      lastLoginError = e.message;
+      return lastLoginError;
+    } catch (_) {
+      lastLoginError = '登录失败(验证码)';
+      return lastLoginError;
+    }
+  }
+
+  /// Web 端：确保有可用的服务端会话，返回 `session_id`（不可用返回 null）。
+  ///
+  /// ⚠️ 关键修正：旧实现只看本地 12h TTL，TTL 未到就直接拿旧 sid 去查 ——
+  /// 而服务端会话可能早已失效（控制端重启、会话被挤掉），于是查询必然失败并
+  /// 提示「登录状态不在」。现在改成**每次都探活**：
+  /// - alive → 直接用；
+  /// - expired → 先试免验证码续期（服务端用 TGT / 平台凭据重铸），仍不行才重登；
+  /// - unreachable → 保留 sid，提示「服务暂不可用，请稍后重试」（不是掉登录）。
+  static Future<String?> _webSessionId() async {
+    if (!_isWeb) return null;
+    await _restoreWebSid();
+    var sid = _webSid;
+    if (sid != null && sid.isNotEmpty) {
+      final probe = await DormWebClient.ping(sid);
+      if (probe == SessionProbe.alive) {
+        _webSidAt = DateTime.now();
+        await _persistWebSid();
+        return sid;
+      }
+      if (probe == SessionProbe.unreachable) {
+        lastLoginError = '服务暂不可用，请稍后重试';
+        return null;
+      }
+      // expired：先试静默续期（免验证码）。
+      final refreshed = await DormWebClient.refresh(sid);
+      if (refreshed == SessionProbe.alive) {
+        _webSidAt = DateTime.now();
+        await _persistWebSid();
+        return sid;
+      }
+      if (refreshed == SessionProbe.unreachable) {
+        lastLoginError = '服务暂不可用，请稍后重试';
+        return null;
+      }
+      _webSid = null;
+      sid = null;
+    }
+    final err = await loginOrError();
+    if (err != null) return null;
+    return _webSid;
+  }
+
+  static Future<void> _persistWebSid() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final sid = _webSid;
+      if (sid == null || sid.isEmpty) {
+        await p.remove(_kWebSid);
+        await p.remove(_kWebSidUser);
+        await p.remove(_kWebSidAt);
+        return;
+      }
+      await p.setString(_kWebSid, sid);
+      await p.setString(_kWebSidUser, _webSidUser ?? '');
+      await p.setInt(_kWebSidAt, _webSidAt?.millisecondsSinceEpoch ?? 0);
+    } catch (_) {
+      // 存储失败不影响本次会话使用（内存里还有）。
+    }
+  }
+
+  static Future<void> _restoreWebSid() async {
+    if (_webSid != null) return;
+    try {
+      final p = await SharedPreferences.getInstance();
+      final sid = p.getString(_kWebSid);
+      final at = p.getInt(_kWebSidAt) ?? 0;
+      if (sid == null || sid.isEmpty || at <= 0) return;
+      if (DateTime.now().millisecondsSinceEpoch - at >= _webSidTtl.inMilliseconds) {
+        return;
+      }
+      _webSid = sid;
+      _webSidUser = p.getString(_kWebSidUser);
+      _webSidAt = DateTime.fromMillisecondsSinceEpoch(at);
+    } catch (_) {
+      // 读不到就算了，下次重新登录。
+    }
+  }
 
   static Future<String?> _loginSingleFlight() {
     final running = _loginInflight;
@@ -279,6 +499,23 @@ class DormService {
   }
 
   static void clearToken() {
+    if (_isWeb) {
+      // Web 端会话在服务端：本地 token 一律清掉，并**释放服务端会话**。
+      final sid = _webSid;
+      _webSid = null;
+      _webSidUser = null;
+      _webSidAt = null;
+      _webPendingSid = null;
+      _webPendingUser = null;
+      _webCaptchaB64 = null;
+      _webCardBundle = null;
+      _persistWebSid();
+      if (sid != null && sid.isNotEmpty) {
+        // 尽力而为：注销失败不影响本地清理。
+        DormWebClient.logout(sid);
+      }
+      return;
+    }
     _token = null;
     _tokenSno = null;
     _tgt = null;
@@ -315,7 +552,59 @@ class DormService {
   /// 楼栋列表：直接返回预置（不缓存、不联网、不随平台变化）。
   static Future<List<DormBuilding>> buildings() async => _seed;
 
+  /// Web 端查电费：整条内网链在控制端，客户端只负责**解析**。
+  ///
+  /// 解析口径与安卓端**完全一致**（同一个 [parseMoney] / [parseKwh] /
+  /// [parseUnitPrice] / [defaultUnitPrice]），所以两端结果一模一样。
+  static Future<ElectricityInfo?> _webQuery(DormInfo dorm) async {
+    final sid = await _webSessionId();
+    if (sid == null) {
+      if (lastLoginError.isEmpty) lastLoginError = '暂不可用';
+      return null;
+    }
+    Map<String, dynamic> map;
+    try {
+      map = await DormWebClient.query(
+        sid,
+        feeitemid: dorm.feeitemid,
+        campus: dorm.campus,
+        building: dorm.buildingValue,
+        room: dorm.room,
+      );
+    } on CampusException catch (e) {
+      lastLoginError = e.message;
+      if (e.needRelogin) {
+        // 会话真过期：清 sid，下次查询会静默续期 / 重登。
+        _webSid = null;
+        await _persistWebSid();
+      }
+      return null;
+    } catch (_) {
+      lastLoginError = '服务暂不可用，请稍后重试';
+      return null;
+    }
+
+    final show = (map['showData'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final text = (show['信息'] ?? '').toString();
+    final data = (map['data'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final balance = parseMoney(text);
+    var kwh = parseKwh(text);
+    if (kwh == null && balance != null) {
+      // 449/450 不下发电量 → 按单价换算（文案自带单价优先，否则用学校电价）
+      final price = parseUnitPrice(text) ?? defaultUnitPrice;
+      if (price > 0) kwh = balance / price;
+    }
+    return ElectricityInfo(
+      text: text,
+      balance: balance,
+      kwh: kwh,
+      buildingName: (data['buildingName'] ?? dorm.buildingName).toString(),
+      room: (data['room'] ?? dorm.room).toString(),
+    );
+  }
+
   static Future<ElectricityInfo?> query(DormInfo dorm) async {
+    if (_isWeb) return _webQuery(dorm);
     final loginErr = await loginOrError();
     if (loginErr != null) {
       lastLoginError = loginErr; // 绑定本次，避免被并发调用清空
@@ -353,7 +642,44 @@ class DormService {
   ///   `登录失败`  CAS 换 token 没成功
   ///   `无卡账号`  平台用户信息里找不到卡账号
   ///   `查询失败`  接口返回异常 / 没有卡
+  ///
+  /// Web 端一卡通余额：走融合门户（门户 cookie 罐由服务端持有）。
+  ///
+  /// 控制端没有 `card-balance` 端点，所以复用融合门户那条已验证的链路：
+  /// [LocalCampusService.fetchCardBalance] 在 Web 端会用代理会话去访问门户，
+  /// 门户 cookie 由服务端维护，浏览器这边不需要任何 Cookie。
+  static Future<CardQueryResult> _webCardBalance() async {
+    String sno;
+    String pwd;
+    if (debugSno != null) {
+      sno = debugSno!.trim();
+      pwd = debugPwd ?? '';
+    } else {
+      final cfg = await StorageService.loadUserConfig();
+      sno = cfg.username.trim();
+      pwd = cfg.password;
+    }
+    if (sno.isEmpty) {
+      return const CardQueryResult(reason: '登录失败(缺账密)');
+    }
+    try {
+      final data = await LocalCampusService.fetchCardBalance(sno, pwd);
+      final raw = data['balance'];
+      final balance =
+          raw is num ? raw.toDouble() : double.tryParse('${raw ?? ''}');
+      if (balance == null) {
+        return const CardQueryResult(reason: '查询失败');
+      }
+      return CardQueryResult(balance: balance);
+    } on CampusException catch (e) {
+      return CardQueryResult(reason: e.message);
+    } catch (_) {
+      return const CardQueryResult(reason: '暂不可用');
+    }
+  }
+
   static Future<CardQueryResult> fetchCardBalanceDetailed() async {
+    if (_isWeb) return _webCardBalance();
     final loginErr = await loginOrError();
     if (loginErr != null) return CardQueryResult(reason: loginErr);
     final s = _session;
@@ -580,6 +906,11 @@ class DormService {
     if (debugFetcher != null) {
       return debugFetcher(page: page, size: size, type: type);
     }
+    if (_isWeb) {
+      // Web 端没有「消费流水」端点（控制端只做电费查询 + 充值），
+      // 返回 null = 失败，界面会显示缓存里的旧数据 / 空态。
+      return null;
+    }
     var result = await _fetchTurnoverOnce(page: page, size: size, type: type);
     // 平台 token 过期时请求会清 token 并返回 null；自动重登一次，
     // 避免详情页偶发「进入后一片空白，要手动更新」。
@@ -704,7 +1035,11 @@ class DormService {
   /// `loginTransit` 只负责「用 ticket 建立会话」，它到底把浏览器送到哪不可靠
   /// （实测返回 200 的 HTML，targetUrl 不保证生效）。所以 WebView 里分两步：
   /// 先 open [cardBagLoginUrl] 建会话，再 load 本方法返回的地址。
+  ///
+  /// Web 端：地址由控制端 D5 一并给出（[cardBagLoginUrl] 会顺带把它缓存下来），
+  /// 拿不到就返回 null（界面提示「暂不可用」）。
   static String? cardBagRechargeUrl() {
+    if (_isWeb) return _webCardBundle?.url;
     if (NetMode.current == CampusNetMode.offline) return null;
     return WebVpn.wrapUrl(
       '$base/campus-card/cardRecharge'
@@ -716,7 +1051,13 @@ class DormService {
   ///
   /// 校外不拦，只把地址**包装成网关地址**：浏览器打开后若未登录 WebVPN 会跳一次
   /// 登录页，登录后 cookie 由浏览器保留、后续直接进；校园网内 wrapUrl 原样返回。
+  ///
+  /// Web 端：整条链在控制端（D4），返回的地址自带 `?token=`。
   static Future<String?> rechargeUrlFor(int feeitemid) async {
+    if (_isWeb) {
+      final bundle = await webRechargeFor(feeitemid);
+      return bundle?.url;
+    }
     // 离线（既不在校园网、网关也不通）时不要给地址：浏览器只会打开一个死链
     if (NetMode.current == CampusNetMode.offline) return null;
     if (await loginOrError() != null) return null;
@@ -725,6 +1066,40 @@ class DormService {
       '$base/charge-app?name=pays&id=$feeitemid&paymentUrl=$pay&token=$_token',
     );
   }
+
+  /// Web 端电费充值：一次拿到「网关登录地址 + 充值页地址」。
+  ///
+  /// 浏览器要**先**开网关登录地址（拿到自己的网关票据 cookie），**再**开充值页
+  /// （自带 token，打开即登录）。非 Web 端返回 null。
+  static Future<DormRechargeUrl?> webRechargeFor(int feeitemid) async {
+    if (!_isWeb) return null;
+    final sid = await _webSessionId();
+    if (sid == null) {
+      if (lastLoginError.isEmpty) lastLoginError = '暂不可用';
+      return null;
+    }
+    try {
+      final bundle = await DormWebClient.rechargeUrl(sid, feeitemid);
+      _webRechargeBundle = bundle;
+      return bundle;
+    } on CampusException catch (e) {
+      lastLoginError = e.message;
+      if (e.needRelogin) _webSid = null;
+      return null;
+    } catch (_) {
+      lastLoginError = '暂不可用';
+      return null;
+    }
+  }
+
+  /// Web 端最近一次拿到的充值地址（含网关登录地址）。
+  static DormRechargeUrl? get webRechargeBundle => _webRechargeBundle;
+
+  /// Web 端最近一次拿到的**一卡通**充值地址（含网关登录地址）。
+  ///
+  /// 浏览器要在**网关 origin** 下先登一次（用自己的 ST），才能打开预热地址
+  /// 和充值页 —— 所以三段地址都要用：网关登录 → 预热 → 充值页。
+  static DormCardRechargeUrl? get webCardBundle => _webCardBundle;
 
   /// 卡包（充值入口）：需在页面内登录，交给浏览器/WebView 处理。
   static String get cardBagUrl => '$base/campus-card/cardRecharge'
@@ -788,6 +1163,27 @@ class DormService {
   /// 卡包登录跳转：先落登录态（loginTransit），再进卡包页。
   /// 卡包（充值入口）。同样在校外包装成网关地址交给浏览器。
   static Future<String?> cardBagLoginUrl() async {
+    if (_isWeb) {
+      // Web 端由控制端 D5 一并给出「预热地址 + 充值页地址」，这里把预热地址缓存好，
+      // 随后 [cardBagRechargeUrl] 就能直接取到充值页地址。
+      final sid = await _webSessionId();
+      if (sid == null) {
+        if (lastLoginError.isEmpty) lastLoginError = '暂不可用';
+        return null;
+      }
+      try {
+        final bundle = await DormWebClient.cardRechargeUrl(sid);
+        _webCardBundle = bundle;
+        return bundle.warmupUrl.isEmpty ? null : bundle.warmupUrl;
+      } on CampusException catch (e) {
+        lastLoginError = e.message;
+        if (e.needRelogin) _webSid = null;
+        return null;
+      } catch (_) {
+        lastLoginError = '暂不可用';
+        return null;
+      }
+    }
     if (NetMode.current == CampusNetMode.offline) return null;
     final ticket = await freshPlatformTicket();
     if (ticket == null || ticket.isEmpty) return null;

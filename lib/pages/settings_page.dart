@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -203,8 +204,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: _contactEmail,
                 ),
                 SettingsEntryRow(
-                  icon: Icons.system_update_outlined,
-                  title: S.t('item_check_update'),
+                  // Web 版没有应用商店式更新，版本随网页资源一起发布，
+                  // 所以这一行在 Web 上就是「重新加载页面」。
+                  icon: kIsWeb ? Icons.refresh_rounded : Icons.system_update_outlined,
+                  title: kIsWeb ? '重新加载页面' : S.t('item_check_update'),
                   onTap: _checkUpdate,
                 ),
               ]),
@@ -326,13 +329,15 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (ctx) => AlertDialog(
         title: Text(S.t('item_clear_cache')),
         content: Text(
-          size == null || size <= 0
-              ? '当前没有可清理的缓存。\n\n'
-                  '清理只影响预览过的资源文件与图片，不会动你下载保存的资料，'
-                  '也不会影响账号和课表。'
-              : '将释放约 ${AppCache.format(size)}。\n\n'
-                  '清理只影响预览过的资源文件与图片，不会动你下载保存的资料，'
-                  '也不会影响账号和课表。',
+          // Web 端没有「缓存目录」，清的是浏览器本地缓存条目，
+          // 文案要跟实际清的东西对得上，否则用户以为清的是下载的文件。
+          kIsWeb
+              ? (size == null || size <= 0
+                  ? '当前没有可清理的缓存。\n\n清理只影响浏览器里缓存的数据，不会动你下载保存的资料，也不会影响账号和课表。'
+                  : '将清理浏览器里约 ${AppCache.format(size)} 的缓存数据。\n\n清理只影响浏览器里缓存的数据，不会动你下载保存的资料，也不会影响账号和课表。')
+              : (size == null || size <= 0
+                  ? '当前没有可清理的缓存。\n\n清理只影响预览过的资源文件与图片，不会动你下载保存的资料，也不会影响账号和课表。'
+                  : '将释放约 ${AppCache.format(size)}。\n\n清理只影响预览过的资源文件与图片，不会动你下载保存的资料，也不会影响账号和课表。'),
           style: const TextStyle(fontSize: AppTheme.fontBody, height: 1.5),
         ),
         actions: [

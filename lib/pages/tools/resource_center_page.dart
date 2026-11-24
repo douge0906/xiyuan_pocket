@@ -163,21 +163,27 @@ class _ResourceCenterPageState extends State<ResourceCenterPage> {
         backgroundColor: context.cardColor,
         elevation: 0,
         actions: [
-          IconButton(
-            onPressed: _openMyDownloads,
-            icon: const Icon(Icons.download_for_offline_outlined),
-            tooltip: '我的下载',
-          ),
+          // 🔴 Web 上这两项必然失败（下载到本机 / 上传文件都依赖原生能力，
+          //    见 _openMyDownloads / _upload 里的 kIsWeb 兜底）→ 直接不显示，
+          //    免得用户点了只吃到一句「网页版暂不支持」。
+          //    「我的上传」是云端列表，Web 可用，保留。
+          if (!kIsWeb)
+            IconButton(
+              onPressed: _openMyDownloads,
+              icon: const Icon(Icons.download_for_offline_outlined),
+              tooltip: '我的下载',
+            ),
           IconButton(
             onPressed: _openMyUploads,
             icon: const Icon(Icons.cloud_upload_outlined),
             tooltip: '我的上传',
           ),
-          IconButton(
-            onPressed: _upload,
-            icon: const Icon(Icons.upload_file_rounded),
-            tooltip: '上传资源',
-          ),
+          if (!kIsWeb)
+            IconButton(
+              onPressed: _upload,
+              icon: const Icon(Icons.upload_file_rounded),
+              tooltip: '上传资源',
+            ),
         ],
       ),
       body: Column(

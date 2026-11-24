@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -229,10 +230,17 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
   }
 
   /// 首次启动隐私政策确认：拒绝则退出 App，同意后进入。
+  ///
+  /// 🔴 Web 端**不能退出**：Flutter Web 的 [SystemNavigator.pop] 落到
+  /// `browserHistory.exit()`，浏览器会直接离站（跳回上一页 / 白屏），
+  /// 用户再进来还要重新同意，且部分浏览器直接拦截该调用。
+  /// 所以 Web 端拒绝时**只关掉弹窗、不做任何离站动作**（留在页面上，
+  /// 隐私政策弹窗由 [LegalConsentService.ensureConsent] 在下次启动时再次询问）。
   Future<void> _ensurePrivacyConsent() async {
     if (!mounted) return;
     final ok = await LegalConsentService.ensureConsent(context);
     if (!ok) {
+      if (kIsWeb) return;
       await SystemNavigator.pop();
     }
   }

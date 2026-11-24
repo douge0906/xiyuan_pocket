@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'campus/campus_session.dart';
 import 'campus_net_monitor.dart';
 import 'campus/webvpn.dart';
+import 'dorm_web_client.dart';
 
 /// 内网地址（电费/一卡通平台）。故意写死而不引用 [DormService.base] ——
 /// 否则本文件与 dorm_service 形成循环 import。地址变了这里和 dorm_service 一起改。
@@ -82,18 +83,47 @@ class NetMode {
   /// 探测一次。`force=false` 且已探过时直接返回缓存结果；
   /// 已有探测在跑时返回同一个 Future（不做重复请求，也不会提前返回旧值）。
   static Future<CampusNetMode> probe({bool force = false}) {
-    if (kIsWeb) {
-      // 浏览器无法直连内网（10.3.100.110），也不走原生会话探测；
-      // 内网/电费/一卡通相关功能在 Web 端按不可用处理。
-      notifier.value = CampusNetMode.offline;
-      return Future<CampusNetMode>.value(CampusNetMode.offline);
-    }
     if (_probed && !force) return Future<CampusNetMode>.value(current);
+    if (kIsWeb) {
+      // 浏览器连不上内网（10.3.100.110），但 Web 端的电费/一卡通是由
+      // 控制端代跑内网链路的（见 DormWebClient）—— 所以这里判的不是
+      // 「本机能不能直连内网」，而是「控制端在不在、能不能替我们跑」。
+      // 控制端可达就按「校外经网关」这条走（webvpn），不可达才真的不通。
+      return _runWeb();
+    }
     final running = _inflight;
     if (running != null) return running;
     final fut = _run();
     _inflight = fut;
     return fut;
+  }
+
+  /// Web 端探测：问控制端自己还在不在。
+  ///
+  /// 不用 dart:io 的直连探测（浏览器根本连不上内网），也不做原生会话
+  /// 探测；只看控制端的 /healthz 能不能通。
+  static Future<CampusNetMode> _runWeb() async {
+    final running = _inflight;
+    if (running != null) return running;
+    final fut = _detectWeb();
+    _inflight = fut;
+    return fut;
+  }
+
+  static Future<CampusNetMode> _detectWeb() async {
+    var mode = CampusNetMode.offline;
+    try {
+      if (await DormWebClient.controlReachable()) {
+        mode = CampusNetMode.webvpn;
+      }
+    } catch (_) {
+      mode = CampusNetMode.offline;
+    }
+    notifier.value = mode;
+    _probed = true;
+    _probedAt = DateTime.now();
+    _inflight = null;
+    return mode;
   }
 
   static Future<CampusNetMode> _run() async {

@@ -812,11 +812,15 @@ class HomePageState extends ConsumerState<HomePage>
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      HomeCampusNetStatus(
-                        isDark: isDark,
-                        status: _campusNetStatus,
-                        onRefresh: _refreshCampusNet,
-                      ),
+                      // Web 端没有「校园网」这个概念，指示器点下去又是空的
+                      // （_refreshCampusNet 在 Web 上直接 return），用户只会
+                      // 以为界面卡住了。改成静态标签，不做成可点的样式。
+                      if (kIsWeb) _WebVersionTag() else
+                        HomeCampusNetStatus(
+                          isDark: isDark,
+                          status: _campusNetStatus,
+                          onRefresh: _refreshCampusNet,
+                        ),
                       const Spacer(),
                       Text(
                         '交流群 853204403',
@@ -1045,5 +1049,39 @@ class HomePageState extends ConsumerState<HomePage>
     } finally {
       _campusDetecting = false;
     }
+  }
+}
+
+/// Web 端顶部的静态「网页版」标签。
+///
+/// 顶栏原本放的是「校园网已连接 / 非校园网」指示器，带点击刷新。
+/// Web 版根本没有校园网概念，点击又是空操作（_refreshCampusNet 直接
+/// return），所以这里给一个纯静态标签：外观跟原指示器一致，但不可点。
+class _WebVersionTag extends StatelessWidget {
+  const _WebVersionTag();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(
+            color: AppTheme.info,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          '网页版',
+          style: TextStyle(
+            fontSize: AppTheme.fontCaption,
+            color: context.textTertiary,
+          ),
+        ),
+      ],
+    );
   }
 }

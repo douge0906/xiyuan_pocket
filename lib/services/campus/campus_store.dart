@@ -15,6 +15,7 @@ import 'study_client.dart';
 import 'sygl_client.dart';
 import 'web_campus_client.dart';
 import 'web_campus_session.dart';
+import '../storage_service.dart';
 import '../../models/study_models.dart';
 
 /// 教务会话缓存（本地版：把「登录一次」的成果存下来，避免每次查询都过验证码）。
@@ -187,7 +188,12 @@ class LocalCampusService {
   }
 
   /// 启动后尝试用本地留存的 sid 恢复 Web 会话（归属人匹配 + 本地兜底 TTL 内，
-  /// 再向服务端探活）。探活通过则置回内存；失败清本地，留给两步登录。
+  /// 再向服务端探活）。探活通过则置回内存。
+  ///
+  /// ⚠️ 探活是**三态**的（见 [SessionProbe]）：只有服务端明确回 401（会话真的
+  /// 没了）才清本地；控制端不可达 / 5xx / 超时属于「状态未知」，**必须保留**
+  /// 本地 sid —— 否则一次网络抖动就会把用户踢去重新登录，这正是用户反馈的
+  /// 「登录一段时间后突然提示登录状态不在」的成因之一。
   static Future<void> restoreWebSession(String username) async {
     if (_webSid != null) return;
     final p = await SharedPreferences.getInstance();
@@ -202,13 +208,14 @@ class LocalCampusService {
         return;
       }
     }
-    final ok = await WebCampusProxy.ping(sid);
-    if (ok) {
+    final probe = await WebCampusProxy.probe(sid);
+    if (probe == SessionProbe.alive) {
       _webSid = sid;
       _webSidUser = username;
-    } else {
+    } else if (probe == SessionProbe.expired) {
       await _clearPersistedWebSid();
     }
+    // unreachable：保留本地 sid，等真正要用时再试（网络恢复后仍可续期）。
   }
 
   /// 取 Web 就绪会话；未登录 / 已过期则抛 needRelogin，由界面引导重新登录。
@@ -219,6 +226,39 @@ class LocalCampusService {
       throw CampusException('登录已过期，请重新登录', needRelogin: true);
     }
     return WebCampusSession(sid);
+  }
+
+  /// Web：用本机保存的账密静默重登一次（**不需要用户再填验证码**）。
+  ///
+  /// 服务端 `session/start` 会自动识别验证码，识别成功就直接返回就绪会话，
+  /// 所以用户在界面感知不到任何东西 —— 这就是「一段时间后提示登录状态不在」
+  /// 的兜底修复：会话真过期时自动复活，而不是把用户赶去登录页。
+  ///
+  /// 返回 true = 已重新登录成功；false = 账密缺失或服务端不接受。
+  static Future<bool> _webSilentRelogin(
+      String username, String password) async {
+    var u = username.trim();
+    var p = password;
+    if (u.isEmpty || p.isEmpty) {
+      // 账密只在界面层传空时才会缺省，这里兜底从本机配置读。
+      final cfg = await StorageService.loadUserConfig();
+      u = u.isEmpty ? cfg.username.trim() : u;
+      p = p.isEmpty ? cfg.password : p;
+    }
+    if (u.isEmpty || p.isEmpty) return false;
+    try {
+      final start = await WebCampusProxy.startLogin(u, p);
+      if (!start.loggedIn) return false;
+      _webSid = start.sessionId;
+      _webSidUser = u;
+      _webPendingSid = null;
+      await _persistWebSid(start.sessionId, u);
+      return true;
+    } on CampusException {
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 
 
@@ -294,8 +334,28 @@ class LocalCampusService {
       } on CampusException catch (e) {
         if (!e.needRelogin) rethrow;
         final sid = _webSid;
-        if (sid != null && await WebCampusProxy.refresh(sid)) {
-          return await run(WebCampusSession(sid));
+        // ① 先试免验证码静默续期（服务端拿 TGT 重建设教 cookie 罐）。
+        final probe =
+            sid == null ? SessionProbe.expired : await WebCampusProxy.refresh(sid);
+        if (probe == SessionProbe.alive) {
+          return await run(WebCampusSession(sid!));
+        }
+        if (probe == SessionProbe.unreachable) {
+          // ② 控制端不可达 / 5xx：**会话状态未知**，不能作废本地 sid，
+          //    也不能让用户去重新登录 —— 否则一次断网就变成「登录失效」。
+          throw CampusException('网络异常，请稍后重试');
+        }
+        // ③ 真的过期了：先试一次「用本机账密静默重登」（服务端自动识别验证码，
+        //    成功后用户全程无感）；失败才清 sid，把用户引导去登录页。
+        if (await _webSilentRelogin(username, password)) {
+          final fresh = _webSid;
+          if (fresh != null) {
+            try {
+              return await run(WebCampusSession(fresh));
+            } on CampusException catch (e2) {
+              if (!e2.needRelogin) rethrow;
+            }
+          }
         }
         _webSid = null;
         _webSidUser = null;
