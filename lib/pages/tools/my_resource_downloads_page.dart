@@ -57,6 +57,10 @@ class _MyResourceDownloadsPageState extends State<MyResourceDownloadsPage> {
         builder: (_) => ResourceTextPreviewPage(
           title: item.name,
           fileId: item.fileId,
+          // 本地兜底：正文是服务端抽的，断网或者服务端没抽出来时，
+          // 这个文件明明就在本机，得给一个直接打开的出口。
+          onDownload: () => _share(item),
+          downloadLabel: '用其他应用打开本地文件',
         ),
       ));
       return;
@@ -133,8 +137,20 @@ class _MyResourceDownloadsPageState extends State<MyResourceDownloadsPage> {
       ),
     );
     if (confirmed != true) return;
-    await ResourceDownloadService.deleteDownload(item);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ResourceDownloadService.deleteDownload(item);
+    } catch (e) {
+      // 文件被占用 / 无权限 / 清单写盘失败都会走到这里。以前这条路径没有任何
+      // 出口：条目还在列表里，用户不知道自己点的那一下到底有没有生效。
+      messenger.showSnackBar(SnackBar(
+          content:
+              Text('删除失败：${e.toString().replaceFirst('Exception: ', '')}')));
+      return;
+    }
     await _load();
+    messenger.showSnackBar(const SnackBar(content: Text('已删除本地文件')));
   }
 
   @override

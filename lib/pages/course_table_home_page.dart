@@ -9,6 +9,7 @@ import '../models/course_model.dart';
 import '../models/course_table.dart';
 import '../services/course_reminder_service.dart';
 import '../services/course_storage.dart';
+import '../services/course_transfer_service.dart';
 import '../services/auth_gate.dart';
 import '../services/api_service.dart';
 import '../services/course_sync_service.dart';
@@ -391,6 +392,67 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         await _importFromImage();
       case _ImportAction.clearCurrent:
         await _clearCurrentTable();
+      case _ImportAction.bundle:
+        await _importBundle();
+    }
+  }
+
+  /// 导入掌上锡院自己导出的方案文件（课表 / 外观 / 两者）。
+  ///
+  /// 用户 m06905 第 2 条：「在课表页的导入课表功能中新增导入掌上锡院专属方案，
+  /// 点击后弹出三种导入方式（居中新盒子）」。
+  ///
+  /// 三种方式的区别是**副作用范围**，不是文件格式（三者在磁盘上都是 JSON）：
+  /// - 课程方案：只写课表。适合换手机后先把课排好。
+  /// - 外观方案：只改配色与显示设置。适合「我只喜欢你那套配色」。
+  ///   这条绝不能碰课表 —— 对方可能已经排好了自己的课。
+  /// - 整体方案：课表 + 外观 + 已存外观方案。
+  Future<void> _importBundle() async {
+    if (_syncing) return;
+    final kind = await showDialog<_BundleImportKind>(
+      context: context,
+      builder: (_) => const _BundleImportSheet(),
+    );
+    if (kind == null || !mounted) return;
+
+    setState(() => _syncing = true);
+    try {
+      switch (kind) {
+        case _BundleImportKind.tables:
+          final n = await CourseTransferService.importTables();
+          if (!mounted) return;
+          if (n <= 0) return;
+          await _load();
+          if (!mounted) return;
+          _toast('已导入 $n 份课表');
+        case _BundleImportKind.appearance:
+          final n = await CourseTransferService.importAppearance();
+          if (!mounted) return;
+          await _loadDisplaySettings();
+          if (!mounted) return;
+          _toast('已导入外观设置（$n 项）');
+        case _BundleImportKind.all:
+          final r = await CourseTransferService.importBundle();
+          if (!mounted) return;
+          if (r.tables <= 0 && !r.appearance) return;
+          if (r.tables > 0) await _load();
+          if (!mounted) return;
+          await _loadDisplaySettings();
+          if (!mounted) return;
+          _toast(r.tables <= 0
+              ? '已导入外观设置'
+              : (r.appearance
+                  ? '已导入 ${r.tables} 份课表与外观设置'
+                  : '已导入 ${r.tables} 份课表（文件里没有外观设置）'));
+      }
+    } catch (err) {
+      // CourseTransferException 自带可读文案（「不是掌上锡院的方案文件」等），
+      // 直接摊给用户；其他异常也只说一句，不打堆栈到界面上。
+      debugPrint('[import bundle] 失败: $err');
+      if (!mounted) return;
+      _toast('$err'.replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _syncing = false);
     }
   }
 

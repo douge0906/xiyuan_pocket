@@ -1,7 +1,7 @@
 name: xiyuan_pocket
 description: "掌上锡院 —— 无锡学院校园生活助手"
 publish_to: 'none'
-version: 1.0.10+33
+version: 1.0.10+39
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -16,6 +16,11 @@ dependencies:
   flutter_secure_storage: ^9.0.0
   flutter_local_notifications:
     path: third_party/flutter_local_notifications
+  # 学习通（超星）：作业与考试同步。用**本地 fork**（third_party/flutter_chaoxing），
+  # 上游 0.4.2 要 Dart >=3.9.0 + pointycastle ^4.0.0，本项目是 Dart 3.7.2 + 锁 3.9.1，
+  # 且已删掉与同步无关的签到/验证码两个文件。详见该目录下的 README 与库入口注释。
+  flutter_chaoxing:
+    path: third_party/flutter_chaoxing
   timezone: ^0.10.0
   permission_handler: ^11.3.1
   url_launcher: ^6.3.0

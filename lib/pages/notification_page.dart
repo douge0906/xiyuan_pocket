@@ -57,8 +57,11 @@ class _NotificationPageState extends State<NotificationPage>
 
   // ---------------- 「累计加载条数」渐隐提示 ----------------
   // 需求原文：「将累计加载的各项条数做成渐变消失提示」。
-  // 每次加载跑完弹一次，停 3 秒后淡出。**不占布局**（浮层），
+  // **只在用户主动下拉刷新后**弹一次，停 3 秒后淡出。**不占布局**（浮层），
   // 所以它出现和消失都不会让列表抖一下。
+  //
+  // 2026-11-23 修 bug：原来每次加载（含进入页面的自动更新）都弹，
+  // 用户每次进来都被一条「共 N 条」拦一下，实际信息量为零。
   Timer? _noticeTimer;
 
   /// 提示内容；`null` = 从来没弹过（首屏前）。
@@ -71,6 +74,15 @@ class _NotificationPageState extends State<NotificationPage>
 
   /// 已处理到的加载完成序号（见 [MessageRepository.loadSeq]）。
   int _seenLoadSeq = 0;
+
+  /// 本轮加载是否需要弹「共 N 条」。
+  ///
+  /// 🔴 2026-11-23 修 bug：「每次进入都会弹出现在加载了多少」。
+  /// 原来只要 [MessageRepository.loadSeq] 前进就弹，而进入消息页本身就会
+  /// 走一次 [MessageRepository.syncAll]（`_boot` + `_onEntered`），于是每次
+  /// 进来都弹一条 —— 那不是用户要的信息，是噪音。现在只有**用户自己拉**
+  /// （下拉刷新）才弹，自动更新静默完成。
+  bool _noticeWanted = false;
 
   // ---------------- 教程锚点（v2.0.0）----------------
   final GlobalKey _kTabsRow = GlobalKey();
@@ -101,7 +113,19 @@ class _NotificationPageState extends State<NotificationPage>
     _repo.addListener(_onRepoChanged);
     // 用户真正切到消息页时才更新（App 启动会预热所有 Tab，预热不联网）。
     _unsubEntered = CurrentTab.addListener(_onEntered);
+    // 从「我的 → 设置 → 消息设置」改开关时没有本页的 repository，
+    // 只能靠信号把「内存镜像过期了」传回来（见 MessageSettingsSignals）。
+    MessageSettingsSignals.autoRefreshChanged.addListener(_onAutoRefreshSignal);
     _boot();
+  }
+
+  /// 另一个入口改了「每次进入自动更新」→ 把开关重读进内存镜像。
+  ///
+  /// `initSettings()` 只读存储并 `_notify()`，幂等；本页已 dispose 时它也安全
+  /// （内部判 `_disposed`），这里再判一次 mounted 是防 setState 落到死树上。
+  void _onAutoRefreshSignal() {
+    if (!mounted) return;
+    unawaited(_repo.initSettings());
   }
 
   void _onRepoChanged() {
@@ -109,7 +133,12 @@ class _NotificationPageState extends State<NotificationPage>
     final seq = _repo.loadSeq;
     if (seq != _seenLoadSeq) {
       _seenLoadSeq = seq;
-      _armCountNotice();
+      // 序号照样推进（否则下一次用户主动刷新会被误判成「同一轮」），
+      // 但只有主动刷新那一次才弹提示。
+      if (_noticeWanted) {
+        _noticeWanted = false;
+        _armCountNotice();
+      }
     }
     setState(() {});
   }
@@ -201,6 +230,8 @@ class _NotificationPageState extends State<NotificationPage>
 
   @override
   void dispose() {
+    MessageSettingsSignals.autoRefreshChanged
+        .removeListener(_onAutoRefreshSignal);
     _unsubEntered?.call();
     _noticeTimer?.cancel();
     _repo.removeListener(_onRepoChanged);
@@ -332,7 +363,10 @@ class _NotificationPageState extends State<NotificationPage>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _booting ? '加载中…' : '共 ${_tabs.length} 个栏目',
+                  _booting
+                      ? '加载中…'
+                      // 「每日消息」是汇总视图、不是可订阅栏目，不计入栏目数。
+                      : '共 ${_tabs.where((t) => t.id != kDailyChannelId).length} 个栏目',
                   style: TextStyle(
                     fontSize: AppTheme.fontSmall,
                     color: context.textTertiary,
@@ -509,7 +543,17 @@ class _NotificationPageState extends State<NotificationPage>
       // 理由：更新条只有一条、进度是「N 个源里的第几个」，单刷一个源时
       // 那条进度只会显示 1/1 —— 与「总的更新」这个概念自相矛盾。
       // 另外它**不受「每次进入自动更新」影响** —— 那是用户的明确动作。
-      onRefresh: () => _repo.syncAll(),
+      onRefresh: () async {
+        // 用户明确要求的更新 —— 这一轮跑完要告诉 TA 拿到了多少条。
+        _noticeWanted = true;
+        try {
+          await _repo.syncAll();
+        } finally {
+          // syncAll 抛错时不弹（错误态自己会显示）；顺手清掉闸门，
+          // 免得下一次自动更新捡到这面旗子。
+          _noticeWanted = false;
+        }
+      },
       // 🔴 移动端默认**没有**滚动条（MaterialScrollBehavior 只给桌面平台加），
       //    长列表滑到哪儿全靠记忆 —— 这就是「滑动质感缺失」的一大块。
       //    这里显式加一根细滚动条，滑动时右侧淡入、停手后淡出。
@@ -547,6 +591,9 @@ class _NotificationPageState extends State<NotificationPage>
             key: ValueKey(m.id),
             message: m,
             isUnread: _repo.isUnread(m),
+            // 来源小标识：只有「每日消息」这种**跨来源混合列表**才需要，
+            // 单一栏目的列表里来源是显然的（页签写着），再标一次是噪音。
+            showBadge: ch.id == kDailyChannelId,
             onTap: () => _openDetail(ch, m),
           );
         },

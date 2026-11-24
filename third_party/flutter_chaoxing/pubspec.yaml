@@ -1,0 +1,23 @@
+name: flutter_chaoxing
+description: >-
+  学习通（超星）协议客户端 —— 掌上锡院的本地 fork，裁剪自 flutter_chaoxing 0.4.2。
+  只保留「登录 + 作业/考试列表」链路；删掉签到与验证码破解。
+publish_to: 'none'
+version: 0.4.2
+
+environment:
+  # 上游是 >=3.9.0，本项目是 Flutter 3.29.3 / Dart 3.7.2。
+  # 裁剪后剩下的 7 个文件里没有任何 3.8+ 专有语法（实测 analyze 0 issue）。
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  charset: ^2.0.1
+  crypto: ^3.0.7
+  # 与根 pubspec 对齐：本项目 dio 已在 ^5.4.0 上跑通。
+  dio: ^5.4.0
+  # 与根 pubspec 对齐：必须吃 3.9.1，不能升 4.x（WebVPN 的 AES 依赖它）。
+  pointycastle: 3.9.1
+  # 上游的 image 只被已删除的 chaoxing_captcha 使用，这里不再声明。
+  # 上游的 dev_dependencies（lints ^6.0.0 要求 SDK >= 3.8.0）已整段删除。
+
+# 上游没有 Flutter 平台侧代码，是纯 Dart 包（lib/ 里 package:flutter 零命中）。

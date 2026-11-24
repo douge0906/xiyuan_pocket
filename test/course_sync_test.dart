@@ -42,6 +42,17 @@ void main() {
       expect(CourseStorage.teachingWeek(day, DateTime(2026, 9, 7)), 5); // 正确
       expect(CourseStorage.teachingWeek(day, DateTime(2026, 8, 31)), 6); // 旧的 9/1 基准
     });
+
+    test('🔴 第 21 周起不能被「显示周数」夹住', () {
+      // 根因：teachingWeek 曾经用 weekCountCache（显示几页，默认 20）当上界，
+      // 而它的返回值同时被提醒排期、待办生成、今日课程消费 ——
+      // 第 21 周起这些逻辑全被算成第 20 周。上界必须是协议硬上限 25。
+      final start = DateTime(2026, 9, 7);
+      expect(CourseStorage.teachingWeek(DateTime(2027, 1, 25), start), 21);
+      expect(CourseStorage.teachingWeek(DateTime(2027, 2, 22), start), 25);
+      // 超过协议上限才夹：25 是 kMaxCourseWeeks
+      expect(CourseStorage.teachingWeek(DateTime(2027, 3, 22), start), 25);
+    });
   });
 
   group('第 1 周的「首次提醒」标记', () {

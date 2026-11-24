@@ -163,8 +163,10 @@ class LoginPrefetchService {
       } else {
         LoginSyncProgress.failed(LoginSyncStep.card, note: '未取到余额');
       }
-    } catch (_) {
-      LoginSyncProgress.failed(LoginSyncStep.card, note: '网络异常');
+    } catch (err) {
+      // 不再一律「网络异常」：这条路的失败几乎都是 CAS 节流或门户取票失败，
+      // `CampusException.toString()` 里就带着那句中文原因。
+      LoginSyncProgress.failed(LoginSyncStep.card, note: _reasonOf(err));
     }
 
     // 我的学业（培养方案 / 已修课程 / GPA）。
@@ -208,7 +210,11 @@ class LoginPrefetchService {
       } else {
         final info = await DormService.query(dorm);
         if (info == null) {
-          LoginSyncProgress.failed(LoginSyncStep.elec, note: '暂不可用');
+          // 电费失败**不抛异常**，真因只记在 lastLoginError 上（见 dorm_service）。
+          // 与电费卡（`balance_cards.dart` 的 `_loadElec`）保持同一口径。
+          final reason = DormService.lastLoginError.trim();
+          LoginSyncProgress.failed(LoginSyncStep.elec,
+              note: reason.isEmpty ? '暂不可用' : reason);
         } else {
           await DormService.saveElecCache(info, dorm);
           if (info.balance != null) {
@@ -221,8 +227,28 @@ class LoginPrefetchService {
                   : '¥ ${info.balance!.toStringAsFixed(2)}');
         }
       }
-    } catch (_) {
-      LoginSyncProgress.failed(LoginSyncStep.elec, note: '网络异常');
+    } catch (err) {
+      LoginSyncProgress.failed(LoginSyncStep.elec, note: _reasonOf(err));
     }
+  }
+
+  /// 把一次失败压成一句人能读的原因（截到 24 字，同步弹窗一行放得下）。
+  ///
+  /// 顺序：异常自带的 message → `DormService.lastLoginError` → 「网络异常」。
+  /// 前面两个都取不到才是真的没信息（那时「网络异常」也不算错）。
+  static String _reasonOf(Object err) {
+    final text = err.toString().replaceFirst('Exception: ', '').trim();
+    if (text.isNotEmpty) {
+      if (text.contains('Timeout')) return '网络超时';
+      if (text.contains('SocketException') ||
+          text.contains('ClientException') ||
+          text.contains('HandshakeException')) {
+        final login = DormService.lastLoginError.trim();
+        return login.isEmpty ? '连不上服务器' : login;
+      }
+      return text.length > 24 ? '${text.substring(0, 24)}…' : text;
+    }
+    final login = DormService.lastLoginError.trim();
+    return login.isEmpty ? '网络异常' : login;
   }
 }

@@ -65,10 +65,22 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
   /// 注销「用户进入」监听。
   void Function()? _unsubEntered;
 
-  /// 用户真正进入服务页 → 不重复刷新（余额已在预热时加载完，
-  /// 重复刷新会让数字滚动一次，观感上就是闪）。
+  /// 用户真正进入服务页。
+  ///
+  /// **成功状态下不重复刷新**（余额已在预热时加载完，重复刷新会让数字滚动一次，
+  /// 观感上就是闪 —— 2026-10-30 为此去掉了回前台的自动刷新，这里同理）。
+  ///
+  /// **失败状态下补刷一次**：首登时并发三次 CAS 登录会撞节流（见
+  /// `cas_client.dart` 的 8 秒窗口），一卡通与电费往往双双落空；用户从弹窗
+  /// 里选完宿舍再切到服务页，本来是最合理的「再试一次」时机，此前这里却是
+  /// 空函数体，只能杀进程。只在上次失败时联网，成功时一个请求都不发。
   void _onEntered(NavPageRef page) {
     if (page != NavPageRef.service || !mounted) return;
+    if (!_canQuery) return;
+    final cardFailed = _error != null;
+    final elecFailed = _dorm != null && _elec == null;
+    if (!cardFailed && !elecFailed) return;
+    unawaited(_refreshAll());
   }
 
   /// 宿舍变了（用户在「我的」页改的）→ 立刻作废旧电费并查新房间。
@@ -357,7 +369,12 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
         _elec = info;
         _elecError = null;
       } else {
-        _elecError = '暂不可用';
+        // 「查不到」有三种完全不同的原因：没登录 / 登录被节流、楼栋不在预置表、
+        // 网真的断了。`DormService.lastLoginError` 里已经有真因，此前这里无脑
+        // 写「暂不可用」，等于把三种情况说成同一句废话。
+        // 有真因就用真因，没有才退回「暂不可用」（例如纯网络失败）。
+        final reason = DormService.lastLoginError.trim();
+        _elecError = reason.isEmpty ? '暂不可用' : reason;
       }
     });
   }

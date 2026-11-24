@@ -69,4 +69,16 @@ const List<ToolModel> mainServices = [
     color: Color(0xFF1F2937),
     needsNetwork: false,
   ),
+  // 2026-11-23：学习通（超星）作业与考试同步。
+  //
+  // 它需要**两套凭证**：学校统一认证（进 App）+ 学习通账号（自己一份），
+  // 所以 `needsNetwork: true` 且进页面后自己再要一次绑定。
+  // 写出去的东西只有待办与考试安排，不碰课表/成绩/一卡通。
+  ToolModel(
+    id: 'chaoxing_sync',
+    name: '学习通同步',
+    icon: Icons.sync_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+  ),
 ];

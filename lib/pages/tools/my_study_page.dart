@@ -304,7 +304,7 @@ class _MyStudyPageState extends ConsumerState<MyStudyPage> {
                       color: context.textPrimary)),
               const SizedBox(height: 6),
               Text(
-                '以下为本机课表中的在读课程，仅供参考；不含培养方案、学分与通过状态。',
+                '以下为本机课表里的在读课程，仅供参考。',
                 style: TextStyle(
                     fontSize: AppTheme.fontSmall, color: context.textTertiary),
               ),

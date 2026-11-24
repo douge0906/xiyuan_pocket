@@ -9,6 +9,19 @@ import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_card.dart';
 
+/// 消息设置的**跨页信号**。
+///
+/// 为什么需要：设置页有两个入口 —— 消息页右上角齿轮（带 `repository`）与
+/// 我的 → 设置 → 消息设置（**不带**）。后者改完开关只写盘，消息页仓库里的
+/// 内存镜像不会更新，用户退回去照样按旧开关走。这里用一个 `ValueNotifier<int>`
+/// 广播「设置变了」，消息页收到后重读（`initSettings` 幂等）。
+class MessageSettingsSignals {
+  MessageSettingsSignals._();
+
+  /// 自增即代表「每次进入自动更新」这个开关被改过。
+  static final ValueNotifier<int> autoRefreshChanged = ValueNotifier<int>(0);
+}
+
 /// 消息设置（独立页面）。
 ///
 /// 入口：消息页右上角齿轮 → push 到本页。
@@ -61,6 +74,11 @@ class _MessageSettingsPageState extends State<MessageSettingsPage> {
     final repo = widget.repository;
     if (repo == null) {
       await StorageService.saveMessageAutoRefresh(v);
+      // 🔴 从「我的 → 设置 → 消息设置」进来时没有 repository（那是消息页自己的
+      // 实例，设置页拿不到）。此前这条分支只写盘就 return，消息页仓库里的
+      // `_autoRefresh` 内存镜像仍是旧值 —— 用户关掉开关、退出去进消息页，
+      // 照样联网；要杀进程重启才生效。改为写盘后广播，让消息页重读。
+      MessageSettingsSignals.autoRefreshChanged.value++;
       return;
     }
     // 仓库是会话内的真相：改它才会写存储，也才会被下次 setActive 读到。

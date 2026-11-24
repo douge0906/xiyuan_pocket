@@ -8,6 +8,7 @@ import 'message_channel_service.dart';
 import 'message_source.dart';
 import 'sources/cached_source.dart';
 import 'sources/campus_source.dart';
+import 'sources/daily_digest_source.dart';
 import 'sources/control_announcement_source.dart';
 import 'sources/jwc_source.dart';
 import 'storage_service.dart';
@@ -238,6 +239,16 @@ class MessageRepository extends ChangeNotifier {
   Future<List<MessageSource>> registerSources({Set<String>? subscribedIds}) async {
     final ids = subscribedIds ?? await MessageChannelService.loadSubscribed();
     _sources.clear();
+    // 🔴 「每日消息」排第一：`registeredSources` 的顺序就是 chip 顺序与
+    // PageView 页序（见 notification_page 的 `_tabs`），用户要它排最前。
+    // 它读的是别人的档案，所以**刷新时**必须排最后 —— 见 refreshAll 里的排序。
+    //
+    // 一个栏目都没订阅时**不注册**它：汇总视图没有可汇总的东西，
+    // 显示出来只会是一个永远空的页签，还会把「还没有订阅任何栏目」那个
+    // 引导空态挡掉（那个空态是按 `_tabs.isEmpty` 判断的）。
+    if (ids.isNotEmpty) {
+      _addSource(DailyDigestSource(subscribedIds: ids));
+    }
     if (ids.contains(kJwcChannelId)) _addSource(_jwc);
     if (ids.contains(kControlAnnouncementChannelId)) {
       _addSource(ControlAnnouncementSource());
@@ -317,7 +328,12 @@ class MessageRepository extends ChangeNotifier {
     FetchMode mode = FetchMode.full,
     void Function(int done, int total)? onProgress,
   }) async {
-    final sources = registeredSources;
+    // 🔴 纯本地源（「每日消息」）必须排到**最后**：
+    // 它读的是别的栏目刚写好的档案，排在前面就会拿到本轮还没刷新的旧数据，
+    // 表现为「每日消息里没有刚在教务处刷出来的新公告」。
+    // 注意 registeredSources 返回的是 growable: false，这里先拷一份再排。
+    final sources = [...registeredSources]
+      ..sort((a, b) => (a.isLocalOnly ? 1 : 0) - (b.isLocalOnly ? 1 : 0));
     final total = sources.length;
     // 一个源都没有时直接收工：否则更新条会闪一下「0/0」。
     if (total == 0) return 0;
