@@ -304,11 +304,14 @@ class MessageRepository extends ChangeNotifier {
   ///
   /// 两趟走：① [primeArchives] 铺档案（所有页签立刻有内容）
   /// ② [refreshAll] 串行联网更新（于是自动拿到 `done/total` 进度与计时）。
-  Future<void> syncAll() async {
+  /// [silent] = true 用于「进消息页时后台补一次网」：不亮更新条、不置 loading，
+  /// 用户看到的是本机档案直接在那儿、数字悄悄变新。
+  /// 用户主动下拉刷新（[notification_page] 的 RefreshIndicator）才传 false。
+  Future<void> syncAll({bool silent = false}) async {
     if (registeredSources.isEmpty) return;
     await primeArchives();
     if (_disposed) return;
-    await refreshAll(mode: FetchMode.incremental);
+    await refreshAll(mode: FetchMode.incremental, silent: silent);
   }
 
   /// 强刷**所有**已注册消息源，逐个串行。
@@ -327,6 +330,7 @@ class MessageRepository extends ChangeNotifier {
   Future<int> refreshAll({
     FetchMode mode = FetchMode.full,
     void Function(int done, int total)? onProgress,
+    bool silent = false,
   }) async {
     // 🔴 纯本地源（「每日消息」）必须排到**最后**：
     // 它读的是别的栏目刚写好的档案，排在前面就会拿到本轮还没刷新的旧数据，
@@ -338,16 +342,20 @@ class MessageRepository extends ChangeNotifier {
     // 一个源都没有时直接收工：否则更新条会闪一下「0/0」。
     if (total == 0) return 0;
     var done = 0;
-    _markBusy(); // 计时起点：与更新条出现是同一刻
-    _setProgress((done: done, total: total));
+    // [silent] = true 不亮更新条、不置 loading —— 用于「进页面时后台悄悄补一下」。
+    // 用户主动下拉刷新走非静默，那时确实需要看到进度。
+    if (!silent) {
+      _markBusy(); // 计时起点：与更新条出现是同一刻
+      _setProgress((done: done, total: total));
+    }
     onProgress?.call(done, total);
     try {
       for (final source in sources) {
         if (_disposed) break;
-        await load(source.channel.id, mode: mode);
+        await load(source.channel.id, mode: mode, silent: silent);
         if (_disposed) break;
         done++;
-        _setProgress((done: done, total: total));
+        if (!silent) _setProgress((done: done, total: total));
         onProgress?.call(done, total);
       }
     } finally {

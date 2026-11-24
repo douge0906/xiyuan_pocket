@@ -14,10 +14,19 @@ import 'campus3d_view_stub.dart'
 
 /// 校园地图（3D 白模，内置离线单文件）。
 ///
-/// 页面内容是 `assets/map/campus3d.html` —— 796 KB 的完全自包含单文件，
-/// 内联了 63 栋建筑的施工轮廓（来源 OpenStreetMap，ODbL 许可）与地物名。
-/// 双指缩放、拖动、点楼看详情、按分类筛选都在 HTML 内部实现；
-/// 不联网、不需要定位权限、不调用任何地图 SDK。
+/// 页面内容是 `assets/map/campus3d.html` —— 1.8 MB 的完全自包含单文件，
+/// 内联了 45 栋建筑轮廓（量自学校官方总平面图，与地面贴图逐像素对齐）、
+/// 4 个校门与明湖／田径场等地物名。双指缩放、拖动、点楼看详情、按分类筛选
+/// 都在 HTML 内部实现；不联网、不需要定位权限、不调用任何地图 SDK。
+///
+/// 移动端做过这些取舍（源码在 `D:/workdsh/campus3d`，改完 `vite build`
+/// 再把 `dist/index.html` 拷过来即可）：
+/// * 关闭 MSAA（`antialias:false`）、`powerPreference:'high-performance'`；
+/// * 像素总量封顶 ~1.1 M，按设备 DPR 自适应；
+/// * 阴影贴图 1024²，且 `shadowMap.autoUpdate=false` —— 场景完全静态，
+///   每帧重算深度图是纯浪费；只在装配完成后标脏一次；
+/// * 完全静止时跳过 `renderer.render`，标签仅在相机移动时每 2 帧排一次；
+/// * 射线拾取 hover 60ms / 点击 120ms 节流。
 ///
 /// 「切换方向」在竖屏 / 横屏之间切换，默认竖屏。
 class CampusMapPage extends StatefulWidget {
