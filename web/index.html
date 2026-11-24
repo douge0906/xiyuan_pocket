@@ -31,6 +31,20 @@
   <title>掌上锡院</title>
   <link rel="manifest" href="manifest.json">
 
+  <!--
+    首屏预加载（R3）：main.dart.js 与 canvaskit 引擎是首屏的全部关键路径，
+    共约 3.7MB（gzip）。源站出口只有 ~470KB/s，不预加载就得等十几秒。
+
+    两条硬约束：
+    * main.dart.js 的 preload **不能加 crossorigin** —— loader 注入的是
+      不带 crossorigin 的 <script>（no-cors），加了 crossorigin 会变成两条
+      不同模式的请求，等于把 1.6MB 多下一遍。
+    * canvaskit.js / canvaskit.wasm 由 fetch()/import() 加载，走 CORS 模式，
+      所以 preload 要带 crossorigin="anonymous" 才能复用同一条连接。
+  -->
+  <link rel="preload" href="main.dart.js" as="script" fetchpriority="high">
+  <link rel="modulepreload" href="canvaskit/chromium/canvaskit.js" crossorigin="anonymous">
+
   <style>
     /* 首屏加载占位：Flutter 引擎就绪前展示，首帧后由脚本移除。
        配色对齐安卓启动页（launch_bg #F8F9FC + 主色 #1F2937），避免首帧深浅跳变。
@@ -96,12 +110,91 @@
     <div class="loader-sub">正在加载…</div>
   </div>
   <script>
-    // 首帧渲染后移除占位；兜底 10 秒强制移除，避免异常时卡死白屏。
+    // 首帧渲染后移除占位。
+    //
+    // R0：兜底不再「强制移除」，改成换文案。旧写法 10 秒后直接把占位删掉，
+    // 于是慢网用户看到的是**一片空白**（底色由 body 兜住但没有 logo 与提示），
+    // 看起来像页面坏了。改成「网络较慢仍在加载…」后，即使引擎还没就绪，
+    // 用户也知道是加载中而不是白屏。
     (function () {
       var el = document.getElementById('app-loading');
-      function hide() { if (el) { el.remove(); el = null; } }
+      var sub = el ? el.querySelector('.loader-sub') : null;
+      var hidden = false;
+      function hide() {
+        if (hidden) return;
+        hidden = true;
+        if (el) { el.remove(); el = null; sub = null; }
+      }
+      function slowHint() {
+        if (hidden || !sub) return;
+        sub.textContent = '网络较慢，仍在加载…';
+      }
       window.addEventListener('flutter-first-frame', hide, { once: true });
-      setTimeout(hide, 10000);
+      setTimeout(slowHint, 10000);
+      // 再兜一层：60 秒还没首帧就放行页面，别把用户永远挡在占位后面。
+      setTimeout(hide, 60000);
+    })();
+  </script>
+  <script>
+    // 首屏收尾：预加载 wasm + 清理旧 Service Worker + 首帧后注册轻量 SW。
+    //
+    // 1) wasm 预加载：Chrome / Edge / 安卓 WebView 用 chromium 变体
+    //    （5.3MB，gzip 2.0MB），Safari / Firefox 用全量变体（6.6MB，gzip 2.7MB）。
+    //    判浏览器要靠 UA，判不准就得两个都预加载（多下一个 5MB），所以这里
+    //    只对 Chromium 系预加载 —— 预加载错版本只是白预热一次，不影响功能。
+    // 2) 清理旧 SW：老版 flutter_service_worker.js 的资源键不带 /h5/ 前缀，
+    //    在 /h5/ 下接管不到任何资源，却一直预缓存整个外壳。这里把老的
+    //    registration 注销掉、把 flutter-* 缓存删掉，避免它们继续占着磁盘
+    //    并在后台偷跑。
+    // 3) 首帧后再注册轻量 SW：Chrome 判定「可安装」要求存在带 fetch 监听的
+    //    Service Worker。旧的 Flutter SW 会挡首屏，所以新 SW 推迟到首帧后
+    //    注册，且它不拦截任何请求。
+    (function () {
+      try {
+        var ua = navigator.userAgent || '';
+        var chromium = /Chrome|Chromium|Edg\/|CriOS|Android/.test(ua);
+        if (chromium) {
+          var link = document.createElement('link');
+          link.rel = 'preload';
+          link.as = 'fetch';
+          link.crossOrigin = 'anonymous';
+          link.href = 'canvaskit/chromium/canvaskit.wasm';
+          document.head.appendChild(link);
+        }
+      } catch (e) { /* 预加载失败不影响功能 */ }
+
+      function cleanupOld() {
+        try {
+          if (!navigator.serviceWorker) return;
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (r) {
+              var url = (r.active && r.active.scriptURL) || (r.installing && r.installing.scriptURL) || '';
+              // 老的是 flutter_service_worker.js；新的 pwa-sw.js 留着。
+              if (url.indexOf('flutter_service_worker.js') >= 0) {
+                r.unregister();
+              }
+            });
+          }).catch(function () {});
+          if (window.caches && caches.keys) {
+            caches.keys().then(function (keys) {
+              keys.forEach(function (k) {
+                if (k.indexOf('flutter-') === 0) caches.delete(k);
+              });
+            }).catch(function () {});
+          }
+        } catch (e) { /* 清理失败不影响功能 */ }
+      }
+      cleanupOld();
+
+      function registerLightSw() {
+        try {
+          if (!navigator.serviceWorker) return;
+          navigator.serviceWorker.register('pwa-sw.js').catch(function () {});
+        } catch (e) { /* 注册失败不影响功能 */ }
+      }
+      window.addEventListener('flutter-first-frame', registerLightSw, { once: true });
+      // 首帧事件万一没来（引擎异常），30 秒后也把 SW 注册上，别丢掉安装能力。
+      setTimeout(registerLightSw, 30000);
     })();
   </script>
   <script src="flutter_bootstrap.js" async></script>
