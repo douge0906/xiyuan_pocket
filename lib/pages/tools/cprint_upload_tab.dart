@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../services/campus/jwgl_client.dart' show CampusException;
 import '../../services/campus/cprint_client.dart';
 import '../../services/campus/cprint_models.dart';
 import '../../theme/app_theme.dart';
@@ -71,6 +72,8 @@ class _CprintUploadTabState extends State<CprintUploadTab> {
       _toast('无法打开文件选择器');
     }
   }
+
+  bool get _isPdf => (_file?.name ?? '').toLowerCase().endsWith('.pdf');
 
   String get _paperLabel => switch (_paperId) {
         -1 => '不指定',
@@ -153,13 +156,32 @@ class _CprintUploadTabState extends State<CprintUploadTab> {
       if (!mounted) return;
       setState(() => _file = null);
       widget.onUploaded?.call();
+    } on TimeoutException {
+      // 实测（2026-11-25）：PDF 打到这台服务器会卡在转换那一步整整两分钟，
+      // 客户端 25 秒就超时。这时候说「读取文件失败」既不准确也帮不上忙。
+      if (!mounted) return;
+      if (dialogOpen) {
+        dialogOpen = false;
+        nav.pop();
+      }
+      _toast(_isPdf
+          ? 'PDF 上传超时了。图书馆这台服务器转 PDF 经常卡住，建议先把 PDF 转成图片再传。'
+          : '上传超时了，请检查网络后重试。');
+    } on CampusException catch (err) {
+      if (!mounted) return;
+      if (dialogOpen) {
+        dialogOpen = false;
+        nav.pop();
+      }
+      _toast(err.message.isEmpty ? '上传没有成功，请稍后再试。' : err.message);
     } catch (e) {
       if (!mounted) return;
       if (dialogOpen) {
         dialogOpen = false;
         nav.pop();
       }
-      _toast('读取文件失败，请重试');
+      debugPrint('[cprint] upload 未预期异常：$e');
+      _toast('这个文件没能传上去，换一个再试。');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

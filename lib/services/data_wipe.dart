@@ -58,7 +58,7 @@ class DataWipe {
       DormService.clearToken();
     } catch (_) {}
 
-    // 云打印扫描件：会话票（OSESSIONID）落在安全存储里，换账号后如果还留着，
+    // 云打印扫描件：会话（整份 cookie 罐）落在安全存储里，换账号后如果还留着，
     // 下一个人进来会看到上一个人的扫描件列表。必须一起清。
     try {
       CprintSessionStore.clear();

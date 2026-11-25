@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert' show base64Decode;
 import 'dart:typed_data' show Uint8List;
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 
 import '../net_mode.dart';
 import '../storage_service.dart';
@@ -116,6 +116,21 @@ class CprintClient {
             NetMode.current == CampusNetMode.webvpn ? WebVpn.wrapUrl : null,
       );
 
+  /// 当前网络模式的短标识，用来给缓存分区。
+  ///
+  /// 校内罐里是站点自己的 `OSESSIONID`，校外罐里是网关票 —— 互不通用，
+  /// 拿错区的罐去试只会白吃一次 `code:4`。所以缓存按模式分开存。
+  static String _netModeKey() {
+    switch (NetMode.current) {
+      case CampusNetMode.direct:
+        return 'direct';
+      case CampusNetMode.webvpn:
+        return 'webvpn';
+      case CampusNetMode.offline:
+        return 'offline';
+    }
+  }
+
   /// 授权：能用缓存就用缓存，不能用就跑一次完整 SSO。
   ///
   /// [password] 不传时自己去读本机保存的密码；读出来是空串（用户关了
@@ -144,11 +159,15 @@ class CprintClient {
     _username = sno;
 
     // ① 先用缓存
+    //
+    // 缓存里是**整份 cookie 罐**（不是一个 cookie 名）：校内是 OSESSIONID，
+    // 校外是网关票，两者形状不同、都只能靠 Auth/Check 判定有效性。
     if (!force) {
-      final cached = await CprintSessionStore.load(sno);
+      final cached =
+          await CprintSessionStore.load(sno, mode: _netModeKey());
       if (cached != null && cached.isNotEmpty) {
         final s = _newSession();
-        s.importCookies(<String, String>{'OSESSIONID': cached});
+        s.importCookies(cached);
         final chk = await _check(s);
         if (chk != null && chk.code == 0) {
           _session = s;
@@ -156,8 +175,12 @@ class CprintClient {
           return CprintAuthResult(CprintAuthStage.ok, '已连接云打印',
               trueName: _trueName);
         }
-        // 缓存失效：清掉，走完整链
-        await CprintSessionStore.clear();
+        // 只在**站点明确说失效**（解析出 code 且不为 0）时清缓存。
+        // `_check` 返回 null 通常是网络抖动 / 网关抽风，那种情况下罐可能还是好的，
+        // 清掉它等于让用户白等一次完整 SSO —— 得不偿失。
+        if (chk != null && chk.code != 0) {
+          await CprintSessionStore.clear();
+        }
         s.close();
       }
     }
@@ -224,14 +247,27 @@ class CprintClient {
         );
       }
 
-      final osession = s.cookies['OSESSIONID'] ?? '';
-      if (osession.isEmpty) {
+      // 🔴 这里**不能**再检查 `s.cookies['OSESSIONID']`。
+      //
+      // 校外走 WebVPN 时站点的 Set-Cookie 会被网关吞掉，罐里只有
+      // `wengine_vpn_ticket…`；而同一份罐接着调 Auth/Check 明明是 code:0。
+      // 旧实现就在这一行把已经成功的授权判成失败，用户看到
+      // 「授权走完了，但站点没有下发会话」（2026-11-25 实机截图 m12060）。
+      //
+      // 判定标准改成「整罐非空」：`_check` 已经替我们证明会话成立，
+      // 罐空意味着连网关票都没拿到，那才是真的没登上。
+      final jar = s.exportCookies();
+      if (jar.isEmpty) {
+        debugPrint('[cprint] 授权链走完但 cookie 罐是空的；'
+            'mode=${_netModeKey()} url=${s.cookies.length}');
         return const CprintAuthResult(
           CprintAuthStage.failed,
-          '授权走完了，但站点没有下发会话，请稍后重试。',
+          '没能连上图书馆云打印的登录状态，请稍后重试。',
         );
       }
-      await CprintSessionStore.save(sno, osession);
+      await CprintSessionStore.save(sno, mode: _netModeKey(), cookies: jar);
+      debugPrint('[cprint] 会话已缓存：mode=${_netModeKey()} '
+          'cookies=${jar.keys.join(",")}');
       _session = s;
       _trueName = chk.trueName.isEmpty ? null : chk.trueName;
       return CprintAuthResult(CprintAuthStage.ok, '已连接云打印',
@@ -258,6 +294,19 @@ class CprintClient {
       );
     }
   }
+
+  /// 仅供测试 / 诊断：把 [authorize] 里那段 ①→⑤ 单独暴露出来。
+  ///
+  /// 为什么需要它：校外走 WebVPN 这条路只能在真机或本机联网时验证，
+  /// 而 [authorize] 依赖 NetMode 探测结果，测试里没法把模式摆成 webvpn。
+  /// 单独暴露这一跳，「网关包装 + cookie 抓取」这段最容易错的部分就能被真跑一次。
+  @visibleForTesting
+  static Future<String?> debugSsoToCprint(
+    CampusSession session,
+    String tgt,
+    String password,
+  ) =>
+      _ssoToCprint(session, tgt, password);
 
   /// 跑 ①→⑤：SSoPage → authcenter → doAuth。返回 ST（成功时非空）。
   ///
