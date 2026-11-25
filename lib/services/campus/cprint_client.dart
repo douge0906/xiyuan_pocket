@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import '../net_mode.dart';
 import '../storage_service.dart';
 import 'campus_session.dart';
@@ -237,7 +239,21 @@ class CprintClient {
       return CprintAuthResult(CprintAuthStage.failed, e.message);
     } catch (e) {
       s.close();
-      return CprintAuthResult(CprintAuthStage.failed, '云打印授权失败：$e');
+      // 未预期的异常（SocketException / 解析错误 / 超时）。
+      // 原始 `$e` 里通常是 `SocketException: OS Error...` 这种，直接显示
+      // 只会让人以为 App 坏了，所以按「网络类 / 其它」分开说。
+      debugPrint('[cprint] authorize 未预期异常：$e');
+      final net = e is Exception &&
+          (e.toString().contains('SocketException') ||
+              e.toString().contains('TimeoutException') ||
+              e.toString().contains('HandshakeException') ||
+              e.toString().contains('ClientException'));
+      return CprintAuthResult(
+        CprintAuthStage.failed,
+        net
+            ? '网络不太稳定，云打印没连上，请稍后重试。'
+            : '云打印连接失败，请稍后重试。',
+      );
     }
   }
 
@@ -247,15 +263,26 @@ class CprintClient {
   /// 清掉重登一次通常就好，而这比让用户看到「授权失败」体验好得多。
   static Future<String?> _ssoToCprint(
       CampusSession s, String tgt, String password) async {
+    // 🔴 `backurl` 是**必填**的。少了它服务端不是「忽略参数」，
+    //    而是把整个 /Auth/SSoPage 当成不存在的 action 直接 404：
+    //    {"Message":"No HTTP resource was found that matches the request URI ..."}
+    //    2026-11-25 实机踩到（vcode42 的「云打印入口返回 404」就是这个），
+    //    用 curl 对拍确认：无 backurl → 404，带 backurl → 200 + 授权地址。
     final r = await s.get(
-      '$_api/Auth/SSoPage',
+      '$_api/Auth/SSoPage?backurl=${Uri.encodeComponent(backUrl)}',
       headers: const {'Accept': 'application/json, text/plain, */*'},
     );
-    if (!r.ok) throw CampusException('云打印入口返回 ${r.statusCode}');
+    if (!r.ok) {
+      // 技术细节只进日志。用户看到「云打印入口返回 404」既不懂也帮不上忙，
+      // 实机截图里正是这句话（m10676）。
+      debugPrint('[cprint] SSoPage HTTP ${r.statusCode}');
+      throw CampusException('图书馆云打印这段时间连不上，请过一会儿再试。');
+    }
     final j = CampusSession.tryJson(r.body);
     final authUrl = (j?['result'] ?? '').toString();
     if (authUrl.isEmpty) {
-      throw CampusException('云打印入口没有返回授权地址');
+      debugPrint('[cprint] SSoPage 无 result：${r.body.length} 字节');
+      throw CampusException('图书馆云打印改版了，暂时连不上，请过一会儿再试。');
     }
 
     // ② 拿 service：Location 里 `service=` 后面那串（urlencoded）
@@ -268,7 +295,8 @@ class CprintClient {
     }
     if (service.isEmpty) {
       // 有的部署直接回 200 + 一段 JS 跳转，这里不猜，直接报错
-      throw CampusException('统一认证没有给出回调地址（可能站点改版）');
+      debugPrint('[cprint] authcenter 无 service：status=${step.statusCode} loc=$loc');
+      throw CampusException('学校统一认证没有正常跳转，请稍后重试。');
     }
 
     // ③④ 只换票不消费
@@ -289,7 +317,10 @@ class CprintClient {
       '$service${sep}ticket=${Uri.encodeComponent(st)}',
       headers: {'Referer': '${CasClient.casBase}/'},
     );
-    if (!chain.ok) throw CampusException('云打印登录跳转失败（${chain.statusCode}）');
+    if (!chain.ok) {
+      debugPrint('[cprint] doAuth HTTP ${chain.statusCode}');
+      throw CampusException('图书馆云打印登录没走完，请重新授权一次。');
+    }
     return st;
   }
 
@@ -347,7 +378,7 @@ class CprintClient {
       if (j == null) {
         return CprintScanResult(
           errorCode: -1,
-          message: '云打印返回了无法识别的内容（状态 ${r.statusCode}）',
+          message: '云打印返回的内容看不懂，请稍后重试。',
           items: const [],
         );
       }

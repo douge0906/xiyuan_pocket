@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/service_group.dart';
 import '../models/tool_model.dart';
 
 /// 服务页全部服务的**唯一数据源**（v1.9.0：原为 toolbox_page 内的私有常量）。
@@ -12,6 +13,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.assessment_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'exam_query',
@@ -19,6 +21,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.event_note_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'empty_classroom',
@@ -26,6 +29,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.meeting_room_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'my_study',
@@ -33,6 +37,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.school_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'library',
@@ -40,6 +45,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.folder_special_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.tools,
   ),
   ToolModel(
     id: 'xyl_calendar',
@@ -47,6 +53,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.calendar_month_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.study,
   ),
   ToolModel(
     id: 'textbook',
@@ -54,6 +61,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.menu_book_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.study,
   ),
   ToolModel(
     id: 'campus_map',
@@ -61,6 +69,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.map_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.campus,
   ),
   ToolModel(
     id: 'student_handbook',
@@ -68,6 +77,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.auto_stories_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.tools,
   ),
   // 2026-11-23：学习通（超星）作业与考试同步。
   //
@@ -80,6 +90,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.sync_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.study,
   ),
   // 2026-11-25：图书馆云打印的扫描件。
   //
@@ -91,6 +102,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.document_scanner_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.tools,
   ),
   // 2026-11-25：同学们自己上传、审核通过的班级课表。
   //
@@ -102,5 +114,6 @@ const List<ToolModel> mainServices = [
     icon: Icons.school_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.study,
   ),
 ];

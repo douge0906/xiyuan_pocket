@@ -642,7 +642,9 @@ class _CprintScanPageState extends State<CprintScanPage> {
                       size: 18, color: AppTheme.primaryColor),
                   const SizedBox(width: 8),
                   Text(
-                    '需要授权',
+                    // 不叫「需要授权」—— 用户不知道要授权给谁、为什么。
+                    // 这一屏唯一要做的事就是「登录一次」，标题直接说这件事。
+                    '登录一次图书馆云打印',
                     style: TextStyle(
                       fontSize: AppTheme.fontTitle,
                       fontWeight: FontWeight.w600,
@@ -668,12 +670,13 @@ class _CprintScanPageState extends State<CprintScanPage> {
                     final ok = await _askPassword();
                     if (ok) await _loadList();
                   },
-                  child: const Text('重新授权'),
+                  child: const Text('用统一认证登录'),
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                '用你登录掌上锡院的统一认证账号。校外会先连 WebVPN。',
+                '用你登录掌上锡院的统一认证账号，不用另外注册。'
+                '不在校园网时会自动走学校的 WebVPN。',
                 style: TextStyle(
                   fontSize: AppTheme.fontSmall,
                   height: 1.5,

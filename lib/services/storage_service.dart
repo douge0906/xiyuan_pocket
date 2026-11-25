@@ -218,6 +218,37 @@ class StorageService {
     await prefs.setStringList(_kHiddenServices, ids);
   }
 
+  // ---------------- 服务页收藏（2026-11-25） ----------------
+  // 收藏 = 「我常用，钉在最上面」。存 id 列表，顺序不重要（同组内按清单原序）。
+  static const String _kFavoriteServices = 'favorite_services';
+
+  static Future<List<String>> loadFavoriteServices() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kFavoriteServices) ?? <String>[];
+  }
+
+  static Future<void> saveFavoriteServices(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kFavoriteServices, ids);
+  }
+
+  // ---------------- 服务页排序模式（2026-11-25） ----------------
+  // 'manual' = 用户拖出来的顺序（默认，向后兼容）
+  // 'usage'  = 按使用次数从多到少
+  // 收藏永远优先于两种模式 —— 它不是排序，是「钉住」。
+  static const String _kServiceSortMode = 'service_sort_mode';
+
+  static Future<String> loadServiceSortMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_kServiceSortMode) ?? 'manual';
+    return v == 'usage' ? 'usage' : 'manual';
+  }
+
+  static Future<void> saveServiceSortMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kServiceSortMode, mode == 'usage' ? 'usage' : 'manual');
+  }
+
   // ---- 我的成绩（本地缓存，仅在推送时更新） ----
 
   static const String _kGradeCache = 'grade_cache_v1';
