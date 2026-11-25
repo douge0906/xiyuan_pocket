@@ -177,6 +177,64 @@ void main() {
     });
   });
 
+  group('DormBridge.turnover', () {
+    test('成功链路：action=turnover，分页参数照客户端给的原样带过去', () async {
+      final driver = _FakeDriver();
+      DormWebClient.debugClient = _FakeClient(ticketBody);
+      DormBridge.driver = driver;
+      driver.onBridgeOpen = () {
+        scheduleMicrotask(() => driver.emit({
+              'source': 'xiyuan-bridge',
+              'type': 'dorm-result',
+              'payload': {
+                'ok': true,
+                'code': 200,
+                'records': [
+                  {'tranamt': 35, 'resume': '电子账户消费', 'typeFrom': '2'},
+                ],
+                'total': 204,
+                'current': 2,
+                'pages': 21,
+              },
+            }));
+      };
+
+      final payload = await DormBridge.turnover(
+        session: () async => 'sid-1',
+        page: 2,
+        size: 10,
+        type: '1',
+      );
+
+      expect(driver.opened.first, 'about:blank');
+      final bridgeUrl = driver.opened[2];
+      expect(bridgeUrl, contains('action=turnover'));
+      // 服务端只认 `current`（传 pageNum 会恒回第 1 页）。
+      expect(bridgeUrl, contains('current=2'));
+      expect(bridgeUrl, contains('pageSize=10'));
+      expect(bridgeUrl, contains('type=1'));
+      expect((payload['records'] as List).length, 1);
+      expect(payload['total'], 204);
+      // 流水只是取数据：窗口用完就关。
+      expect(driver.closed, isTrue);
+    });
+
+    test('弹窗被拦截：直接抛拦截文案，不发网络请求', () async {
+      final driver = _FakeDriver()..blockOpen = true;
+      DormWebClient.debugClient = _FakeClient(ticketBody);
+      DormBridge.driver = driver;
+
+      await expectLater(
+        DormBridge.turnover(session: () async => 'sid-1'),
+        throwsA(isA<CampusException>().having(
+          (e) => e.message,
+          'message',
+          DormBridge.popupBlockedMessage,
+        )),
+      );
+    });
+  });
+
   group('DormBridge.openRecharge', () {
     Future<String?> runRecharge({
       required _FakeDriver driver,

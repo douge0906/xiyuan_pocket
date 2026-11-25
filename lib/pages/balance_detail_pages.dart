@@ -316,23 +316,8 @@ class _CardBalancePageState extends State<CardBalancePage> {
     if (_items.isEmpty) {
       // 空态也用手绘插画，与全 App 的空状态观感统一。
       //
-      // Web 端拿不到交易流水（平台侧接口在浏览器里不可用），这是
-      // **功能边界**而不是「网络坏了」—— 原来统一写「暂时无法获取 /
-      // 检查网络后重试」，会把用户引去反复重试一个永远不会成功的操作。
-      if (kIsWeb) {
-        return Container(
-          decoration: base,
-          padding: const EdgeInsets.symmetric(vertical: 18),
-          child: AppEmptyState(
-            variant: EmptyArtVariant.wallet,
-            title: '网页版暂不支持交易流水',
-            subtitle: '余额与充值在网页版照常可用，明细请在手机 App 内查看',
-            actionLabel: '刷新余额',
-            onAction: _updating ? null : _manualUpdate,
-            compact: true,
-          ),
-        );
-      }
+      // Web 端现在也能读到流水（浏览器桥经网关 origin 同源读平台），所以不再
+      // 区分平台：真失败了就按「暂时无法获取 / 检查网络后重试」引导。
       return Container(
         decoration: base,
         padding: const EdgeInsets.symmetric(vertical: 18),

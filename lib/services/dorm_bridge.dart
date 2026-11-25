@@ -97,6 +97,25 @@ class DormBridge {
     return map.cast<String, dynamic>();
   }
 
+  /// 用浏览器桥接读一卡通交易流水（分页）。
+  ///
+  /// 返回桥页透传的平台原始回执：`records` / `total` / `current` / `pages`。
+  /// 分页参数与安卓端一致（服务端认 `current`，不是 `pageNum`）。
+  static Future<Map<String, dynamic>> turnover({
+    required Future<String> Function() session,
+    int page = 1,
+    int size = 20,
+    String type = '',
+  }) async {
+    return _exchange(
+      session: session,
+      action: 'turnover',
+      current: page,
+      pageSize: size,
+      type: type,
+    );
+  }
+
   /// 打开电费 / 一卡通充值页（返回 null = 成功，非 null = 给用户看的原因）。
   ///
   /// 为什么地址也要桥页现拼：充值页 URL 里要带平台 `access_token`，而平台只有
@@ -160,6 +179,9 @@ class DormBridge {
     String campus = '',
     String building = '',
     String room = '',
+    int? current,
+    int? pageSize,
+    String type = '',
     bool keepWindow = false,
   }) async {
     // ① 占位窗：必须在用户手势内**同步**打开，抢在任何 await 之前。
@@ -219,6 +241,9 @@ class DormBridge {
         campus: campus,
         building: building,
         room: room,
+        current: current,
+        pageSize: pageSize,
+        type: type,
       );
       if (!driver.open('${ticket.gatewayOrigin}${ticket.bridgePath}#$fragment')) {
         throw CampusException(popupBlockedMessage);
@@ -248,6 +273,9 @@ class DormBridge {
     String campus = '',
     String building = '',
     String room = '',
+    int? current,
+    int? pageSize,
+    String type = '',
   }) {
     final pairs = <String, String>{
       'action': action,
@@ -259,6 +287,9 @@ class DormBridge {
     if (campus.isNotEmpty) pairs['campus'] = campus;
     if (building.isNotEmpty) pairs['building'] = building;
     if (room.isNotEmpty) pairs['room'] = room;
+    if (current != null) pairs['current'] = '$current';
+    if (pageSize != null) pairs['pageSize'] = '$pageSize';
+    if (type.isNotEmpty) pairs['type'] = type;
     return pairs.entries
         .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
         .join('&');

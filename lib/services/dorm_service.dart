@@ -924,9 +924,21 @@ class DormService {
       return debugFetcher(page: page, size: size, type: type);
     }
     if (_isWeb) {
-      // Web 端没有「消费流水」端点（控制端只做电费查询 + 充值），
-      // 返回 null = 失败，界面会显示缓存里的旧数据 / 空态。
-      return null;
+      // Web 端：流水走浏览器桥（平台接口在网关 origin 内同源可读，
+      // 服务端出口 IP 被网关 403，只能由用户浏览器去拿）。
+      try {
+        final payload = await DormBridge.turnover(
+          session: _webSessionForBridge,
+          page: page,
+          size: size,
+          type: type,
+        );
+        return _parseTurnoverPage(payload, page);
+      } on CampusException {
+        return null;
+      } catch (_) {
+        return null;
+      }
     }
     var result = await _fetchTurnoverOnce(page: page, size: size, type: type);
     // 平台 token 过期时请求会清 token 并返回 null；自动重登一次，
@@ -935,6 +947,39 @@ class DormService {
       result = await _fetchTurnoverOnce(page: page, size: size, type: type);
     }
     return result;
+  }
+
+  /// 把平台流水回执（`{records,total,current,pages}`）解析成页面模型。
+  ///
+  /// 安卓直连与 Web 桥接共用这一份口径：`tranamt`/`cardBalance` 单位是**分**，
+  /// `typeFrom == '1'` 是收入。
+  static CardTurnoverPage _parseTurnoverPage(
+    Map<String, dynamic> d,
+    int page,
+  ) {
+    final records = (d['records'] as List<dynamic>?) ?? const [];
+    final list = <CardTxn>[];
+    for (final item in records) {
+      if (item is! Map) continue;
+      final m = item.cast<String, dynamic>();
+      final fen = int.tryParse('${m['tranamt'] ?? ''}') ?? 0;
+      final bal = int.tryParse('${m['cardBalance'] ?? ''}');
+      final income = '${m['typeFrom'] ?? ''}' == '1';
+      list.add(CardTxn(
+        time: '${m['jndatetimeStr'] ?? ''}',
+        title: '${m['payName'] ?? m['resume'] ?? ''}',
+        place: '${m['locationName'] ?? ''}',
+        amountYuan: fen / 100,
+        isIncome: income,
+        balanceYuan: bal == null ? null : bal / 100,
+      ));
+    }
+    return CardTurnoverPage(
+      items: list,
+      total: int.tryParse('${d['total'] ?? 0}') ?? 0,
+      current: int.tryParse('${d['current'] ?? page}') ?? page,
+      pages: int.tryParse('${d['pages'] ?? 1}') ?? 1,
+    );
   }
 
   static Future<CardTurnoverPage?> _fetchTurnoverOnce({
@@ -969,29 +1014,7 @@ class DormService {
       }
       if (j['code']?.toString() != '200') return null;
       final d = (j['data'] as Map?)?.cast<String, dynamic>() ?? const {};
-      final records = (d['records'] as List<dynamic>?) ?? const [];
-      final list = <CardTxn>[];
-      for (final item in records) {
-        if (item is! Map) continue;
-        final m = item.cast<String, dynamic>();
-        final fen = int.tryParse('${m['tranamt'] ?? ''}') ?? 0;
-        final bal = int.tryParse('${m['cardBalance'] ?? ''}');
-        final income = '${m['typeFrom'] ?? ''}' == '1';
-        list.add(CardTxn(
-          time: '${m['jndatetimeStr'] ?? ''}',
-          title: '${m['payName'] ?? m['resume'] ?? ''}',
-          place: '${m['locationName'] ?? ''}',
-          amountYuan: fen / 100,
-          isIncome: income,
-          balanceYuan: bal == null ? null : bal / 100,
-        ));
-      }
-      return CardTurnoverPage(
-        items: list,
-        total: int.tryParse('${d['total'] ?? 0}') ?? 0,
-        current: int.tryParse('${d['current'] ?? page}') ?? page,
-        pages: int.tryParse('${d['pages'] ?? 1}') ?? 1,
-      );
+      return _parseTurnoverPage(d, page);
     } catch (_) {
       return null;
     } finally {
