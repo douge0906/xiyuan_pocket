@@ -88,6 +88,24 @@ void main() {
     expect(id, isNotEmpty);
     expect(id.startsWith('xiyuan-'), isFalse);
   });
+
+  test('网页版随机兜底带 web- 前缀，安卓侧保持无前缀', () {
+    final web = DeviceIdentity.randomInstallId(isWeb: true);
+    final android = DeviceIdentity.randomInstallId(isWeb: false);
+
+    expect(web.startsWith('web-'), isTrue, reason: '控制台要能一眼认出网页版');
+    expect(web.length, 'web-'.length + 22, reason: '随机 16 字节 base64url 是 22 位');
+    expect(android.startsWith('web-'), isFalse, reason: '安卓保持历史行为，不加前缀');
+    expect(android.startsWith('xiyuan-'), isFalse);
+    expect(android.length, 22);
+    expect(web, isNot(android), reason: '两次随机必须不同');
+  });
+
+  test('网页版前缀不会和安卓派生值混淆', () {
+    final web = DeviceIdentity.randomInstallId(isWeb: true);
+    expect(web.startsWith('xiyuan-'), isFalse);
+    expect(web.substring('web-'.length), isNotEmpty);
+  });
 }
 
 /// 与 DeviceIdentity 内部同一个 SHA-256（pointycastle），保持对拍一致。

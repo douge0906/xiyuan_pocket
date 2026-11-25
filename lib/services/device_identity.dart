@@ -34,7 +34,7 @@ class DeviceIdentity {
 
   static final ECDomainParameters _domain = ECDomainParameters('secp256r1');
 
-  /// 安装标识（首次启动生成，随机 16 字节 base64url）。
+  /// 安装标识（首次启动生成；安卓由 ANDROID_ID 派生，网页版随机 + `web-` 前缀）。
   final String installationId;
 
   final BigInt _privateScalar;
@@ -80,6 +80,11 @@ class DeviceIdentity {
   /// 注意这里是**单向哈希后再取前缀**：原值不出设备，服务端只看到一个
   /// 与本机绑定的不透明串。加 `xiyuan-` 前缀是为了和历史上的随机 id
   /// （16 字节 base64url，22 位）区分开，排查时一眼能看出来。
+  ///
+  /// 网页版（PWA）没有 ANDROID_ID 这回事：[kIsWeb] 下原生通道必然失败，
+  /// 只能退回随机标识。此时加 `web-` 前缀，控制台一眼就能看出「这台是
+  /// 网页版」，不用再靠 installation_id 的形状去猜；同一台机器的网页版
+  /// 仍然是同一个标识（存在本地安全存储里）。
   static Future<String> _deriveInstallId() async {
     String? androidId;
     try {
@@ -89,10 +94,20 @@ class DeviceIdentity {
       androidId = null;
     }
     if (androidId == null || androidId.isEmpty) {
-      return _base64Url(_randomBytes(16));
+      return randomInstallId(isWeb: kIsWeb);
     }
     final digest = _sha256(utf8.encode('xiyuan-device|$androidId'));
     return 'xiyuan-${_base64Url(digest.sublist(0, 16))}';
+  }
+
+  /// 随机兜底的安装标识。
+  ///
+  /// 网页版没有 ANDROID_ID，只能用随机值；加 `web-` 前缀是为了让控制台
+  /// 一眼看出「这台是网页版」，而不是和安卓的老随机 id 混在一起。
+  /// 安卓侧（以及测试环境）保持历史行为：不加前缀。
+  static String randomInstallId({required bool isWeb}) {
+    final raw = _base64Url(_randomBytes(16));
+    return isWeb ? 'web-$raw' : raw;
   }
 
   /// 仅供测试：暴露派生入口，免得测试去 mock 整个安全存储。

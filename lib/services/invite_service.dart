@@ -22,7 +22,10 @@ class InviteService {
     } catch (_) {
       // 取不到版本号不影响主链路，留空即可。
     }
-    return {'app_version': version, 'platform': 'android'};
+    return {
+      'app_version': version,
+      'platform': ControlConfig.currentPlatform,
+    };
   }
 
   /// 拉取我的邀请码、链接、统计与脱敏名单。

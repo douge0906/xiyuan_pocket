@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 /// 控制端（内容下发服务）的固定配置。
 ///
 /// **整个客户端只有这一处硬编码服务端地址。**
@@ -49,6 +51,27 @@ class ControlConfig {
 
   /// 当前登录断言版本。1 = 旧协议（带学号），2 = 只带伪名。
   static const int assertionVersion = 2;
+
+  // ---- 平台标识（登记到控制端 devices.platform）----
+
+  /// 本机平台标识。
+  ///
+  /// Web 端必须报 `web` 而不是安卓的 `android`：控制台按平台分设备，
+  /// 报成 android 会让「网页版用户」混进安卓设备里，既看不出 Web 的真实
+  /// 使用量，也没法对 Web 单独限流或排查。
+  ///
+  /// ⚠️ 这个值参与设备登记签名（见 `ControlService._ensureDeviceOnce`），
+  /// **改了必须同时改签名里的同一个字段**，否则服务端验签必失败。
+  static const String platformWeb = 'web';
+
+  /// 安卓端平台标识（与历史安卓客户端保持一致，避免已有设备被当成新设备）。
+  static const String platformAndroid = 'android';
+
+  /// 本次运行**实际**使用的平台标识。
+  ///
+  /// 安卓包与 Web 包用的是同一套 Dart 源码，靠 [kIsWeb] 区分；
+  /// 两端上报的 platform 必须与签名里的字段完全一致，所以只从这里取。
+  static String get currentPlatform => kIsWeb ? platformWeb : platformAndroid;
 
   // ---- 接口路径（集中一处，便于服务端对拍）----
   static const String pathDeviceRegister = '/api/v1/devices/register';

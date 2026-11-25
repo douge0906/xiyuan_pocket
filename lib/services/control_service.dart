@@ -169,12 +169,14 @@ class ControlService {
       final identity = await DeviceIdentity.load();
       final info = await PackageInfo.fromPlatform();
       final createdAt = isoTimestamp();
+      // 平台标识同时进签名与请求体，两者必须一致（服务端按签名校验）。
+      final platformId = ControlConfig.currentPlatform;
 
       final signature = identity.signLines([
         ControlConfig.deviceSignPrefix,
         identity.installationId,
         identity.publicKeyEncoded,
-        'android',
+        platformId,
         '${info.version}+${info.buildNumber}',
         createdAt,
       ]);
@@ -184,7 +186,7 @@ class ControlService {
         {
           'installation_id': identity.installationId,
           'public_key': identity.publicKeyEncoded,
-          'platform': 'android',
+          'platform': platformId,
           'app_version': '${info.version}+${info.buildNumber}',
           'created_at': createdAt,
           'signature': signature,
