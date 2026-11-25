@@ -5,6 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/hand_drawn_backgrounds.dart';
 import 'app_locale.dart';
+import 'campus/cas_session_center.dart';
+import 'campus/cprint_client.dart';
+import 'campus/cprint_scan_storage.dart';
+import 'campus/cprint_session_store.dart';
 import 'dorm_service.dart';
 import 'home_prefs.dart';
 import 'nav_prefs.dart';
@@ -52,6 +56,22 @@ class DataWipe {
     // 电费/一卡通的持久会话（含 WebVPN cookie）也要断，否则退出登录后旧会话仍可用
     try {
       DormService.clearToken();
+    } catch (_) {}
+
+    // 云打印扫描件：会话票（OSESSIONID）落在安全存储里，换账号后如果还留着，
+    // 下一个人进来会看到上一个人的扫描件列表。必须一起清。
+    try {
+      CprintSessionStore.clear();
+      CprintClient.clearSessionOnly();
+    } catch (_) {}
+    // CAS 的 TGT 也带学号归属，退出时不能留
+    try {
+      CasSessionCenter.clear();
+    } catch (_) {}
+
+    // 已下载的扫描件是这个人的资料，退出后不能留在本机
+    try {
+      await CprintScanStorage.clear();
     } catch (_) {}
 
     // 外观 8 项：磁盘清了、内存静态值还挂着，用户点完「清除全部数据」看到的

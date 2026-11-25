@@ -85,12 +85,25 @@ class WebVpn {
     return utf8.decode(pt, allowMalformed: true);
   }
 
-  /// 是否内网地址（只有内网才需要包装，公网一律直连）。
+  /// 只有内网地址才需要包装，公网一律直连。
+  ///
+  /// 判定分两类：
+  /// 1. 私网 IPv4（10.x / 192.168.x / 172.16-31.x）—— 教务、一卡通、电费这类老接口；
+  /// 2. **显式域名白名单** —— 这些域名解析到内网，但不是 IP 形态。
+  ///    - `zzwy.cwxu.edu.cn`（图书馆云打印，10.1.72.17，只有 http:9130）
+  ///    - `kjyy.cwxu.edu.cn`（统一认证前置 authcenter，10.1.75.2）
+  ///    漏掉任何一个，校外的 SSO 链就会在某一步直连超时。
+  static const Set<String> _wrappedHosts = <String>{
+    'zzwy.cwxu.edu.cn',
+    'kjyy.cwxu.edu.cn',
+  };
+
   static bool needsWrap(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.host.isEmpty) return false;
     final h = uri.host.toLowerCase();
     if (h == Uri.parse(gateway).host.toLowerCase()) return false;
+    if (_wrappedHosts.contains(h)) return true;
     final parts = h.split('.');
     if (parts.length != 4) return false;
     final a = int.tryParse(parts[0]);

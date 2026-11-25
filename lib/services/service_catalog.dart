@@ -81,4 +81,26 @@ const List<ToolModel> mainServices = [
     color: Color(0xFF1F2937),
     needsNetwork: true,
   ),
+  // 2026-11-25：图书馆云打印的扫描件。
+  //
+  // 它**不需要另一个账号**，用的是 App 已有的统一认证身份再换一张
+  // 云打印会话票（校外自动套 WebVPN），所以对用户来说就是「点进去就有」。
+  ToolModel(
+    id: 'cprint_scan',
+    name: '云打印扫描件',
+    icon: Icons.document_scanner_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+  ),
+  // 2026-11-25：同学们自己上传、审核通过的班级课表。
+  //
+  // 主入口在课表页的导入面板里（那里才是「我想换一份课表」发生的地方），
+  // 这一项是给「在服务页顺手看一眼」的人留的次入口。
+  ToolModel(
+    id: 'timetable_library',
+    name: '锡院在线课表',
+    icon: Icons.school_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+  ),
 ];

@@ -20,6 +20,12 @@ enum _ImportAction {
   /// 导入掌上锡院自己导出的方案文件（课表 / 外观 / 两者）。
   /// 选中后还会再问一次「导入哪一部分」，见 [_BundleImportKind]。
   bundle,
+
+  /// 去「锡院在线课表」按班级检索同学们上传、审核通过的课表。
+  ///
+  /// 这一项**只跳转，不搬数据** —— 真正写库发生在那边选定版本点「导入」之后。
+  /// 放在这里的原因：用户想换一份课表时，手只会伸到「导入」这个按钮上。
+  timetable,
 }
 
 /// 「导入掌上锡院专属方案」之后的三选。
@@ -203,6 +209,22 @@ class _CourseImportSheetState extends State<_CourseImportSheet> {
               title: '从图片识别导入',
               onTap: () =>
                   Navigator.of(context).pop(const _ImportChoice(_ImportAction.image)),
+            ),
+            row(
+              icon: Icons.school_rounded,
+              title: '锡院在线课表',
+              onTap: () => Navigator.of(context)
+                  .pop(const _ImportChoice(_ImportAction.timetable)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+              child: Text(
+                '按班级检索已上传并审核通过的课表，导入后覆盖本机同名班级课表。',
+                style: TextStyle(
+                    fontSize: AppTheme.fontCaption,
+                    height: 1.35,
+                    color: context.textTertiary),
+              ),
             ),
             row(
               icon: Icons.inventory_2_outlined,

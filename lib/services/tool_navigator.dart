@@ -12,6 +12,8 @@ import '../pages/tools/textbook_page.dart';
 import '../pages/tools/campus_map_page.dart';
 import '../pages/tools/handbook_page.dart';
 import '../pages/tools/chaoxing_sync_page.dart';
+import '../pages/tools/cprint_scan_page.dart';
+import '../pages/tools/timetable_search_page.dart';
 import '../pages/countdown_page.dart';
 
 /// 全 App 共用的工具跳转逻辑（服务页复用）。
@@ -32,6 +34,11 @@ class ToolNavigator {
     // 学习通同步：要先把学校账号登进来（App 的登录闸门），
     // 进页面后它自己再要一份学习通账号。两道门是分开的。
     'chaoxing_sync',
+    // 云打印扫描件：拿的是「你这个学号在图书馆云打印里的扫描记录」，
+    // 没有登录就没有身份可查。
+    'cprint_scan',
+    // 在线课表：上传那份要挂设备归属，"我的上传"也靠它认人。
+    'timetable_library',
   };
 
   static Future<void> open(
@@ -99,6 +106,15 @@ class ToolNavigator {
       case 'chaoxing_sync':
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ChaoxingSyncPage()));
+        break;
+      case 'cprint_scan':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const CprintScanPage()));
+        break;
+      // 锡院在线课表：主入口在课表页的导入面板，这里是服务页的次入口。
+      case 'timetable_library':
+        Navigator.of(context)
+            .push(MaterialPageRoute(builder: (_) => const TimetableSearchPage()));
         break;
       case 'countdown':
         Navigator.of(context).push(MaterialPageRoute(
