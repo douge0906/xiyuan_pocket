@@ -29,17 +29,6 @@ String dayTagOf(DateTime t) {
 String hmOf(DateTime t) =>
     '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
-/// 顶部浮一条提示（Web 端充值三段跳的进度提示用）。
-void _toast(BuildContext context, String message) {
-  final messenger = ScaffoldMessenger.maybeOf(context);
-  if (messenger == null) return;
-  messenger
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
-    );
-}
-
 /// 一卡通余额详情（2026-10-24）。
 ///
 /// 余额卡片右侧内嵌「充值」按钮；交易明细直接铺在下方（不跳页）。
@@ -565,6 +554,19 @@ class _CardBalancePageState extends State<CardBalancePage> {
     if (_openingRecharge) return;
     setState(() => _openingRecharge = true);
     try {
+      if (kIsWeb) {
+        // 浏览器里没有 WebView：由桥页现拼「预热地址 + 充值页地址」，并在同一个
+        // 命名窗口里依次打开（详见 lib/services/dorm_bridge.dart）。
+        // ⚠️ 这条调用必须排在**任何 await 之前** —— 它内部第一条语句就是开窗，
+        // 弹窗拦截只看用户手势还在不在。
+        final err = await DormService.openWebCardRecharge();
+        if (!context.mounted) return;
+        if (err != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
+        return;
+      }
       // 先确认当前路径，再取一张新的平台票。充值预热和余额刷新共用
       // DormService 的认证锁，不会互相顶掉 TGT / 会话。
       await NetMode.ensureFresh();
@@ -573,36 +575,15 @@ class _CardBalancePageState extends State<CardBalancePage> {
       if (!context.mounted) return;
       if (warmup == null || url == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(kIsWeb
-                // Web 端没有「校园网」概念，失败原因多半是服务端不可用。
-                ? '服务器暂不可用，请稍后重试'
-                : NetMode.current == CampusNetMode.offline
-                    ? '网络不可用，请连接校园网或检查网络后重试'
-                    : (DormService.lastLoginError.isEmpty
-                        ? '充值页准备失败，请稍后重试'
-                        : DormService.lastLoginError))));
-        return;
-      }
-      if (kIsWeb) {
-        // 浏览器里没有 WebView：走「网关登录 → 预热 → 充值页」三段跳转。
-        // 详见 lib/services/web_recharge_flow.dart。
-        final bundle = DormService.webCardBundle;
-        final err = await WebRechargeFlow.launch(
-          url: url,
-          gatewayLoginUrl: bundle?.gatewayLoginUrl,
-          warmupUrl: warmup,
-          onProgress: (msg) {
-            if (context.mounted) _toast(context, msg);
-          },
-        );
-        if (!context.mounted) return;
-        if (err != null) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(err)));
-        }
+            content: Text(NetMode.current == CampusNetMode.offline
+                ? '网络不可用，请连接校园网或检查网络后重试'
+                : (DormService.lastLoginError.isEmpty
+                    ? '充值页准备失败，请稍后重试'
+                    : DormService.lastLoginError))));
         return;
       }
       await Navigator.of(context).push(
+
         MaterialPageRoute<void>(
           builder: (_) => RechargeWebViewPage(
             url: url,
@@ -1004,38 +985,28 @@ class _ElectricityPageState extends State<ElectricityPage> {
     if (_openingRecharge) return;
     setState(() => _openingRecharge = true);
     try {
+      if (kIsWeb) {
+        // 浏览器里没有 WebView：由桥页现拼充值页地址，并在同一个命名窗口里打开。
+        // ⚠️ 必须排在**任何 await 之前**（内部第一条语句就是开窗，弹窗拦截看手势）。
+        final err = await DormService.openWebElecRecharge(_dorm.feeitemid);
+        if (!mounted) return;
+        if (err != null) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(err)));
+        }
+        return;
+      }
       // 与电费刷新/一卡通刷新共用认证锁，避免同时登录把票据顶掉。
       await NetMode.ensureFresh();
       final url = await DormService.rechargeUrlFor(_dorm.feeitemid);
       if (!mounted) return;
       if (url == null) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(kIsWeb
-                // Web 端没有「校园网」概念，失败原因多半是服务端不可用。
-                ? '服务器暂不可用，请稍后重试'
-                : NetMode.current == CampusNetMode.offline
-                    ? '网络不可用，请连接校园网或检查网络后重试'
-                    : (DormService.lastLoginError.isEmpty
-                        ? '充值页准备失败，请稍后重试'
-                        : DormService.lastLoginError))));
-        return;
-      }
-      if (kIsWeb) {
-        // 浏览器里没有 WebView：走「网关登录 → 充值页」两段跳转。
-        // 详见 lib/services/web_recharge_flow.dart。
-        final bundle = DormService.webRechargeBundle;
-        final err = await WebRechargeFlow.launch(
-          url: url,
-          gatewayLoginUrl: bundle?.gatewayLoginUrl,
-          onProgress: (msg) {
-            if (mounted) _toast(context, msg);
-          },
-        );
-        if (!mounted) return;
-        if (err != null) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(err)));
-        }
+            content: Text(NetMode.current == CampusNetMode.offline
+                ? '网络不可用，请连接校园网或检查网络后重试'
+                : (DormService.lastLoginError.isEmpty
+                    ? '充值页准备失败，请稍后重试'
+                    : DormService.lastLoginError))));
         return;
       }
       await Navigator.of(context).push(

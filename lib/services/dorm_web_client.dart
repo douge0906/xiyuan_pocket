@@ -40,13 +40,19 @@ class DormWebClient {
   /// - [loggedIn] = true：服务端已登录完成，可直接用；
   /// - [loggedIn] = false：服务端三轮自动识别验证码失败，需要人工回填
   ///   [captchaB64]（图片 base64）。
+  /// [mode] 传 `'bridge'` 时服务端**只做 CAS 登录**（拿 TGT 就收工），跳过
+  /// 网关换票与平台登录 —— 服务器出口 IP 被网关 403，内网只能由浏览器自己读。
+  /// 这时 [DormSessionStart] 的会话可直接用于 [bridgeTicket]，但**不能**用于
+  /// [query] / 充值类端点（它们要求服务端自己也把内网跑通）。
   static Future<DormSessionStart> startSession(
     String username,
-    String password,
-  ) async {
+    String password, {
+    String? mode,
+  }) async {
     final data = await _post('session/start', {
       'username': username,
       'password': password,
+      if (mode != null && mode.isNotEmpty) 'mode': mode,
     });
     final sid = (data['session_id'] ?? '').toString();
     if (sid.isEmpty) {
@@ -118,6 +124,33 @@ class DormWebClient {
       url: url,
       gatewayLoginUrl: (data['gateway_login_url'] ?? '').toString(),
       expiresIn: int.tryParse((data['expires_in'] ?? '').toString()) ?? 0,
+    );
+  }
+
+  /// 桥接用的一次性票据（网关票 + 平台票 + 内网主机密文）。
+  ///
+  /// 电费查询的唯一可行路径：服务端出口 IP 被 WebVPN 网关 403，内网只能由
+  /// 用户浏览器经网关去读（见 [DormBridge]）。
+  static Future<BridgeTicket> bridgeTicket(String sessionId) async {
+    final data = await _post('bridge-ticket', {'session_id': sessionId});
+    final origin = (data['gateway_origin'] ?? '').toString();
+    final path = (data['bridge_path'] ?? '').toString();
+    final stGw = (data['st_gw'] ?? '').toString();
+    final stPlat = (data['st_plat'] ?? '').toString();
+    final hexPlat = (data['hex_plat'] ?? '').toString();
+    if (origin.isEmpty ||
+        path.isEmpty ||
+        stGw.isEmpty ||
+        stPlat.isEmpty ||
+        hexPlat.isEmpty) {
+      throw CampusException('登录票据获取失败，请稍后重试');
+    }
+    return BridgeTicket(
+      gatewayOrigin: origin,
+      bridgePath: path,
+      stGw: stGw,
+      stPlat: stPlat,
+      hexPlat: hexPlat,
     );
   }
 
@@ -309,6 +342,39 @@ class DormSessionStart {
 
   /// 服务端是否已完成登录。
   final bool loggedIn;
+}
+
+/// 桥接用的一次性票据（控制端 `bridge-ticket` 端点）。
+class BridgeTicket {
+  const BridgeTicket({
+    required this.gatewayOrigin,
+    required this.bridgePath,
+    required this.stGw,
+    required this.stPlat,
+    required this.hexPlat,
+  });
+
+  /// 网关 origin，例如 `https://webvpn.cwxu.edu.cn`。
+  final String gatewayOrigin;
+
+  /// **网关上的**桥页路径（形如 `/https/<hex(控制域名)>/api/v1/campus/dorm/bridge`）。
+  ///
+  /// 客户端要拼 `{gatewayOrigin}{bridgePath}` 才能打开桥页。
+  final String bridgePath;
+
+  /// 网关票：浏览器先用它开 `{gatewayOrigin}/login?cas_login=true&ticket=`。
+  final String stGw;
+
+  /// 平台票：桥页用它换 access_token（一次性）。
+  final String stPlat;
+
+  /// 内网平台主机（`10.3.100.110`）的密文，桥页用它拼内网地址。
+  final String hexPlat;
+
+  @override
+  String toString() =>
+      'BridgeTicket(origin=$gatewayOrigin, path=$bridgePath, '
+      'stGw=***(${stGw.length}), stPlat=***(${stPlat.length}))';
 }
 
 /// 电费充值地址。

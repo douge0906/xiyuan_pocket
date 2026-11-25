@@ -10,6 +10,7 @@ import 'campus/cas_client.dart';
 import 'campus/jwgl_client.dart' show CampusException;
 import 'campus/web_campus_client.dart' show SessionProbe;
 import 'campus/webvpn.dart';
+import 'dorm_bridge.dart';
 import 'dorm_web_client.dart';
 import 'net_mode.dart';
 import 'storage_service.dart';
@@ -223,7 +224,9 @@ class DormService {
     }
 
     try {
-      final start = await DormWebClient.startSession(sno, pwd);
+      // mode=bridge：只做 CAS 登录拿 TGT —— 服务端出口 IP 被 WebVPN 网关 403，
+      // 内网这最后一段只能由浏览器经网关去读（见 `dorm_bridge.dart`）。
+      final start = await DormWebClient.startSession(sno, pwd, mode: 'bridge');
       if (!start.loggedIn) {
         // 服务端自动识别验证码失败 → 需要人工回填。
         _webPendingSid = start.sessionId;
@@ -552,7 +555,11 @@ class DormService {
   /// 楼栋列表：直接返回预置（不缓存、不联网、不随平台变化）。
   static Future<List<DormBuilding>> buildings() async => _seed;
 
-  /// Web 端查电费：整条内网链在控制端，客户端只负责**解析**。
+  /// Web 端查电费：**浏览器经网关桥接**去读内网，客户端只负责解析。
+  ///
+  /// 为什么不能走控制端代跑：WebVPN 网关按**出口 IP** 拦截 —— 服务器出口
+  /// （上海电信 IDC）访问网关一律 403，用户浏览器却正常。所以内网这一段换成
+  /// 用户浏览器自己读（见 `dorm_bridge.dart` 的完整说明）。
   ///
   /// 解析口径与安卓端**完全一致**（同一个 [parseMoney] / [parseKwh] /
   /// [parseUnitPrice] / [defaultUnitPrice]），所以两端结果一模一样。
@@ -564,8 +571,8 @@ class DormService {
     }
     Map<String, dynamic> map;
     try {
-      map = await DormWebClient.query(
-        sid,
+      map = await DormBridge.query(
+        sessionId: sid,
         feeitemid: dorm.feeitemid,
         campus: dorm.campus,
         building: dorm.buildingValue,
@@ -662,20 +669,30 @@ class DormService {
     if (sno.isEmpty) {
       return const CardQueryResult(reason: '登录失败(缺账密)');
     }
-    try {
-      final data = await LocalCampusService.fetchCardBalance(sno, pwd);
-      final raw = data['balance'];
-      final balance =
-          raw is num ? raw.toDouble() : double.tryParse('${raw ?? ''}');
-      if (balance == null) {
-        return const CardQueryResult(reason: '查询失败');
+    // 服务端刚登录完那会儿门户罐里可能还没有卡片配置，第一次一定失败；
+    // 等一会儿再试一次就能拿到（实测刷新一次就好）。
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final data = await LocalCampusService.fetchCardBalance(sno, pwd);
+        final raw = data['balance'];
+        final balance =
+            raw is num ? raw.toDouble() : double.tryParse('${raw ?? ''}');
+        if (balance == null) {
+          return const CardQueryResult(reason: '查询失败');
+        }
+        return CardQueryResult(balance: balance);
+      } on CampusException catch (e) {
+        final retryable = e.message.contains('未在门户找到');
+        if (retryable && attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 1500));
+          continue;
+        }
+        return CardQueryResult(reason: e.message);
+      } catch (_) {
+        return const CardQueryResult(reason: '暂不可用');
       }
-      return CardQueryResult(balance: balance);
-    } on CampusException catch (e) {
-      return CardQueryResult(reason: e.message);
-    } catch (_) {
-      return const CardQueryResult(reason: '暂不可用');
     }
+    return const CardQueryResult(reason: '暂不可用');
   }
 
   static Future<CardQueryResult> fetchCardBalanceDetailed() async {
@@ -1100,6 +1117,34 @@ class DormService {
   /// 浏览器要在**网关 origin** 下先登一次（用自己的 ST），才能打开预热地址
   /// 和充值页 —— 所以三段地址都要用：网关登录 → 预热 → 充值页。
   static DormCardRechargeUrl? get webCardBundle => _webCardBundle;
+
+  /// 取 Web 会话 id，拿不到就按「上次错误」抛出去（供桥接层复用）。
+  static Future<String> _webSessionForBridge() async {
+    final sid = await _webSessionId();
+    if (sid == null || sid.isEmpty) {
+      throw CampusException(lastLoginError.isEmpty ? '暂不可用' : lastLoginError);
+    }
+    return sid;
+  }
+
+  /// Web 端**电费充值**：桥页现拼充值页地址，并在同一个命名窗口里打开。
+  ///
+  /// 为什么地址不能由服务端给：充值页 URL 要带平台 `access_token`，而平台只有
+  /// 浏览器进得去（服务端出口 IP 被网关 403）。返回 null = 成功。
+  ///
+  /// ⚠️ 内部第一条语句是同步开窗，所以调用方**必须**在用户手势里直接调用它
+  /// （前面不能有 await），否则会被浏览器弹窗拦截。
+  static Future<String?> openWebElecRecharge(int feeitemid) =>
+      DormBridge.openRecharge(
+        session: _webSessionForBridge,
+        feeitemid: feeitemid,
+      );
+
+  /// Web 端**一卡通充值**：同上，桥页额外给一个预热地址，先预热再进充值页。
+  static Future<String?> openWebCardRecharge() => DormBridge.openRecharge(
+        session: _webSessionForBridge,
+        card: true,
+      );
 
   /// 卡包（充值入口）：需在页面内登录，交给浏览器/WebView 处理。
   static String get cardBagUrl => '$base/campus-card/cardRecharge'
