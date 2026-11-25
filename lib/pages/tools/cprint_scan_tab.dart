@@ -13,12 +13,14 @@ import '../../widgets/app_card.dart';
 import '../../widgets/empty_state_art.dart';
 import '../../widgets/state_views.dart';
 import 'cprint_scan_actions.dart';
+import 'cprint_shared.dart';
 import 'cprint_scan_detail_page.dart';
 import 'resource_viewer_page.dart';
 
-/// 图书馆云打印「扫描件」。
+/// 云打印 · 「扫描文档」页签（打印店代扫的文件）。
 ///
-/// ## 为什么页面长这样
+/// 业务逻辑与原来的独立页面一致，只把外壳换成页签：
+/// 去掉 Scaffold / AppBar，登录状态由外层 [CprintPage] 统一管理。
 ///
 /// 设计稿（`docs/design/cprint_scan_design.md` §6/§7）给了完整的 chips、
 /// 多选、批量下载、排序按钮。落地时按真实使用场景砍掉了三样：
@@ -30,47 +32,53 @@ import 'resource_viewer_page.dart';
 /// * **排序按钮** —— 站点默认就是按提交时间倒序，没有第二个合理排序。
 ///
 /// 保留的是真正需要的：**列表、类型图标、下载、分享、删除、过期态**。
-/// 设计稿里「保留 30 天」那句是示意文案（接口不返回该字段），已按
-/// §6 的警告改成「过期文件不可下载」。
-class CprintScanPage extends StatefulWidget {
-  const CprintScanPage({super.key});
+class CprintScanTab extends StatefulWidget {
+  const CprintScanTab({
+    super.key,
+    required this.authed,
+    required this.onNeedAuth,
+  });
+
+  /// 外层是否已登录成功。false 时本页只显示登录引导，不发请求。
+  final bool authed;
+
+  /// 会话过期时通知外层重新走授权。
+  final VoidCallback onNeedAuth;
 
   @override
-  State<CprintScanPage> createState() => _CprintScanPageState();
+  State<CprintScanTab> createState() => _CprintScanTabState();
 }
 
 enum _LoadState { loading, ready, needsAuth, error }
 
-class _CprintScanPageState extends State<CprintScanPage> {
+class _CprintScanTabState extends State<CprintScanTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   _LoadState _state = _LoadState.loading;
   String _error = '';
   List<CprintScanItem> _items = const [];
   Map<String, CprintLocalFile> _local = const {};
-  String _trueName = '';
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_boot());
+    if (widget.authed) {
+      unawaited(_loadList());
+    } else {
+      _state = _LoadState.needsAuth;
+    }
   }
 
-  Future<void> _boot() async {
-    setState(() {
-      _state = _LoadState.loading;
-      _error = '';
-    });
-    final auth = await CprintClient.authorize();
-    if (!mounted) return;
-    if (!auth.ok) {
-      setState(() {
-        _state = _LoadState.needsAuth;
-        _error = auth.message;
-      });
-      return;
+  @override
+  void didUpdateWidget(covariant CprintScanTab old) {
+    super.didUpdateWidget(old);
+    // 外层刚登录成功：立刻拉一次，不用等用户手动下拉。
+    if (widget.authed && !old.authed) {
+      unawaited(_loadList());
     }
-    _trueName = auth.trueName ?? CprintClient.trueName ?? '';
-    await _loadList();
   }
 
   Future<void> _loadList() async {
@@ -95,98 +103,10 @@ class _CprintScanPageState extends State<CprintScanPage> {
 
   Future<void> _retry() async {
     if (_state == _LoadState.needsAuth) {
-      final auth = await CprintClient.authorize(force: true);
-      if (!mounted) return;
-      if (!auth.ok) {
-        _toast(auth.message);
-        return;
-      }
-      _trueName = auth.trueName ?? _trueName;
+      widget.onNeedAuth();
+      return;
     }
     await _loadList();
-  }
-
-  /// 需要用户输密码（本机没存密码）时，弹一次输入框。
-  Future<bool> _askPassword() async {
-    final ctl = TextEditingController();
-    final pwd = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: ctx.cardColor,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          side: BorderSide(color: ctx.borderColor),
-        ),
-        titlePadding: const EdgeInsets.fromLTRB(20, 18, 8, 0),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '再输一次统一认证密码',
-                style: TextStyle(
-                  fontSize: AppTheme.fontHeading,
-                  fontWeight: FontWeight.w600,
-                  color: ctx.textPrimary,
-                ),
-              ),
-            ),
-            IconButton(
-              tooltip: '关闭',
-              icon: Icon(Icons.close_rounded,
-                  size: 20, color: ctx.textTertiary),
-              onPressed: () => Navigator.of(ctx).pop(),
-            ),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'App 里没有保存密码（「我的 → 登录」里的「记住密码」没开）。'
-              '这一次需要手动输入，之后 40 分钟内不用再输。',
-              style: TextStyle(
-                fontSize: AppTheme.fontSmall,
-                height: 1.5,
-                color: ctx.textSecondary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctl,
-              autofocus: true,
-              obscureText: true,
-              decoration: const InputDecoration(
-                hintText: '统一认证密码',
-                isDense: true,
-              ),
-              onSubmitted: (v) => Navigator.of(ctx).pop(v),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('取消',
-                style: TextStyle(color: ctx.textSecondary)),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(ctl.text),
-            child: const Text('授权'),
-          ),
-        ],
-      ),
-    );
-    ctl.dispose();
-    if (pwd == null || pwd.isEmpty) return false;
-    final auth = await CprintClient.authorize(password: pwd, force: true);
-    if (!mounted) return false;
-    if (!auth.ok) {
-      _toast(auth.message);
-      return false;
-    }
-    _trueName = auth.trueName ?? _trueName;
-    return true;
   }
 
   void _toast(String msg) {
@@ -366,28 +286,16 @@ class _CprintScanPageState extends State<CprintScanPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: context.scaffoldColor,
-      appBar: AppBar(
-        title: const Text(
-          '云打印扫描件',
-          style: TextStyle(
-            fontSize: AppTheme.fontHeading,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        actions: [
-          IconButton(
-            tooltip: '刷新',
-            onPressed: _state == _LoadState.loading ? null : _loadList,
-            icon: const Icon(Icons.refresh_rounded, size: 20),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadList,
-        child: _buildBody(),
-      ),
+    super.build(context);
+    if (!widget.authed) {
+      return CprintNeedAuthView(
+        message: _error.isEmpty ? '登录后才能看到自己的扫描件。' : _error,
+        onLogin: () async => widget.onNeedAuth(),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _loadList,
+      child: _buildBody(),
     );
   }
 
@@ -396,7 +304,10 @@ class _CprintScanPageState extends State<CprintScanPage> {
       case _LoadState.loading:
         return const Center(child: CircularProgressIndicator());
       case _LoadState.needsAuth:
-        return _authView();
+        return CprintNeedAuthView(
+          message: _error.isEmpty ? '登录后才能看到自己的扫描件。' : _error,
+          onLogin: () async => widget.onNeedAuth(),
+        );
       case _LoadState.error:
         return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -443,7 +354,6 @@ class _CprintScanPageState extends State<CprintScanPage> {
   Widget _header() {
     final expireCount = _items.where((e) => e.isExpired).length;
     final sub = [
-      if (_trueName.isNotEmpty) _trueName,
       '共 ${_items.length} 份',
       if (expireCount > 0) '$expireCount 份已过期',
     ].join(' · ');
@@ -484,7 +394,7 @@ class _CprintScanPageState extends State<CprintScanPage> {
           padding: const EdgeInsets.fromLTRB(12, 12, 6, 12),
           child: Row(
             children: [
-              _typeIcon(item.docType),
+              cprintTypeIcon(item.docType, size: 40),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -506,11 +416,11 @@ class _CprintScanPageState extends State<CprintScanPage> {
                         ),
                         if (expired) ...[
                           const SizedBox(width: 6),
-                          _pill('已过期', context.warningColor),
+                          cprintPill('已过期', context.warningColor),
                         ],
                         if (local != null) ...[
                           const SizedBox(width: 6),
-                          _pill('已下载', context.successColor),
+                          cprintPill('已下载', context.successColor),
                         ],
                       ],
                     ),
@@ -578,45 +488,6 @@ class _CprintScanPageState extends State<CprintScanPage> {
     );
   }
 
-  Widget _typeIcon(CprintDocType type) {
-    final (icon, color) = switch (type.classType) {
-      'pdf' => (Icons.picture_as_pdf_rounded, const Color(0xFFDC2626)),
-      'img' => (Icons.image_rounded, const Color(0xFF059669)),
-      'word' => (Icons.description_rounded, const Color(0xFF2563EB)),
-      'excel' => (Icons.table_chart_rounded, const Color(0xFF15803D)),
-      'ppt' => (Icons.slideshow_rounded, const Color(0xFFEA580C)),
-      'txt' => (Icons.article_rounded, const Color(0xFF6B7280)),
-      _ => (Icons.insert_drive_file_rounded, const Color(0xFF6B7280)),
-    };
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .10),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-      ),
-      child: Icon(icon, size: 21, color: color),
-    );
-  }
-
-  Widget _pill(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .12),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: AppTheme.fontCaption,
-          height: 1.2,
-          color: color,
-        ),
-      ),
-    );
-  }
-
   String _fmtDate(CprintScanItem item) {
     final at = item.submittedAt;
     if (at == null) return '时间未知';
@@ -625,70 +496,7 @@ class _CprintScanPageState extends State<CprintScanPage> {
         '${two(at.hour)}:${two(at.minute)}';
   }
 
-  Widget _authView() {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 40, 16, 24),
-      children: [
-        AppCard(
-          radius: AppTheme.radiusLg,
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.lock_outline_rounded,
-                      size: 18, color: AppTheme.primaryColor),
-                  const SizedBox(width: 8),
-                  Text(
-                    // 不叫「需要授权」—— 用户不知道要授权给谁、为什么。
-                    // 这一屏唯一要做的事就是「登录一次」，标题直接说这件事。
-                    '登录一次图书馆云打印',
-                    style: TextStyle(
-                      fontSize: AppTheme.fontTitle,
-                      fontWeight: FontWeight.w600,
-                      color: context.textPrimary,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _error.isEmpty ? '登录状态已失效，请重新授权' : _error,
-                style: TextStyle(
-                  fontSize: AppTheme.fontBody,
-                  height: 1.55,
-                  color: context.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () async {
-                    final ok = await _askPassword();
-                    if (ok) await _loadList();
-                  },
-                  child: const Text('用统一认证登录'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '用你登录掌上锡院的统一认证账号，不用另外注册。'
-                '不在校园网时会自动走学校的 WebVPN。',
-                style: TextStyle(
-                  fontSize: AppTheme.fontSmall,
-                  height: 1.5,
-                  color: context.textTertiary,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+
 }
 
 /// 扫描件图片预览（PDF 走 ResourceViewerPage）。

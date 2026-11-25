@@ -9,6 +9,8 @@
 /// 不能当成解析失败。
 library;
 
+import 'dart:convert';
+
 /// 文件类型推导 —— 复刻站点 `Cprint.getDocType`（`cprint_common.js:359-388`）。
 ///
 /// 为什么要复刻：接口只回 `szDisplayName`（原文件名），`x_doctype` 是站点
@@ -274,4 +276,545 @@ class CprintError {
 
   /// 凭据失败（`UniLogin` 的固定返回，该接口确认是红鲱鱼）。
   static const int badCredential = 33558534;
+}
+
+// ignore_for_file: prefer_single_quotes
+// （本文件由 D:/tmp/append_models.py 追加到 lib/services/campus/cprint_models.dart 末尾）
+
+/// 一份待打印的文档（网页版「打印文档」列表的一行）。
+class CprintPrintJob {
+  final String jobId;
+  final String fileName;
+  final String submitDate;
+  final String submitTime;
+  final int copies;
+  final int pages;
+  final int status;
+  final int fee;
+  final String attribute;
+  final String memo;
+  final List<CprintPaperSheet> papers;
+
+  const CprintPrintJob({
+    required this.jobId,
+    required this.fileName,
+    required this.submitDate,
+    required this.submitTime,
+    required this.copies,
+    required this.pages,
+    required this.status,
+    required this.fee,
+    required this.attribute,
+    required this.memo,
+    required this.papers,
+  });
+
+  /// 原文件名（站点字段就叫 `szJobName`，但它是文件名不是「任务名」）。
+  String get displayName => fileName.isEmpty ? '未命名文档' : fileName;
+
+  CprintDocType get docType => CprintDocType.fromName(fileName);
+
+  /// 纸型汇总：`A4` / `A3` / `A4、A3`，无数据时给空串。
+  String get paperLabel {
+    final seen = <String>[];
+    for (final p in papers) {
+      final t = p.paperType;
+      if (t.isNotEmpty && !seen.contains(t)) seen.add(t);
+    }
+    return seen.join('、');
+  }
+
+  /// 站点用 `szAttribe` 这个逗号串表达属性：`color` / `vdup` / `single`。
+  bool get isColor => attribute.contains('color');
+
+  String get colorLabel => isColor ? '彩色' : '黑白';
+
+  String get duplexLabel {
+    if (attribute.contains('vdup')) return '双面长边';
+    if (attribute.contains('single')) return '单面';
+    return '双面短边';
+  }
+
+  /// 页数：优先用站点算好的 `dwPages`，为 0 时按纸张明细累加。
+  int get totalPages {
+    if (pages > 0) return pages;
+    var n = 0;
+    for (final p in papers) {
+      n += p.bwPages + p.colorPages;
+    }
+    return n;
+  }
+
+  String get sizeLabel => '$totalPages 页 × ${copies > 0 ? copies : 1} 份';
+
+  /// 提交时间 `2026.11.24 15:48`；解析不出来时返回空串（界面不显示）。
+  String get submittedAtLabel {
+    if (submitDate.length != 8) return '';
+    final d = '${submitDate.substring(0, 4)}.${submitDate.substring(4, 6)}.'
+        '${submitDate.substring(6, 8)}';
+    if (submitTime.length != 6) return d;
+    return '$d ${submitTime.substring(0, 2)}:${submitTime.substring(2, 4)}';
+  }
+
+  /// `dwCreateTime` 是 6 位整数，预览接口要原样传回。
+  String get rawCreateTime => submitTime;
+
+  static CprintPrintJob? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final id = '${raw['dwJobId'] ?? ''}'.trim();
+    if (id.isEmpty) return null;
+    return CprintPrintJob(
+      jobId: id,
+      fileName: '${raw['szJobName'] ?? ''}',
+      submitDate: '${raw['dwCreateDate'] ?? ''}',
+      submitTime: '${raw['dwCreateTime'] ?? ''}',
+      copies: _i(raw['dwCopies']),
+      pages: _i(raw['dwPages']),
+      status: _i(raw['dwStatus']),
+      fee: _i(raw['dwFee']),
+      attribute: '${raw['szAttribe'] ?? ''}',
+      memo: '${raw['szMemo'] ?? ''}',
+      papers: CprintPaperSheet.parseDetail(raw['szPaperDetail']),
+    );
+  }
+
+  static List<CprintPrintJob> parseList(Object? decoded) {
+    if (decoded is! Map) return const [];
+    final result = decoded['result'];
+    if (result is! List) return const [];
+    final out = <CprintPrintJob>[];
+    for (final e in result) {
+      final j = fromJson(e);
+      if (j != null) out.add(j);
+    }
+    return out;
+  }
+}
+
+/// `szPaperDetail` 里的一格纸：A4 黑白 3 页 + 彩色 1 页 = 4 页。
+///
+/// ⚠️ 站点给的是**字符串**（`'[{"dwPaperID":9,...}]'`），不是数组，
+/// 必须先 `jsonDecode` 再读。这一点在 Dart 里很容易漏，漏了就全是空页数。
+class CprintPaperSheet {
+  final int paperId;
+  final int bwPages;
+  final int colorPages;
+  final int paperNum;
+
+  const CprintPaperSheet({
+    required this.paperId,
+    required this.bwPages,
+    required this.colorPages,
+    required this.paperNum,
+  });
+
+  /// 站点规则：`9` → A4，其它一律 A3（与网页版 `dwPaperID == 9 ? "A4" : "A3"` 一致）。
+  String get paperType => paperId == 9 ? 'A4' : 'A3';
+
+  static List<CprintPaperSheet> parseDetail(Object? raw) {
+    Object? data = raw;
+    if (data is String) {
+      final text = data.trim();
+      if (text.isEmpty) return const [];
+      try {
+        data = jsonDecode(text);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (data is! List) return const [];
+    final out = <CprintPaperSheet>[];
+    for (final e in data) {
+      if (e is! Map) continue;
+      out.add(CprintPaperSheet(
+        paperId: _i(e['dwPaperID']),
+        bwPages: _i(e['dwBWPages']),
+        colorPages: _i(e['dwColorPages']),
+        paperNum: _i(e['dwPaperNum']),
+      ));
+    }
+    return out;
+  }
+}
+
+/// 一台打印点（网页版「打印点」列表的一行）。
+class CprintStation {
+  final int devSn;
+  final String name;
+  final int property;
+  final int status;
+  final String statusInfo;
+  final String driver;
+  final List<int> trays;
+
+  const CprintStation({
+    required this.devSn,
+    required this.name,
+    required this.property,
+    required this.status,
+    required this.statusInfo,
+    required this.driver,
+    required this.trays,
+  });
+
+  /// 状态：空闲 / 忙碌 / 不可用 / 未开放。
+  ///
+  /// 逐位照抄网页版 `backState()`（`cp_printDev.js`）。注意其中 `20`、`400`、
+  /// `800`、`1000`、`2000`、`10000` 在站点源码里是**十进制写法**却是十六进制
+  /// 常量（0x20/0x400/…）的本意 —— 这里照抄十进制，才能和网页版显示一致。
+  String get stateLabel {
+    if (status == 0) return '未开放';
+    var state = '';
+    if (status & 1 != 0) state = '空闲';
+    if (status & 2 != 0) state = '忙碌';
+    final fault = status & 20 != 0 ||
+        status & 400 != 0 ||
+        status & 800 != 0 ||
+        status & 1000 != 0 ||
+        status & 2000 != 0 ||
+        status & 10000 != 0;
+    if (fault || status & 200 != 0) {
+      state = statusInfo.isEmpty ? '不可用' : _beforeDash(statusInfo);
+    }
+    return state.isEmpty ? '不可用' : state;
+  }
+
+  /// 1=忙碌 2=空闲 3=不可用（决定颜色）。
+  int get stateFlag {
+    if (status == 0) return 3;
+    var flag = 0;
+    if (status & 1 != 0) flag = 2;
+    if (status & 2 != 0) flag = 1;
+    final fault = status & 20 != 0 ||
+        status & 400 != 0 ||
+        status & 800 != 0 ||
+        status & 1000 != 0 ||
+        status & 2000 != 0 ||
+        status & 10000 != 0;
+    if (fault || status & 200 != 0) flag = 3;
+    return flag == 0 ? 3 : flag;
+  }
+
+  /// 支持的纸型：`A4、A3`。
+  ///
+  /// 🔴 网页版这里有个 bug（`data.dwTrayPaper3` 少了下标），会把第 3 个纸盒
+  /// 永远漏掉。**这里不复刻**：四个纸盒一视同仁。
+  String get paperLabel {
+    final seen = <String>[];
+    for (final t in trays) {
+      final label = t == 9 ? 'A4' : (t == 8 ? 'A3' : '');
+      if (label.isNotEmpty && !seen.contains(label)) seen.add(label);
+    }
+    return seen.join('、');
+  }
+
+  /// 可用功能：打印 / 复印 / 扫描 / 支持彩色。
+  String get functionLabel {
+    final out = <String>[];
+    if (property & 1 != 0) out.add('打印');
+    if (property & 2 != 0) out.add('复印');
+    if (property & 4 != 0) out.add('扫描');
+    if (property & 8 != 0) out.add('彩色');
+    return out.join(' · ');
+  }
+
+  static String _beforeDash(String s) {
+    final i = s.indexOf('-');
+    return i <= 0 ? s : s.substring(0, i);
+  }
+
+  static CprintStation? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final sn = _i(raw['dwDevSN']);
+    if (sn == 0) return null;
+    final trays = <int>[];
+    for (final k in const [
+      'dwTrayPaper1',
+      'dwTrayPaper2',
+      'dwTrayPaper3',
+      'dwTrayPaper4'
+    ]) {
+      final v = _i(raw[k]);
+      if (v != 0) trays.add(v);
+    }
+    return CprintStation(
+      devSn: sn,
+      name: '${raw['szName'] ?? ''}',
+      property: _i(raw['dwProperty']),
+      status: _i(raw['dwStatus']),
+      statusInfo: '${raw['szStatInfo'] ?? ''}',
+      driver: '${raw['szPrtDriver'] ?? ''}',
+      trays: trays,
+    );
+  }
+
+  static List<CprintStation> parseList(Object? decoded) {
+    if (decoded is! Map) return const [];
+    final result = decoded['result'];
+    if (result is! List) return const [];
+    final out = <CprintStation>[];
+    for (final e in result) {
+      final s = fromJson(e);
+      if (s != null) out.add(s);
+    }
+    return out;
+  }
+}
+
+/// 一个打印服务商（`Station/GetSrvList`），用来给打印点分组。
+class CprintSrv {
+  final int sn;
+  final String name;
+
+  const CprintSrv({required this.sn, required this.name});
+
+  static List<CprintSrv> parseList(Object? decoded) {
+    if (decoded is! Map) return const [];
+    final result = decoded['result'];
+    if (result is! List) return const [];
+    final out = <CprintSrv>[];
+    for (final e in result) {
+      if (e is! Map) continue;
+      final sn = _i(e['dwSN']);
+      if (sn == 0) continue;
+      out.add(CprintSrv(sn: sn, name: '${e['szName'] ?? ''}'));
+    }
+    return out;
+  }
+}
+
+/// 一条使用记录（打印 / 扫描 / 复印）。
+class CprintRecord {
+  final String date;
+  final String time;
+  final int paperId;
+  final int pages;
+  final int settleType;
+  final int cardMoney;
+  final int freeMoney;
+  final int cashMoney;
+
+  const CprintRecord({
+    required this.date,
+    required this.time,
+    required this.paperId,
+    required this.pages,
+    required this.settleType,
+    required this.cardMoney,
+    required this.freeMoney,
+    required this.cashMoney,
+  });
+
+  String get paperLabel => paperId == 9 ? 'A4' : (paperId == 8 ? 'A3' : '');
+
+  /// 金额单位是「分」，三项相加再除 100（与网页版 `x_money` 一致）。
+  String get moneyLabel {
+    final fen = cardMoney + freeMoney + cashMoney;
+    if (fen == 0) return '0 元';
+    return '${(fen / 100).toStringAsFixed(2)} 元';
+  }
+
+  /// 同 [moneyLabel] 的数值形态，给「本页合计」这类需要相加的地方用。
+  double get moneyYuan => (cardMoney + freeMoney + cashMoney) / 100;
+
+  /// `(dwSettleType & 0xff) == 4` → 手工收费，其余自助收费。
+  String get settleLabel => (settleType & 0xff) == 4 ? '手工收费' : '自助收费';
+
+  String get dateLabel {
+    if (date.length != 8) return date;
+    return '${date.substring(0, 4)}.${date.substring(4, 6)}.${date.substring(6, 8)}';
+  }
+
+  String get timeLabel {
+    // `dwTime` 是整数，实际有两种宽度：`1548`（= 15:48）和 `154800`（= 15:48:00）。
+    // 直接按 6 位补 0 会把 1548 变成 00:15 —— 那不是这条记录的时间。
+    if (time.isEmpty) return '';
+    final t = time.length <= 4 ? time.padLeft(4, '0') : time.padLeft(6, '0');
+    return '${t.substring(0, 2)}:${t.substring(2, 4)}';
+  }
+
+  static CprintRecord? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    return CprintRecord(
+      date: '${raw['dwDate'] ?? ''}',
+      time: '${raw['dwTime'] ?? ''}',
+      paperId: _i(raw['dwPaperID']),
+      pages: _i(raw['dwPageNo']),
+      settleType: _i(raw['dwSettleType']),
+      cardMoney: _i(raw['dwUsedCardMoney']),
+      freeMoney: _i(raw['dwUsedFreeMoney']),
+      cashMoney: _i(raw['dwUsedMoney']),
+    );
+  }
+}
+
+/// 「使用记录」一页的结果。
+class CprintRecordPage {
+  final List<CprintRecord> items;
+  final int pageNo;
+  final int totalPage;
+  final int errorCode;
+  final String message;
+
+  const CprintRecordPage({
+    required this.items,
+    required this.pageNo,
+    required this.totalPage,
+    required this.errorCode,
+    required this.message,
+  });
+
+  bool get ok => errorCode == 0;
+  bool get needReauth => errorCode == CprintError.notLoggedIn;
+
+  static const CprintRecordPage empty = CprintRecordPage(
+    items: [],
+    pageNo: 1,
+    totalPage: 0,
+    errorCode: 0,
+    message: '',
+  );
+
+  static CprintRecordPage parse(Object? decoded) {
+    if (decoded is! Map) {
+      return const CprintRecordPage(
+        items: [],
+        pageNo: 1,
+        totalPage: 0,
+        errorCode: -1,
+        message: '使用记录返回的内容看不懂，请稍后重试。',
+      );
+    }
+    final result = decoded['result'];
+    final items = <CprintRecord>[];
+    if (result is List) {
+      for (final e in result) {
+        final r = CprintRecord.fromJson(e);
+        if (r != null) items.add(r);
+      }
+    }
+    return CprintRecordPage(
+      items: items,
+      pageNo: _i(decoded['dwPageNo']) == 0 ? 1 : _i(decoded['dwPageNo']),
+      totalPage: _i(decoded['dwTotalPage']),
+      errorCode: _i(decoded['code']),
+      message: '${decoded['message'] ?? ''}',
+    );
+  }
+}
+
+/// 上传（去打印）的结果。
+///
+/// 站点这个接口不返回 JSON，而是 **302 到 `result.html?code=0&fee=20&message=`**，
+/// 所以只能从 `Location` 的 query 里读结果 —— 网页版也是这么做的
+/// （`oReq.responseURL.split("?")[1]`）。
+class CprintUploadResult {
+  final int code;
+  final int feeFen;
+  final String message;
+
+  const CprintUploadResult({
+    required this.code,
+    required this.feeFen,
+    required this.message,
+  });
+
+  bool get ok => code == 0;
+
+  /// 预估费用：`fee` 单位是分。
+  String get feeLabel => feeFen <= 0 ? '' : '${(feeFen / 100).toStringAsFixed(2)} 元';
+
+  static const CprintUploadResult failed = CprintUploadResult(
+    code: -1,
+    feeFen: 0,
+    message: '上传失败，请稍后再试。',
+  );
+
+  static CprintUploadResult parseLocation(String location) {
+    if (location.isEmpty) return failed;
+    final q = Uri.tryParse(location)?.queryParameters ?? const {};
+    // 🔴 没有 `code` 就不是云打印的结果页。网关/门户会把 302 改写成别的地址，
+    //    那种 Location 里同样没有 code —— 不能把「被改写」当成「上传成功」。
+    if (!q.containsKey('code')) return failed;
+    final code = _i(q['code']);
+    final fee = _i(q['fee']);
+    final raw = (q['message'] ?? '').trim();
+    var msg = raw;
+    if (raw.isNotEmpty) {
+      try {
+        msg = Uri.decodeComponent(raw);
+      } catch (_) {
+        msg = raw;
+      }
+    }
+    return CprintUploadResult(code: code, feeFen: fee, message: msg);
+  }
+}
+
+/// 打印任务列表的结果（网页版「打印文档」页）。
+class CprintJobResult {
+  final List<CprintPrintJob> jobs;
+  final int errorCode;
+  final String message;
+
+  const CprintJobResult({
+    required this.errorCode,
+    required this.message,
+    this.jobs = const [],
+  });
+
+  bool get ok => errorCode == 0;
+  bool get needReauth => errorCode == CprintError.notLoggedIn;
+}
+
+/// 打印点的结果（网页版「打印点」页）。
+class CprintStationResult {
+  final List<CprintSrv> srvs;
+  final List<CprintStation> stations;
+  final int errorCode;
+  final String message;
+
+  const CprintStationResult({
+    required this.errorCode,
+    required this.message,
+    this.srvs = const [],
+    this.stations = const [],
+  });
+
+  bool get ok => errorCode == 0;
+  bool get needReauth => errorCode == CprintError.notLoggedIn;
+
+  /// 按服务商分组的机器（网页版顶部下拉的效果）。
+  ///
+  /// 站点用 `parseInt(dwDevSN / 1000) == dwSN` 判定归属，这里照抄。
+  /// 服务商列表为空时，把所有机器归到一个「全部」分组，避免整页空白。
+  Map<CprintSrv, List<CprintStation>> get grouped {
+    final out = <CprintSrv, List<CprintStation>>{};
+    if (srvs.isEmpty) {
+      out[CprintSrv(sn: 0, name: '全部打印点')] = stations;
+      return out;
+    }
+    for (final srv in srvs) {
+      final mine = stations
+          .where((s) => s.devSn ~/ 1000 == srv.sn)
+          .toList(growable: false);
+      if (mine.isNotEmpty) out[srv] = mine;
+    }
+    // 归属算不出来（sn 不匹配）的机器不能吞掉 —— 用户会以为打印机没了。
+    final listed = <int>{};
+    for (final v in out.values) {
+      for (final s in v) {
+        listed.add(s.devSn);
+      }
+    }
+    final rest = stations.where((s) => !listed.contains(s.devSn)).toList(growable: false);
+    if (rest.isNotEmpty) out[CprintSrv(sn: 0, name: '其他打印点')] = rest;
+    return out;
+  }
+}
+
+int _i(Object? v) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse('${v ?? ''}') ?? 0;
 }

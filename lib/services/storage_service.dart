@@ -249,6 +249,22 @@ class StorageService {
     await prefs.setString(_kServiceSortMode, mode == 'usage' ? 'usage' : 'manual');
   }
 
+  // ---------------- 服务页是否分组（2026-11-25） ----------------
+  // false = 原样的单列平铺（默认）
+  // true  = 按用途分四块（教务与成绩 / 课程与学习 / 资料与工具 / 校园与生活）
+  // 用户 2026-11-25：分组是「可以在设置里自己选」的东西，不是默认行为。
+  static const String _kServicesGrouped = 'services_grouped';
+
+  static Future<bool> loadServicesGrouped() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kServicesGrouped) ?? false;
+  }
+
+  static Future<void> saveServicesGrouped(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kServicesGrouped, value);
+  }
+
   // ---- 我的成绩（本地缓存，仅在推送时更新） ----
 
   static const String _kGradeCache = 'grade_cache_v1';

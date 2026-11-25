@@ -26,6 +26,7 @@ class ServiceSettingsPage extends StatefulWidget {
     required this.hidden,
     this.favorites = const <String>[],
     this.sortMode = 'manual',
+    this.grouped = false,
   });
 
   /// 进入时的隐藏服务 id（服务页传入，避免重复读存储）。
@@ -36,6 +37,9 @@ class ServiceSettingsPage extends StatefulWidget {
 
   /// 进入时的排序模式：`manual` / `usage`。
   final String sortMode;
+
+  /// 进入时是否已打开「按用途分组」（默认关 —— 默认是单列平铺）。
+  final bool grouped;
 
   @override
   State<ServiceSettingsPage> createState() => _ServiceSettingsPageState();
@@ -48,6 +52,7 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
   late final Set<String> _hidden = widget.hidden.toSet();
   late final Set<String> _favorites = widget.favorites.toSet();
   late String _sortMode = widget.sortMode;
+  late bool _grouped = widget.grouped;
 
   /// 按用户拖出来的顺序排好的服务清单。加载完成后替换。
   ///
@@ -100,6 +105,12 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
     await StorageService.saveServiceSortMode(mode);
   }
 
+  Future<void> _setGrouped(bool value) async {
+    if (_grouped == value) return;
+    setState(() => _grouped = value);
+    await StorageService.saveServicesGrouped(value);
+  }
+
   Future<void> _onReorder(int oldIndex, int newIndex) async {
     // 手动模式下才有意义。使用模式时列表按次数排，拖动会立刻被覆盖，
     // 所以那种模式下直接不响应拖动（拖动把手也隐藏）。
@@ -147,6 +158,8 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
           ),
           const SizedBox(height: 14),
           _sortModeCard(context),
+          const SizedBox(height: 10),
+          _groupedCard(context),
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(AppTheme.radiusLg),
@@ -247,6 +260,60 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
             Divider(height: 1, color: context.borderColor),
             option('usage', '按使用次数', '最近用得多的排前面；收藏永远在最上面'),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 是否按用途分组。默认关，因为默认形态必须是用户熟悉的那一列。
+  Widget _groupedCard(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+      child: userCard(
+        context,
+        padding: EdgeInsets.zero,
+        child: InkWell(
+          onTap: () => _setGrouped(!_grouped),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '按用途分组',
+                        style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          fontWeight: _grouped ? FontWeight.w600 : FontWeight.w500,
+                          color:
+                              _grouped ? context.textPrimary : context.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '打开后服务页分成教务与成绩 / 课程与学习 / 资料与工具 / 校园与生活四块',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontCaption,
+                            color: context.textTertiary),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Transform.scale(
+                  scale: 0.85,
+                  child: Switch(
+                    value: _grouped,
+                    onChanged: _setGrouped,
+                    activeColor: Colors.white,
+                    activeTrackColor: AppTheme.primaryColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

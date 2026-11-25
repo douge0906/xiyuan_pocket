@@ -38,7 +38,9 @@ void main() {
     }
 
     expect(find.byType(ReorderableListView), findsOneWidget);
-    expect(find.byType(Switch), findsNWidgets(mainServices.length));
+    // 每个服务一个显示开关，外加顶部「按用途分组」那一个（2026-11-25 新增，
+    // 它不在 ReorderableListView 里，所以不能用 drag_handle 的数量来代表）。
+    expect(find.byType(Switch), findsNWidgets(mainServices.length + 1));
     // 每个服务一颗收藏星（2026-11-25 新增）。
     expect(find.byIcon(Icons.star_border_rounded),
         findsNWidgets(mainServices.length));
@@ -107,6 +109,36 @@ void main() {
     // 否则用户拖了半天发现没反应，会以为坏了。
     expect(find.byIcon(Icons.drag_handle_rounded), findsNothing);
     expect(await StorageService.loadServiceSortMode(), 'usage');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('「按用途分组」默认关闭，点一下会落盘', (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: ServiceSettingsPage(hidden: <String>[]),
+    ));
+    await tester.pumpAndSettle();
+
+    // 默认必须是关的 —— 用户要的是「原样的单列平铺」。
+    expect(await StorageService.loadServicesGrouped(), isFalse);
+    expect(find.text('按用途分组'), findsOneWidget);
+
+    await tester.tap(find.text('按用途分组'));
+    await tester.pumpAndSettle();
+
+    expect(await StorageService.loadServicesGrouped(), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('传入 grouped: true 时开关是打开的', (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: ServiceSettingsPage(hidden: <String>[], grouped: true),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('按用途分组'), findsOneWidget);
+    // 页内 Switch 里恰好多出一个打开的（分组开关），其余都是服务的显示开关。
+    final switches = tester.widgetList<Switch>(find.byType(Switch)).toList();
+    expect(switches.where((s) => s.value).length, mainServices.length + 1);
     expect(tester.takeException(), isNull);
   });
 

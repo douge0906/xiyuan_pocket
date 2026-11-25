@@ -281,6 +281,8 @@ class CampusSession extends CampusSessionBase {
     Map<String, String>? headers,
     bool followRedirects = true,
     String? body,
+    List<int>? bodyBytes,
+    String? contentType,
   }) async {
     // ⚠️ 必须**手动**跟重定向：dart:io 自动跟随时，中间 302 响应里下发的
     //    Set-Cookie（CAS/教务的会话就藏在这一步）会拿不到。
@@ -327,6 +329,17 @@ class CampusSession extends CampusSessionBase {
               'application', 'x-www-form-urlencoded',
               charset: 'utf-8');
           req.add(utf8.encode(_encodeForm(form)));
+        } else if (bodyBytes != null) {
+          // 二进制正文（multipart 上传）：必须原样发字节，不能过 utf8。
+          if (contentType != null) {
+            req.headers.set(HttpHeaders.contentTypeHeader, contentType);
+          }
+          // 🔴 必须显式给长度。不设的话 dart:io 会退回 chunked 传输编码，
+          //    云打印那台老服务端（.NET）对 chunked 的 multipart 会直接挂住
+          //    不回 —— 实测就是 120 秒读超时、任务也没进队列。
+          //    浏览器发 FormData 时也是一定带 Content-Length 的。
+          req.contentLength = bodyBytes.length;
+          req.add(bodyBytes);
         } else if (body != null) {
           req.add(utf8.encode(body));
         }
@@ -445,6 +458,52 @@ class CampusSession extends CampusSessionBase {
           body: jsonEncode(data),
           headers: {...?headers, 'Content-Type': 'application/json'},
           followRedirects: followRedirects);
+
+  /// multipart/form-data 上传（云打印「去打印」用）。
+  ///
+  /// 为什么不能复用 [postForm]：那个方法把字段拼成 `a=1&b=2` 的字符串正文，
+  /// 而站点这个接口要求真正的 `multipart/form-data`（浏览器 `FormData` 行为），
+  /// 字段和文件各自一段、带 boundary。用表单编码发过去服务端只会挂住不回。
+  ///
+  /// [fields] 里的顺序会原样保留 —— 云打印服务端对字段顺序没有要求，但保持
+  /// 与网页版一致更省事。
+  Future<CampusBytesResponse> postMultipart(
+    String url, {
+    required Map<String, String> fields,
+    required String fileField,
+    required String fileName,
+    required List<int> fileBytes,
+    String? fileContentType,
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) async {
+    // boundary 用时间戳 + 随机数：只要不和服务端解析器的分隔符撞上就行。
+    final boundary = '----XiyuanCprint'
+        '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    final body = <int>[];
+    void text(String s) => body.addAll(utf8.encode(s));
+
+    fields.forEach((k, v) {
+      text('--$boundary\r\n');
+      text('Content-Disposition: form-data; name="$k"\r\n\r\n');
+      text('$v\r\n');
+    });
+    text('--$boundary\r\n');
+    text('Content-Disposition: form-data; name="$fileField"; '
+        'filename="$fileName"\r\n');
+    text('Content-Type: ${fileContentType ?? 'application/octet-stream'}\r\n\r\n');
+    body.addAll(fileBytes);
+    text('\r\n--$boundary--\r\n');
+
+    return _sendRawBytes(
+      'POST',
+      url,
+      bodyBytes: body,
+      contentType: 'multipart/form-data; boundary=$boundary',
+      headers: headers,
+      followRedirects: followRedirects,
+    );
+  }
 
   /// 取 JSON（解析失败返回 null）
   static Map<String, dynamic>? tryJson(String body) {

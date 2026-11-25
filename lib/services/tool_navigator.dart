@@ -12,7 +12,7 @@ import '../pages/tools/textbook_page.dart';
 import '../pages/tools/campus_map_page.dart';
 import '../pages/tools/handbook_page.dart';
 import '../pages/tools/chaoxing_sync_page.dart';
-import '../pages/tools/cprint_scan_page.dart';
+import '../pages/tools/cprint_page.dart';
 import '../pages/tools/timetable_search_page.dart';
 import '../pages/countdown_page.dart';
 
@@ -107,9 +107,11 @@ class ToolNavigator {
         Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const ChaoxingSyncPage()));
         break;
+      // 图书馆云打印：一个页面五个页签（上传 / 打印文档 / 扫描文档 /
+      // 打印点 / 使用记录），与网页版的功能划分一致。
       case 'cprint_scan':
         Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => const CprintScanPage()));
+            .push(MaterialPageRoute(builder: (_) => const CprintPage()));
         break;
       // 锡院在线课表：主入口在课表页的导入面板，这里是服务页的次入口。
       case 'timetable_library':

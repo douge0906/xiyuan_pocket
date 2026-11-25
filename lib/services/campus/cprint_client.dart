@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert' show base64Decode;
+import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show debugPrint;
 
@@ -429,6 +431,378 @@ class CprintClient {
       return CprintScanResult(errorCode: code, message: msg, items: const []);
     } on CampusException catch (e) {
       return CprintScanResult(errorCode: -1, message: e.message, items: const []);
+    }
+  }
+
+  // ───────────────────────── 云端打印任务 ─────────────────────────
+
+  /// 上传一个文件去打印（网页版「云打印」页）。
+  ///
+  /// ## 三个实测出来的硬约束（2026-11-25，全部用真账号打过）
+  ///
+  /// 1. **必须 `/api/client/CloudPrint/Upload`**。网页版 JS 里写的是不带 /api 的
+  ///    那条（`cp_cprint.js:149`），实测 404 —— 那个 JS 是给另一套部署的。
+  /// 2. **PDF 在这台服务器上会挂死**：同一个 URL 传 PDF 会 45~120 秒超时且任务
+  ///    不进队列，传 PNG/JPG 秒回。所以界面上要劝用户「PDF 先转成图片」。
+  /// 3. **结果是 302 的 Location**：`result.html?code=0&fee=20&message=`，
+  ///    `fee` 单位是分。接口从头到尾不返回 JSON。
+  ///
+  /// [color] true=彩色；[paperId] -1=不指定 / 9=A4 / 8=A3；
+  /// [duplex] 1=单面 / 2=双面短边 / 3=双面长边。
+  static Future<CprintUploadResult> upload({
+    required String fileName,
+    required List<int> bytes,
+    String? contentType,
+    bool color = false,
+    int paperId = -1,
+    int duplex = 1,
+    int copies = 1,
+  }) async {
+    final first = await _uploadOnce(
+      fileName: fileName,
+      bytes: bytes,
+      contentType: contentType,
+      color: color,
+      paperId: paperId,
+      duplex: duplex,
+      copies: copies,
+    );
+    if (first.code != CprintError.notLoggedIn) return first;
+    final again = await authorize(force: true);
+    if (!again.ok) return CprintUploadResult(code: -1, feeFen: 0, message: again.message);
+    return _uploadOnce(
+      fileName: fileName,
+      bytes: bytes,
+      contentType: contentType,
+      color: color,
+      paperId: paperId,
+      duplex: duplex,
+      copies: copies,
+    );
+  }
+
+  static Future<CprintUploadResult> _uploadOnce({
+    required String fileName,
+    required List<int> bytes,
+    String? contentType,
+    required bool color,
+    required int paperId,
+    required int duplex,
+    required int copies,
+  }) async {
+    final s = _session;
+    if (s == null) {
+      return CprintUploadResult(
+          code: CprintError.notLoggedIn, feeFen: 0, message: '还没有连接云打印');
+    }
+    try {
+      // 字段顺序照抄网页版 FormData 的追加顺序，服务端对顺序没要求，
+      // 但真机出问题时能少一个变量。
+      final fields = <String, String>{
+        'dwColor': color ? '2' : '1',
+        'dwPaperId': '$paperId',
+        'dwDuplex': '$duplex',
+        'dwFrom': '0',
+        'dwTo': '0',
+        'dwCopies': '${copies < 1 ? 1 : copies}',
+        'BackURL': 'result.html',
+      };
+      final r = await s.postMultipart(
+        '$_api/CloudPrint/Upload',
+        fields: fields,
+        fileField: 'szPath',
+        fileName: fileName,
+        fileBytes: bytes,
+        fileContentType: contentType ?? 'application/octet-stream',
+        // 🔴 不能跟随：结果就在 302 的 Location 里，跟过去只剩一个空 HTML。
+        followRedirects: false,
+      );
+      if (r.statusCode == 413) {
+        return const CprintUploadResult(
+            code: -1, feeFen: 0, message: '文件太大，图书馆云打印不收，请压缩后再试。');
+      }
+      final loc = r.location ?? '';
+      if (loc.isEmpty) {
+        debugPrint('[cprint] upload HTTP ${r.statusCode} 无 Location');
+        return const CprintUploadResult(
+            code: -1, feeFen: 0, message: '上传没有成功，请稍后再试。');
+      }
+      final parsed = CprintUploadResult.parseLocation(loc);
+      if (!parsed.ok) {
+        debugPrint('[cprint] upload 失败 code=${parsed.code} msg=${parsed.message}');
+        return CprintUploadResult(
+          code: parsed.code,
+          feeFen: parsed.feeFen,
+          // 技术编号只进日志：用户看到「代码 33558534」既不懂也做不了什么。
+          message: parsed.message.isEmpty
+              ? '上传没有成功，请稍后再试。'
+              : parsed.message,
+        );
+      }
+      return parsed;
+    } on CampusException catch (ex) {
+      return CprintUploadResult(code: -1, feeFen: 0, message: ex.message);
+    }
+  }
+
+  /// 打印任务列表（网页版「打印文档」页）。会话失效自动重授权一次。
+  static Future<CprintJobResult> printJobs() async {
+    final first = await _printJobsOnce();
+    if (!first.needReauth) return first;
+    final again = await authorize(force: true);
+    if (!again.ok) {
+      return CprintJobResult(errorCode: CprintError.notLoggedIn, message: again.message);
+    }
+    return _printJobsOnce();
+  }
+
+  static Future<CprintJobResult> _printJobsOnce() async {
+    final s = _session;
+    if (s == null) {
+      return const CprintJobResult(errorCode: CprintError.notLoggedIn, message: '还没有连接云打印');
+    }
+    try {
+      final r = await s.get(
+        '$_api/PrintJob/Get?timestamp=${DateTime.now().millisecondsSinceEpoch}',
+      );
+      final j = CampusSession.tryJson(r.body);
+      if (j == null) {
+        return CprintJobResult(
+            errorCode: -1, message: '打印任务返回的内容看不懂，请稍后重试。');
+      }
+      final code = _asInt(j['code']);
+      if (code != 0) {
+        return CprintJobResult(
+          errorCode: code,
+          message: code == CprintError.notLoggedIn
+              ? '登录状态已失效，请重新授权'
+              : '打印任务读取失败，请稍后重试。',
+        );
+      }
+      return CprintJobResult(errorCode: 0, message: '', jobs: CprintPrintJob.parseList(j));
+    } on CampusException catch (ex) {
+      return CprintJobResult(errorCode: -1, message: ex.message);
+    }
+  }
+
+  /// 删一条打印任务。`dwOldJobId` 要一起传（网页版就是传同一个 id）。
+  static Future<CprintScanResult> deletePrintJob(String jobId) async {
+    final first = await _deletePrintJobOnce(jobId);
+    if (!first.needReauth) return first;
+    final again = await authorize(force: true);
+    if (!again.ok) {
+      return CprintScanResult(
+          errorCode: CprintError.notLoggedIn, message: again.message, items: const []);
+    }
+    return _deletePrintJobOnce(jobId);
+  }
+
+  static Future<CprintScanResult> _deletePrintJobOnce(String jobId) async {
+    final s = _session;
+    if (s == null) {
+      return const CprintScanResult(
+          errorCode: CprintError.notLoggedIn, message: '还没有连接云打印', items: []);
+    }
+    try {
+      final r = await s.postJson(
+          '$_api/PrintJob/Del', {'dwJobId': jobId, 'dwOldJobId': jobId});
+      final j = CampusSession.tryJson(r.body);
+      if (j == null) {
+        return const CprintScanResult(
+            errorCode: -1, message: '删除失败：云打印没有返回可识别的内容', items: []);
+      }
+      final code = _asInt(j['code']);
+      final raw = '${j['message'] ?? ''}'.trim();
+      final msg = code == 0
+          ? '已删除'
+          : raw.isNotEmpty
+              ? raw
+              : '删除失败（代码 $code）';
+      return CprintScanResult(errorCode: code, message: msg, items: const []);
+    } on CampusException catch (ex) {
+      return CprintScanResult(errorCode: -1, message: ex.message, items: const []);
+    }
+  }
+
+  /// 取某一页预览图（PNG 的 base64）。没有预览时返回 null。
+  ///
+  /// 站点返回 `{"code":0,"result":"iVBORw0KGgo…"}`，界面自己拼
+  /// `data:image/png;base64,` 给 `Image.memory` 之前先 base64Decode。
+  static Future<Uint8List?> previewPage({
+    required String jobId,
+    required String createTime,
+    int pageNo = 1,
+  }) async {
+    var bytes = await _previewOnce(jobId: jobId, createTime: createTime, pageNo: pageNo);
+    if (bytes != null) return bytes;
+    final again = await authorize(force: true);
+    if (!again.ok) return null;
+    return _previewOnce(jobId: jobId, createTime: createTime, pageNo: pageNo);
+  }
+
+  static Future<Uint8List?> _previewOnce({
+    required String jobId,
+    required String createTime,
+    required int pageNo,
+  }) async {
+    final s = _session;
+    if (s == null) return null;
+    try {
+      final r = await s.get(
+        '$_api/PrintJob/PreviewPage?timestamp=${DateTime.now().millisecondsSinceEpoch}'
+        '&dwJobId=$jobId&dwCreateTime=$createTime&pageNo=$pageNo',
+      );
+      final j = CampusSession.tryJson(r.body);
+      if (j == null) return null;
+      final b64 = '${j['result'] ?? ''}'.trim();
+      if (b64.isEmpty) return null;
+      return base64Decode(b64);
+    } catch (ex) {
+      debugPrint('[cprint] preview 失败：$ex');
+      return null;
+    }
+  }
+
+  // ───────────────────────── 打印点 ─────────────────────────
+
+  /// 打印点（网页版「打印点」页）：服务商 + 每台机器的状态。
+  static Future<CprintStationResult> stations() async {
+    final first = await _stationsOnce();
+    if (!first.needReauth) return first;
+    final again = await authorize(force: true);
+    if (!again.ok) {
+      return CprintStationResult(
+          errorCode: CprintError.notLoggedIn, message: again.message);
+    }
+    return _stationsOnce();
+  }
+
+  static Future<CprintStationResult> _stationsOnce() async {
+    final s = _session;
+    if (s == null) {
+      return const CprintStationResult(
+          errorCode: CprintError.notLoggedIn, message: '还没有连接云打印');
+    }
+    try {
+      final rs = await s.get('$_api/Station/GetSrvList');
+      final js = CampusSession.tryJson(rs.body);
+      final srvs = js == null ? const <CprintSrv>[] : CprintSrv.parseList(js);
+      final rl = await s.get(
+        '$_api/Station/GetList?timestamp=${DateTime.now().millisecondsSinceEpoch}',
+      );
+      final jl = CampusSession.tryJson(rl.body);
+      if (jl == null) {
+        return CprintStationResult(
+            errorCode: -1, message: '打印点返回的内容看不懂，请稍后重试。');
+      }
+      final code = _asInt(jl['code']);
+      if (code != 0) {
+        return CprintStationResult(
+          errorCode: code,
+          message: code == CprintError.notLoggedIn
+              ? '登录状态已失效，请重新授权'
+              : '打印点读取失败，请稍后重试。',
+        );
+      }
+      return CprintStationResult(
+        errorCode: 0,
+        message: '',
+        srvs: srvs,
+        stations: CprintStation.parseList(jl),
+      );
+    } on CampusException catch (ex) {
+      return CprintStationResult(errorCode: -1, message: ex.message);
+    }
+  }
+
+  // ───────────────────────── 使用记录 ─────────────────────────
+
+  /// 使用记录（网页版「使用记录」页）。
+  ///
+  /// [type] 1=打印记录 / 4=扫描记录 / 2=复印记录（站点 `data-type` 原值）。
+  /// 日期传 `yyyyMMdd`；不传时按网页版默认给「今天往前 1000 天 ~ 今天」。
+  static Future<CprintRecordPage> records({
+    int type = 1,
+    String begin = '',
+    String end = '',
+    int pageNo = 1,
+    int rowCount = 15,
+  }) async {
+    final first =
+        await _recordsOnce(type: type, begin: begin, end: end, pageNo: pageNo, rowCount: rowCount);
+    if (!first.needReauth) return first;
+    final again = await authorize(force: true);
+    if (!again.ok) {
+      return CprintRecordPage(
+        items: const [],
+        pageNo: 1,
+        totalPage: 0,
+        errorCode: CprintError.notLoggedIn,
+        message: again.message,
+      );
+    }
+    return _recordsOnce(type: type, begin: begin, end: end, pageNo: pageNo, rowCount: rowCount);
+  }
+
+  static Future<CprintRecordPage> _recordsOnce({
+    required int type,
+    required String begin,
+    required String end,
+    required int pageNo,
+    required int rowCount,
+  }) async {
+    final s = _session;
+    if (s == null) {
+      return const CprintRecordPage(
+        items: [],
+        pageNo: 1,
+        totalPage: 0,
+        errorCode: CprintError.notLoggedIn,
+        message: '还没有连接云打印',
+      );
+    }
+    try {
+      final r = await s.postJson(
+        '$_api/Report/DetailPageEx?timestamp=${DateTime.now().millisecondsSinceEpoch}',
+        {
+          'dwBeginDate': begin,
+          'dwEndDate': end,
+          'dwType': type,
+          'dwPageNo': pageNo,
+          'dwRowCount': rowCount,
+        },
+      );
+      final j = CampusSession.tryJson(r.body);
+      if (j == null) {
+        return const CprintRecordPage(
+          items: [],
+          pageNo: 1,
+          totalPage: 0,
+          errorCode: -1,
+          message: '使用记录返回的内容看不懂，请稍后重试。',
+        );
+      }
+      final page = CprintRecordPage.parse(j);
+      if (page.errorCode != 0) {
+        return CprintRecordPage(
+          items: const [],
+          pageNo: page.pageNo,
+          totalPage: page.totalPage,
+          errorCode: page.errorCode,
+          message: page.errorCode == CprintError.notLoggedIn
+              ? '登录状态已失效，请重新授权'
+              : '使用记录读取失败，请稍后重试。',
+        );
+      }
+      return page;
+    } on CampusException catch (ex) {
+      return CprintRecordPage(
+        items: const [],
+        pageNo: 1,
+        totalPage: 0,
+        errorCode: -1,
+        message: ex.message,
+      );
     }
   }
 

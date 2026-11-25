@@ -98,8 +98,11 @@ const List<ToolModel> mainServices = [
   // 云打印会话票（校外自动套 WebVPN），所以对用户来说就是「点进去就有」。
   ToolModel(
     id: 'cprint_scan',
-    name: '云打印扫描件',
-    icon: Icons.document_scanner_rounded,
+    // 名字保留「云打印」这个大家熟悉的入口名，但里面已经是网页版那一整套
+    // 五个功能（上传 / 打印文档 / 扫描文档 / 打印点 / 使用记录），
+    // 所以不能再叫「扫描件」——那只是其中一页。
+    name: '图书馆云打印',
+    icon: Icons.print_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
     group: ServiceGroup.tools,
