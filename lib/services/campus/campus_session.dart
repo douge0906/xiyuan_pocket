@@ -39,8 +39,41 @@ class CampusResponse {
   bool get looksLikeLogin => url.toLowerCase().contains('login');
 }
 
-/// 会话抽象基类：原生 [CampusSession]（dart:io 直连）与 Web 代理适配器
-/// （经控制台有状态会话隧道）实现同一组方法，业务解析 client 只依赖本基类。
+/// 二进制响应（下载文件用）。
+///
+/// 与 [CampusResponse] 的唯一区别是 body 保持原始字节：[CampusResponse.body]
+/// 走 `utf8.decode(allowMalformed: true)`，PDF / JPEG 里的任意字节会被替换成
+/// `U+FFFD`，写出来的文件就是坏的。文本接口照旧用 [CampusResponse]。
+class CampusBytesResponse {
+  final int statusCode;
+  final List<int> bytes;
+
+  /// 最终 URL（跟随重定向后的落点）。
+  final String url;
+
+  /// 本次响应的 `Location`（未跟随重定向时有值）。
+  final String? location;
+
+  /// `Content-Type` 原值（云打印下载失败的判据之一）。
+  final String? contentType;
+
+  const CampusBytesResponse({
+    required this.statusCode,
+    required this.bytes,
+    required this.url,
+    this.location,
+    this.contentType,
+  });
+
+  bool get ok => statusCode >= 200 && statusCode < 300;
+
+  /// 响应体前若干字节的文本形态（只看判据用，别拿去当文件内容）。
+  String get headText =>
+      utf8.decode(bytes.take(16).toList(), allowMalformed: true);
+}
+
+/// 会话抽象基类：业务解析 client（成绩 / 考试 / 学业 / 课表 / 空教室）只依赖
+/// 本基类，不直接依赖具体实现，便于以后替换传输层。
 ///
 /// 为什么抽这一层：浏览器里 `dart:io HttpClient` 不可用，Web 会话改由服务端
 /// 持有 cookie 罐；解析层（成绩 / 考试 / 学业 / 课表）希望原样复用，不重复写一遍。
@@ -106,6 +139,9 @@ String extractCsrfToken(String html) {
 /// 新增条目时要先实测 443 到底通不通，别凭印象加。
 const Set<String> httpsOnlyExclusions = <String>{
   'sygl.cwxu.edu.cn',
+  // 云打印扫描件（图书馆）：443 端口不通，只能 http://…:9130。
+  // 2026-11-25 实测：http 直连 200，https 握手直接失败。
+  'zzwy.cwxu.edu.cn',
 };
 
 class CampusSession extends CampusSessionBase {
@@ -216,6 +252,39 @@ class CampusSession extends CampusSessionBase {
     bool followRedirects = true,
     String? body,
   }) async {
+    final r = await _sendRawBytes(method, url,
+        form: form,
+        headers: headers,
+        followRedirects: followRedirects,
+        body: body);
+    return CampusResponse(
+      statusCode: r.statusCode,
+      // 🔴 不能硬解 utf8：站点有一部分页面/错误页是 gb2312，硬解会抛
+      //    `FormatException: Missing extension byte`，然后被各调用方的
+      //    `catch (_)` 吞掉，表象是「HTTP 状态 0 / 接口没数据」——
+      //    实验课 `UserCenter.asmx` 的 404 页就是这样把真因藏了两个月。
+      //    这里改成容错解码：合法 utf8 内容逐字节不变，坏字节不会炸。
+      body: utf8.decode(r.bytes, allowMalformed: true),
+      url: r.url,
+      location: r.location,
+    );
+  }
+
+  /// 与 [_sendRaw] 完全同一套「手动跟 302 + 抓 Set-Cookie + 逐跳 URL 改写」，
+  /// 但返回**原始字节**。
+  ///
+  /// 为什么必须单开一条：云打印的 `Scan/Download` 直接回 PDF / JPEG，
+  /// 走 [CampusResponse] 的 utf8 解码会把二进制毁掉（写出的文件打不开）。
+  Future<CampusBytesResponse> _sendRawBytes(
+    String method,
+    String url, {
+    Map<String, String>? form,
+    Map<String, String>? headers,
+    bool followRedirects = true,
+    String? body,
+    List<int>? bodyBytes,
+    String? contentType,
+  }) async {
     // ⚠️ 必须**手动**跟重定向：dart:io 自动跟随时，中间 302 响应里下发的
     //    Set-Cookie（CAS/教务的会话就藏在这一步）会拿不到。
     var currentUrl = url;
@@ -227,7 +296,7 @@ class CampusSession extends CampusSessionBase {
     // 跳数上限 12：参考实现（cas.rs sso_follow）用 10 跳，WebVPN 登录链
     // （login → token-login → 门户）比普通 SSO 更长，留足余量。
     for (var hop = 0; hop < 12; hop++) {
-      // 每跳都过一遍改写（WebVPN 幂等包装）；CampusResponse.url 也是改写后的
+      // 每跳都过一遍改写（WebVPN 幂等包装）；返回的 url 也是改写后的
       // 最终地址，调用方从它取 query 参数（如平台票）不受影响。
       final target = urlRewrite?.call(rawUrl) ?? rawUrl;
       currentUrl = target;
@@ -236,8 +305,8 @@ class CampusSession extends CampusSessionBase {
       // 会被服务端直接断连，302 链里遇到要**升到 https**（只升不降，避免来回跳）。
       //
       // 🔴 但这条规则不是全局成立的：实验课系统 `sygl.cwxu.edu.cn` **只开了 80**，
-      // 443 直接连不通（实测 curl exit 28、TCP 连接超时），强行升级 = 整个功能
-      // 永远超时。所以按站点白名单排除，别为了统一好看把它一起升级。
+      // 云打印 `zzwy.cwxu.edu.cn` **只开了 80:9130**，443 连不通，
+      // 强行升级 = 整个功能永远超时。所以按站点白名单排除，别为了统一好看把它一起升级。
       if (uri.scheme == 'http' &&
           uri.host.endsWith('.cwxu.edu.cn') &&
           !httpsOnlyExclusions.contains(uri.host)) {
@@ -261,6 +330,17 @@ class CampusSession extends CampusSessionBase {
               'application', 'x-www-form-urlencoded',
               charset: 'utf-8');
           req.add(utf8.encode(_encodeForm(form)));
+        } else if (bodyBytes != null) {
+          // 二进制正文（multipart 上传）：必须原样发字节，不能过 utf8。
+          if (contentType != null) {
+            req.headers.set(HttpHeaders.contentTypeHeader, contentType);
+          }
+          // 🔴 必须显式给长度。不设的话 dart:io 会退回 chunked 传输编码，
+          //    云打印那台老服务端（.NET）对 chunked 的 multipart 会直接挂住
+          //    不回 —— 实测就是 120 秒读超时、任务也没进队列。
+          //    浏览器发 FormData 时也是一定带 Content-Length 的。
+          req.contentLength = bodyBytes.length;
+          req.add(bodyBytes);
         } else if (body != null) {
           req.add(utf8.encode(body));
         }
@@ -280,23 +360,37 @@ class CampusSession extends CampusSessionBase {
         continue;
       }
 
-      // 🔴 不能硬解 utf8：站点有一部分页面/错误页是 gb2312，硬解会抛
-      //    `FormatException: Missing extension byte`，然后被各调用方的
-      //    `catch (_)` 吞掉，表象是「HTTP 状态 0 / 接口没数据」——
-      //    实验课 `UserCenter.asmx` 的 404 页就是这样把真因藏了两个月。
-      //    这里改成容错解码：合法 utf8 内容逐字节不变，坏字节不会炸。
       final bytes = await res
           .fold<List<int>>(<int>[], (a, b) => a..addAll(b))
           .timeout(timeout);
-      final text = utf8.decode(bytes, allowMalformed: true);
-      return CampusResponse(
+      return CampusBytesResponse(
         statusCode: res.statusCode,
-        body: text,
+        bytes: bytes,
         url: currentUrl,
         location: location,
+        contentType: res.headers.contentType?.toString(),
       );
     }
-    return CampusResponse(statusCode: 310, body: '', url: currentUrl);
+    return CampusBytesResponse(statusCode: 310, bytes: const <int>[], url: currentUrl);
+  }
+
+  /// [getBytes] 的异常翻译层（与 [_send] 同口径）。
+  Future<CampusBytesResponse> _sendBytes(
+    String method,
+    String url, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) async {
+    try {
+      return await _sendRawBytes(method, url,
+          headers: headers, followRedirects: followRedirects);
+    } on TimeoutException {
+      throw CampusException('连接学校系统超时（${timeout.inSeconds} 秒），请检查网络后重试');
+    } on HandshakeException {
+      throw CampusException('与学校系统的安全连接失败，请确认网络环境后重试');
+    } on SocketException catch (e) {
+      throw CampusException('网络不可达：${e.message}');
+    }
   }
 
   /// 计算下一跳地址：相对 Location 相对**原始（未包装）**地址解析。
@@ -317,6 +411,17 @@ class CampusSession extends CampusSessionBase {
     bool followRedirects = true,
   }) =>
       _send('GET', url, headers: headers, followRedirects: followRedirects);
+
+  /// GET 一个**二进制**资源（下载文件用）。文本接口请用 [get]。
+  ///
+  /// 与 [get] 共用同一套重定向 / cookie / URL 改写，区别只是不解码 body。
+  Future<CampusBytesResponse> getBytes(
+    String url, {
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) =>
+      _sendBytes('GET', url,
+          headers: headers, followRedirects: followRedirects);
 
   /// 发送站点要求的原始 POST 正文。
   ///
@@ -354,6 +459,52 @@ class CampusSession extends CampusSessionBase {
           body: jsonEncode(data),
           headers: {...?headers, 'Content-Type': 'application/json'},
           followRedirects: followRedirects);
+
+  /// multipart/form-data 上传（云打印「去打印」用）。
+  ///
+  /// 为什么不能复用 [postForm]：那个方法把字段拼成 `a=1&b=2` 的字符串正文，
+  /// 而站点这个接口要求真正的 `multipart/form-data`（浏览器 `FormData` 行为），
+  /// 字段和文件各自一段、带 boundary。用表单编码发过去服务端只会挂住不回。
+  ///
+  /// [fields] 里的顺序会原样保留 —— 云打印服务端对字段顺序没有要求，但保持
+  /// 与网页版一致更省事。
+  Future<CampusBytesResponse> postMultipart(
+    String url, {
+    required Map<String, String> fields,
+    required String fileField,
+    required String fileName,
+    required List<int> fileBytes,
+    String? fileContentType,
+    Map<String, String>? headers,
+    bool followRedirects = true,
+  }) async {
+    // boundary 用时间戳 + 随机数：只要不和服务端解析器的分隔符撞上就行。
+    final boundary = '----XiyuanCprint'
+        '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}';
+    final body = <int>[];
+    void text(String s) => body.addAll(utf8.encode(s));
+
+    fields.forEach((k, v) {
+      text('--$boundary\r\n');
+      text('Content-Disposition: form-data; name="$k"\r\n\r\n');
+      text('$v\r\n');
+    });
+    text('--$boundary\r\n');
+    text('Content-Disposition: form-data; name="$fileField"; '
+        'filename="$fileName"\r\n');
+    text('Content-Type: ${fileContentType ?? 'application/octet-stream'}\r\n\r\n');
+    body.addAll(fileBytes);
+    text('\r\n--$boundary--\r\n');
+
+    return _sendRawBytes(
+      'POST',
+      url,
+      bodyBytes: body,
+      contentType: 'multipart/form-data; boundary=$boundary',
+      headers: headers,
+      followRedirects: followRedirects,
+    );
+  }
 
   /// 取 JSON（解析失败返回 null）
   static Map<String, dynamic>? tryJson(String body) {

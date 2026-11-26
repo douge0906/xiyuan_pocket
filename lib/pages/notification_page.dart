@@ -547,7 +547,24 @@ class _NotificationPageState extends State<NotificationPage>
       return _channelError(ch, state.error!, isDark);
     }
     if (state.items.isEmpty) {
-      return _channelEmpty(ch, isDark, searching: _searchQuery.trim().isNotEmpty);
+      // 空态也要能下拉。原来这里直接返回空态组件、外面没套 RefreshIndicator，
+      // 而空态文案写着「下拉可刷新」—— 用户拉半天毫无反应（审查 A5 P1-1）。
+      return RefreshIndicator(
+        color: AppTheme.primaryColor,
+        onRefresh: () => _refreshFromEntry(silent: false),
+        child: LayoutBuilder(
+          builder: (ctx, cons) => ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              SizedBox(
+                height: cons.maxHeight,
+                child: _channelEmpty(ch, isDark,
+                    searching: _searchQuery.trim().isNotEmpty),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     return RefreshIndicator(

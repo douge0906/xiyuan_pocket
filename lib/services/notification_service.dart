@@ -30,6 +30,14 @@ class NotificationService {
 
   static Future<void> init() async {
     if (_initialized) return;
+    // 网页版没有本地通知：插件在本平台没有实现，`Platform.operatingSystem`
+    // 直接抛 Unsupported operation，日志里会刷一条「通知初始化失败」。
+    // 这里提前短路，让网页版的 console 保持干净。
+    if (kIsWeb) {
+      _initialized = true;
+      _available = false;
+      return;
+    }
     try {
       tz_data.initializeTimeZones();
 

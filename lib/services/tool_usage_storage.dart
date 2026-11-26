@@ -29,6 +29,30 @@ class ToolUsageStorage {
     return _sumKey(prefs, _kCloud);
   }
 
+  /// 按工具 id 取使用次数（云端 + 本地合并）。
+  ///
+  /// 2026-11-25：「服务页按使用自动排序」需要整张表，原来只有 increment
+  /// 与两个总和。合并两份是因为同一个服务在 isCloud 变化后（比如以后改了
+  /// 判定）历史计数不该丢 —— 一个服务只属于一边，相加不会重复计。
+  static Future<Map<String, int>> loadCounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    _migrateLegacy(prefs);
+    final out = <String, int>{};
+    for (final key in const [_kCloud, _kLocal]) {
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) continue;
+      try {
+        final map = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        map.forEach((id, v) {
+          if (v is int) out[id] = (out[id] ?? 0) + v;
+        });
+      } catch (_) {
+        // 存储被写坏就当没有 —— 排序是锦上添花，不能因此打不开服务页
+      }
+    }
+    return out;
+  }
+
   /// 本地工具总使用次数。
   static Future<int> getLocalTotal() async {
     final prefs = await SharedPreferences.getInstance();

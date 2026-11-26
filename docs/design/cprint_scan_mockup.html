@@ -1,0 +1,1122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>掌上锡院 · 云打印扫描件 UI 设计稿</title>
+<style>
+:root{
+  --primary:#1F2937; --primary-60:rgba(31,41,55,.60); --primary-40:rgba(31,41,55,.40);
+  --primary-10:rgba(31,41,55,.10); --primary-06:rgba(31,41,55,.06);
+  --text:#1F2937; --text-body:#374151; --text-2:#6B7280; --text-3:#9CA3AF; --text-4:#C3C8D0;
+  --bg:#FFFFFF; --bg-2:#F8F9FD; --bg-3:#F1F2F6; --fill:#F3F4F6; --border:#E5E7EB;
+  --success:#10B981; --success-45:rgba(16,185,129,.45); --success-soft:rgba(16,185,129,.10); --success-text:#0B7A57;
+  --warning:#F59E0B; --warning-45:rgba(245,158,11,.45); --warning-bg:#FFF4E0; --warning-text:#B45309;
+  --danger:#EF4444; --danger-45:rgba(239,68,68,.45); --danger-soft:rgba(239,68,68,.10); --danger-text:#C4362F;
+  --info:#3B82F6; --info-soft:rgba(59,130,246,.10);
+  --r-sm:12px; --r-md:14px; --r-lg:20px;
+  --shadow-card:0 1px 2px rgba(0,0,0,.06),0 2px 4px rgba(0,0,0,.04);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#EDEFF3;font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB","Source Han Sans SC",sans-serif;color:var(--text);-webkit-font-smoothing:antialiased}
+.sheet{padding:40px 36px 64px}
+.sheet-head{margin-bottom:34px}
+.sheet-title{font-size:28px;font-weight:800;letter-spacing:.5px}
+.sheet-sub{margin-top:9px;font-size:13px;color:var(--text-2);line-height:1.8;max-width:1240px}
+.section{margin-bottom:52px;width:fit-content;max-width:100%}
+.section-head{margin-bottom:18px}
+.section-idx{display:inline-block;font-size:12px;font-weight:700;color:var(--text);background:var(--fill);border-radius:8px;padding:3px 9px;letter-spacing:.6px}
+.section-name{margin-left:10px;font-size:19px;font-weight:800}
+.section-desc{margin-top:8px;font-size:12.5px;color:var(--text-2);line-height:1.8}
+.frames{display:flex;gap:26px;row-gap:34px;align-items:flex-start;flex-wrap:wrap}
+#sec-states .frames,#sec-auth .frames{width:1222px}
+.phone{width:390px;height:844px;background:var(--bg);border-radius:22px;border:1px solid rgba(31,41,55,.08);box-shadow:0 12px 30px rgba(31,41,55,.10),0 2px 6px rgba(31,41,55,.05);overflow:hidden;position:relative;display:flex;flex-direction:column}
+.frame-cap{margin-top:13px;font-size:12.5px;font-weight:700;color:var(--text-2)}
+.frame-cap .mono{font-weight:500;color:var(--text-3);margin-left:6px}
+.mono{font-family:var(--mono)}
+.appbar{height:56px;flex:none;display:flex;align-items:center;justify-content:center;position:relative;background:var(--bg);border-bottom:1px solid rgba(31,41,55,.04)}
+.appbar .lead{position:absolute;left:10px;top:0;height:56px;display:flex;align-items:center;gap:4px;color:var(--text);font-size:14px;font-weight:600}
+.appbar .trail{position:absolute;right:12px;top:0;height:56px;display:flex;align-items:center;gap:16px;color:var(--text)}
+.appbar .title{font-size:16px;font-weight:700}
+.body{flex:1;min-height:0;overflow:hidden;padding:16px 20px 0;display:flex;flex-direction:column;gap:12px;background:linear-gradient(180deg,#FBFCFE 0%,#F6F7FB 42%,#F1F2F6 100%)}
+.card{background:var(--bg);border:1px solid rgba(31,41,55,.06);border-radius:var(--r-md);box-shadow:var(--shadow-card)}
+.statuscard{padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+.status-row{display:flex;align-items:center;justify-content:space-between}
+.pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:var(--r-sm);font-size:12.5px;font-weight:600}
+.pill .dot{width:7px;height:7px;border-radius:50%}
+.pill.ok{background:var(--success-soft);color:var(--success-text)}
+.pill.ok .dot{background:var(--success)}
+.pill.vpn{background:rgba(245,158,11,.14);color:var(--warning-text)}
+.pill.vpn .dot{background:var(--warning)}
+.pill.ghost{background:var(--fill);color:var(--text-2)}
+.status-meta{font-size:12.5px;color:var(--text-2)}
+.who{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+.linkbtn{font-size:12.5px;font-weight:600;color:var(--primary);display:inline-flex;align-items:center;gap:4px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{height:30px;padding:0 12px;border-radius:var(--r-lg);background:var(--bg);border:1px solid var(--border);font-size:12.5px;font-weight:500;color:var(--text-2);display:inline-flex;align-items:center;gap:5px}
+.chip.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+.chip .cnt{font-size:11px;opacity:.72}
+.sechead{display:flex;align-items:center;justify-content:space-between;padding:0 2px}
+.sechead .t{font-size:13px;font-weight:700}
+.sechead .c{font-size:12px;color:var(--text-3);font-weight:500;margin-left:6px}
+.sechead .hint{font-size:12px;color:var(--text-3)}
+.allsel{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--text-2)}
+.check{width:19px;height:19px;border-radius:6px;border:1.5px solid #C9CED6;background:var(--bg);display:flex;align-items:center;justify-content:center;color:#fff;flex:none}
+.check.on{background:var(--primary);border-color:var(--primary)}
+.doclist{display:flex;flex-direction:column;gap:10px}
+.doc{padding:12px;display:grid;grid-template-columns:auto 42px minmax(0,1fr) auto;column-gap:10px;row-gap:5px;align-items:start;background:var(--bg);border:1px solid rgba(31,41,55,.06);border-radius:var(--r-md);box-shadow:var(--shadow-card)}
+.doc.nosel{grid-template-columns:42px minmax(0,1fr) auto}
+.doc .check{grid-column:1;grid-row:1;margin-top:11px}
+.doc.nosel .thumb{grid-column:1}
+.doc.nosel .docinfo{grid-column:2}
+.doc.nosel .docmeta{grid-column:2 / span 2}
+.doc.nosel .dlbtn{grid-column:3}
+.thumb{grid-column:2;grid-row:1 / span 2;width:42px;height:42px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;letter-spacing:.3px}
+.thumb.pdf{background:var(--danger-soft);color:#DC2626}
+.thumb.img{background:var(--info-soft);color:#2563EB}
+.thumb.doc{background:var(--primary-06);color:var(--text-body)}
+.thumb.ex{background:var(--fill);color:#B4BAC4}
+.docinfo{grid-column:3;grid-row:1;min-width:0;display:flex;align-items:center;gap:8px}
+.docname{flex:1;min-width:0;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.docmeta{grid-column:3 / span 2;grid-row:2;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);white-space:nowrap}
+.docmeta .sep{width:3px;height:3px;border-radius:50%;background:#C9CED6;flex:none}
+.docmeta .dlstat{color:var(--primary);font-weight:600}
+.docmeta .dlstat.fail{color:var(--danger-text)}
+.dlbtn{grid-column:4;grid-row:1;width:34px;height:34px;border-radius:var(--r-sm);background:var(--primary-06);color:var(--primary);display:flex;align-items:center;justify-content:center}
+.dlbtn[disabled]{background:var(--fill);color:var(--text-4)}
+.dlbtn.fail{background:var(--danger-soft);color:var(--danger-text)}
+.dlbtn.busy{background:var(--primary-06)}
+.doc.expired{background:#FAFAFB;box-shadow:none}
+.doc.expired .docname{color:var(--text-3)}
+.badge{height:19px;padding:0 7px;border-radius:7px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;flex:none;white-space:nowrap}
+.badge.warn{background:var(--warning-bg);color:var(--warning-text);border:1px solid var(--warning-45)}
+.badge.err{background:var(--danger-soft);color:var(--danger-text);border:1px solid var(--danger-45)}
+.badge.ok{background:var(--success-soft);color:var(--success-text);border:1px solid var(--success-45)}
+.actionbar{flex:none;background:var(--bg);border-top:1px solid var(--border);padding:12px 20px 16px;display:flex;align-items:center;gap:10px}
+.selinfo{font-size:13px;font-weight:600;color:var(--text-2)}
+.selinfo b{color:var(--primary);font-size:15px}
+.btn{height:40px;border-radius:var(--r-md);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 16px}
+.btn.primary{background:var(--primary);color:#fff}
+.btn.ghost{background:var(--bg);border:1px solid var(--border);color:var(--text-2)}
+.btn.danger{background:var(--bg);border:1px solid var(--danger-45);color:var(--danger-text)}
+.btn.sm{height:32px;font-size:13px;padding:0 13px;border-radius:var(--r-sm)}
+.btn.fill{width:100%}
+.spacer{flex:1}
+.preview{flex:none;height:292px;background:#ECEEF2;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.paper{width:226px;height:278px;background:#fff;border-radius:4px;box-shadow:0 4px 14px rgba(31,41,55,.13);padding:16px 18px 12px;display:flex;flex-direction:column}
+.paper h4{font-size:13px;font-weight:700;text-align:center}
+.paper .sub{font-size:10px;color:var(--text-3);text-align:center;margin-top:4px}
+.paper .ln{height:4px;border-radius:2px;background:#E9ECF1;margin-top:8px}
+.paper .formula{margin-top:12px;height:32px;border:1px solid #E9ECF1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:"Times New Roman",serif;font-size:13px;color:var(--text-body)}
+.paper .pagenum{margin-top:auto;text-align:center;font-size:9.5px;color:var(--text-3)}
+.pager{position:absolute;right:12px;bottom:10px;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.94);border-radius:var(--r-sm);padding:5px 9px;font-size:11.5px;color:var(--text-2)}
+.kv{padding:2px 16px}
+.kvrow{display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
+.kvrow:last-child{border-bottom:none}
+.kv .k{font-size:13px;color:var(--text-2);width:66px;flex:none;padding-top:1px}
+.kv .v{flex:1;min-width:0;font-size:13.5px;font-weight:500;display:flex;flex-direction:column;gap:3px}
+.kv .v .m{font-size:10.5px;color:var(--text-3);font-family:var(--mono);letter-spacing:.2px;font-weight:400}
+.banner{padding:12px 14px;border-radius:var(--r-md);display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.55}
+.banner .ic{flex:none;margin-top:1px}
+.banner .bt{flex:1;min-width:0}
+.banner .mono{display:block;margin-top:5px;font-size:10.5px;color:var(--text-3);font-family:var(--mono);word-break:break-all}
+.banner.ok{background:rgba(16,185,129,.06);border:1px solid var(--success-45);color:var(--success-text)}
+.banner.err{background:rgba(239,68,68,.05);border:1px solid var(--danger-45);color:var(--danger-text)}
+.banner.warn{background:var(--warning-bg);border:1px solid var(--warning-45);color:var(--warning-text)}
+.actions{flex:none;background:var(--bg);border-top:1px solid var(--border);padding:12px 20px 16px;display:flex;gap:10px}
+.toast{display:flex;align-items:center;gap:8px;background:var(--danger-soft);border:1px solid var(--danger-45);color:var(--danger-text);border-radius:var(--r-md);padding:10px 12px;font-size:12.5px;line-height:1.5}
+.toast .spacer{flex:1}
+.toast a{font-weight:700;color:var(--danger-text);text-decoration:underline}
+.skel{background:#ECEEF2;border-radius:6px}
+.skel-card{padding:13px;display:flex;gap:11px;align-items:center;background:var(--bg);border:1px solid rgba(31,41,55,.06);border-radius:var(--r-md);box-shadow:var(--shadow-card)}
+.skel-thumb{width:42px;height:42px;border-radius:var(--r-sm);flex:none}
+.skel-lines{flex:1;display:flex;flex-direction:column;gap:8px}
+.skel-lines i{display:block;height:9px;border-radius:5px;background:#ECEEF2}
+.loadingbox{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px}
+.statewrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 30px 54px;text-align:center}
+.art{width:84px;height:84px;margin-bottom:15px}
+.state-msg{font-size:14px;font-weight:600;color:var(--primary-60)}
+.state-hint{margin-top:8px;font-size:12.5px;color:var(--primary-40);line-height:1.7}
+.state-action{margin-top:17px}
+.state-code{margin-top:14px;font-family:var(--mono);font-size:10.5px;color:var(--text-4);background:var(--fill);border-radius:8px;padding:5px 9px}
+.authbody{flex:1;min-height:0;overflow:hidden;padding:26px 24px 20px;background:linear-gradient(180deg,#FAFBFE,#F5F6FA 60%,#F1F2F6);display:flex;flex-direction:column}
+.auth-title{font-size:24px;font-weight:800}
+.auth-sub{margin-top:7px;font-size:12.5px;color:var(--text-2);line-height:1.6}
+.auth-card{margin-top:20px;padding:18px 16px;background:var(--bg);border:1px solid rgba(31,41,55,.06);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
+.field{margin-bottom:14px}
+.field .lb{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:7px}
+.input{height:46px;border-radius:var(--r-md);border:1px solid var(--border);background:var(--bg);display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:14px;color:var(--text-3)}
+.input.focus{border:2px solid var(--primary);color:var(--text);font-weight:600}
+.input .ph{color:var(--text-4)}
+.authbtn{height:46px;border-radius:var(--r-md);background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600}
+.authbtn.disabled{background:#3B4451}
+.auth-note{margin-top:16px;font-size:11.5px;color:var(--text-3);line-height:1.8;text-align:center}
+.spinner{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .9s linear infinite}
+.spinner.dark{border-color:rgba(31,41,55,.16);border-top-color:var(--primary)}
+.spinner.sm{width:14px;height:14px;border-width:2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ring{width:16px;height:16px;border-radius:50%;border:2px solid rgba(31,41,55,.18);border-top-color:var(--primary);animation:spin .9s linear infinite}
+.pbar{height:4px;border-radius:2px;background:var(--fill);overflow:hidden;flex:1}
+.pbar i{display:block;height:100%;width:40%;background:var(--primary)}
+.netpick{display:flex;gap:8px;margin-top:16px}
+.netpick .chip{flex:1;justify-content:center;height:34px}
+.flowpanel{width:1222px;background:var(--bg);border:1px solid rgba(31,41,55,.06);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:26px 28px;display:flex;gap:30px}
+.flow-main{flex:1;min-width:0}
+.flow-title{font-size:17px;font-weight:800}
+.flow-sub{margin-top:7px;font-size:12.5px;color:var(--text-2);line-height:1.8}
+.steps{margin-top:20px}
+.step{display:flex;gap:14px;position:relative;padding-bottom:15px}
+.step:last-child{padding-bottom:0}
+.step .n{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;z-index:1}
+.step::before{content:"";position:absolute;left:13.5px;top:30px;bottom:0;width:1.5px;background:var(--border)}
+.step:last-child::before{display:none}
+.step .t{font-size:14px;font-weight:600}
+.step .e{margin-top:4px;font-size:11.5px;color:var(--text-3);font-family:var(--mono);word-break:break-all}
+.step .d{margin-top:5px;font-size:12.5px;color:var(--text-2);line-height:1.7}
+.flow-side{width:330px;flex:none}
+.notecard{background:rgba(31,41,55,.05);border-radius:var(--r-md);padding:16px}
+.notecard .h{font-size:13px;font-weight:700}
+.notecard p{margin-top:8px;font-size:12.5px;color:var(--text-2);line-height:1.8}
+.endpointlist{margin-top:16px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 14px}
+.endpointlist .h{font-size:12px;font-weight:700;color:var(--text-2)}
+.endpointlist .e{margin-top:8px;font-size:11px;color:var(--text-3);font-family:var(--mono);line-height:1.7;word-break:break-all}
+.branch{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+.branchrow{display:flex;align-items:flex-start;gap:9px;background:var(--fill);border-radius:var(--r-sm);padding:8px 10px;font-size:12px;color:var(--text-body);line-height:1.55}
+.branchrow .tag{flex:none;font-size:11px;font-weight:700;border-radius:7px;padding:2px 7px;background:var(--bg);border:1px solid var(--border);color:var(--text-2)}
+.branchrow.hit .tag{background:var(--success-soft);border-color:var(--success-45);color:var(--success-text)}
+.branchrow.miss .tag{background:var(--warning-bg);border-color:var(--warning-45);color:var(--warning-text)}
+.branchrow b{font-weight:700;color:var(--text)}
+.reuse{background:linear-gradient(180deg,#FFFFFF,#F8F9FD);border:1px solid rgba(31,41,55,.10);border-left:3px solid var(--primary);border-radius:var(--r-md);padding:15px 16px}
+.reuse .h{font-size:13px;font-weight:800;display:flex;align-items:center;gap:8px}
+.reuse .h .rt{flex:none;font-size:10.5px;font-weight:700;letter-spacing:.4px;color:#fff;background:var(--primary);border-radius:7px;padding:2px 7px}
+.reuse p{margin-top:8px;font-size:12.5px;color:var(--text-2);line-height:1.8}
+.reuse p b{color:var(--text);font-weight:700}
+.tiers{margin-top:14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:12px 14px}
+.tiers .h{font-size:12px;font-weight:700;color:var(--text-2)}
+.tier{display:flex;gap:9px;align-items:flex-start;padding:9px 0;border-bottom:1px dashed var(--border)}
+.tier:last-child{border-bottom:none;padding-bottom:2px}
+.tier .td{flex:none;width:9px;height:9px;border-radius:50%;margin-top:4px}
+.tier .tt{flex:1;min-width:0}
+.tier .tt .n1{font-size:12.5px;font-weight:700}
+.tier .tt .n2{margin-top:2px;font-size:11.5px;color:var(--text-2);line-height:1.6}
+.tier .tt .n3{margin-top:3px;font-size:10.5px;color:var(--text-3);font-family:var(--mono);word-break:break-all}
+.reuse-step{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border)}
+.reuse-step:last-child{border-bottom:none;padding-bottom:2px}
+.reuse-step .k{width:20px;height:20px;border-radius:50%;background:var(--fill);color:var(--text-2);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.reuse-step.done .k{background:var(--success-soft);color:var(--success-text)}
+.reuse-step.active .k{background:var(--primary-10);color:var(--primary)}
+.reuse-step .k svg{display:block}
+.reuse-step.active .v{color:var(--primary)}
+.reuse-step .v{flex:1;min-width:0;font-size:13px;font-weight:600;display:flex;flex-direction:column;gap:3px}
+.reuse-step .v em{font-style:normal;font-size:10.5px;color:var(--text-3);font-family:var(--mono);font-weight:400;word-break:break-all}
+.savedrow{display:flex;gap:11px;align-items:flex-start;padding:12px;border-radius:var(--r-md);background:var(--success-soft);border:1px solid var(--success-45)}
+.savedrow .sic{flex:none;width:32px;height:32px;border-radius:var(--r-sm);background:#fff;border:1px solid var(--success-45);display:flex;align-items:center;justify-content:center;color:var(--success-text)}
+.savedrow .sb{flex:1;min-width:0}
+.savedrow .st{font-size:13.5px;font-weight:700;color:var(--success-text)}
+.savedrow .sm{margin-top:3px;font-size:11.5px;color:var(--text-2);line-height:1.6}
+.dashedbox{margin-top:2px;border:1px dashed var(--border);border-radius:var(--r-md);padding:11px 12px;font-size:11.5px;color:var(--text-2);line-height:1.7}
+.dashedbox b{color:var(--text);font-weight:700}
+.ic{width:20px;height:20px;flex:none}
+.ic.sm{width:16px;height:16px}
+.ic.xs{width:13px;height:13px}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="sheet-head">
+    <div class="sheet-title">掌上锡院 · 云打印扫描件（UI 设计稿）</div>
+    <div class="sheet-sub">锡院工具箱新增工具「云打印扫描件」· 对接图书馆联创云打印 zzwy.cwxu.edu.cn:9130 · 沿用 App 现有主题令牌：主色墨黑 #1F2937、success #10B981 / warning #F59E0B / danger #EF4444 / info #3B82F6、文字 #1F2937·#6B7280·#9CA3AF、边框 #E5E7EB、填充 #F3F4F6、圆角 12/14/20、间距 4/8/12/16/20/24 · 本稿为设计稿（不含实现代码）。</div>
+  </div>
+
+  <section id="sec-list">
+    <div class="section-head">
+      <span class="section-idx">01</span><span class="section-name">扫描件列表页</span>
+      <div class="section-desc">顶部为网络状态条（校内直连 / WebVPN 网关 + 账号 + 切换网络），中部为类型筛选 chips，主体为扫描件卡片列表；长按进入多选，底部出现「已选 N / 删除 / 下载」操作栏。已过期项（dwStatus &amp; 256 != 0）置灰、禁用下载与删除。</div>
+    </div>
+    <div class="frames">
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead">取消</div>
+            <div class="title">已选 2 项</div>
+            <div class="trail"><span style="font-size:14px;font-weight:600">全选</span></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">
+                  <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018 · 陈思远</span>
+              </div>
+            </div>
+            <div class="sechead">
+              <div><span class="t">全部文件</span><span class="c">8 份</span></div>
+              <div class="hint">已选 2 / 8</div>
+            </div>
+            <div class="doclist">
+              <div class="doc">
+                <span class="check on"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">高等数学（下）第三章.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>2.4 MB</span><span class="sep"></span><span>2026-11-24 09:12</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc">
+                <span class="check on"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <div class="thumb doc">DOC</div>
+                <div class="docinfo"><div class="docname">毕业论文初稿.docx</div></div>
+                <div class="docmeta"><span>DOCX</span><span class="sep"></span><span>1.1 MB</span><span class="sep"></span><span>2026-11-23 20:41</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc">
+                <span class="check"></span>
+                <div class="thumb img">JPG</div>
+                <div class="docinfo"><div class="docname">实验报告_数字图像处理.jpg</div></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>3.2 MB</span><span class="sep"></span><span>2026-11-23 15:08</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc">
+                <span class="check"></span>
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">大学英语四级真题.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>860 KB</span><span class="sep"></span><span>2026-11-22 10:26</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc expired">
+                <span class="check"></span>
+                <div class="thumb ex">JPG</div>
+                <div class="docinfo"><div class="docname">课程表打印件.jpg</div><span class="badge warn">已过期</span></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>1.6 MB</span><span class="sep"></span><span>2026-11-12 08:30</span></div>
+                <span class="dlbtn" disabled><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+            </div>
+          </div>
+          <div class="actionbar">
+            <span class="selinfo">已选 <b>2</b> 项</span>
+            <span class="spacer"></span>
+            <span class="btn danger">删除</span>
+            <span class="btn primary">
+              <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg>下载</span>
+          </div>
+        </div>
+        <div class="frame-cap">01-A · 多选模式<span class="mono">长按卡片进入多选；底部操作栏「已选 N / 删除 / 下载」</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill vpn"><span class="dot"></span>WebVPN 网关</span>
+                <span class="linkbtn">
+                  <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">校外访问 · 已授权</span>
+                <span class="who">2030612018 · 陈思远</span>
+              </div>
+            </div>
+            <div class="chips">
+              <span class="chip on">全部 <span class="cnt">8</span></span>
+              <span class="chip">PDF <span class="cnt">5</span></span>
+              <span class="chip">图片 <span class="cnt">2</span></span>
+              <span class="chip">文档 <span class="cnt">1</span></span>
+              <span class="chip">已过期 <span class="cnt">2</span></span>
+            </div>
+            <div class="sechead">
+              <div><span class="t">全部文件</span><span class="c">8 份</span></div>
+              <div class="hint">按提交时间倒序</div>
+            </div>
+            <div class="doclist">
+              <div class="doc nosel">
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">高等数学（下）第三章.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>2.4 MB</span><span class="sep"></span><span>2026-11-24 09:12</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb doc">DOC</div>
+                <div class="docinfo"><div class="docname">毕业论文初稿.docx</div></div>
+                <div class="docmeta"><span>DOCX</span><span class="sep"></span><span>1.1 MB</span><span class="sep"></span><span>2026-11-23 20:41</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb img">JPG</div>
+                <div class="docinfo"><div class="docname">实验报告_数字图像处理.jpg</div></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>3.2 MB</span><span class="sep"></span><span>2026-11-23 15:08</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">大学英语四级真题.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>860 KB</span><span class="sep"></span><span>2026-11-22 10:26</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+            </div>
+            <div class="card" style="padding:11px 13px;display:flex;gap:9px;align-items:flex-start;box-shadow:none;border:1px solid var(--border)">
+              <svg class="ic sm" style="color:var(--text-3);margin-top:1px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.8h.01"/></svg>
+              <div style="font-size:11.5px;color:var(--text-3);line-height:1.7">扫描件由图书馆自助设备生成，保留 30 天后自动清理；请及时保存到手机。</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">01-B · 默认列表（校外 WebVPN）<span class="mono">状态条显示 WebVPN 网关 · 校外访问 · 已授权</span></div>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="sec-detail">
+    <div class="section-head">
+      <span class="section-idx">02</span><span class="section-name">扫描件详情 / 预览页</span>
+      <div class="section-desc">上半屏为扫描件首页预览（可翻页，共 N 页），下半屏为元信息列表，每行下方以浅灰等宽小字标注服务端真实字段名（szDisplayName / x_doctype / dwFileSize / dwSubmitDate / dwSubmitTime / dwStatus / dwJobId）。底部固定操作条：保存到手机（下载流式落盘 App 私有目录）、分享（share_plus Share.shareXFiles）、删除（POST /api/client/Scan/Del）。</div>
+    </div>
+    <div class="frames">
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">扫描件详情</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.4 10.8l7.2-4.3"/><path d="M8.4 13.2l7.2 4.3"/></svg></div>
+          </div>
+          <div class="preview">
+            <div class="paper">
+              <h4>高等数学（下）</h4>
+              <div class="sub">第三章 · 微分中值定理与导数应用</div>
+              <div class="ln" style="width:82%"></div>
+              <div class="ln" style="width:64%"></div>
+              <div class="formula">f(ξ) = [f(b) − f(a)] / (b − a)</div>
+              <div class="ln" style="width:92%"></div>
+              <div class="ln" style="width:72%"></div>
+              <div class="ln" style="width:88%"></div>
+              <div class="ln" style="width:56%"></div>
+              <div class="pagenum">— 1 / 6 —</div>
+            </div>
+            <div class="pager">
+              <span class="mono" style="font-size:11px">1 / 6</span>
+              <span style="display:flex;gap:4px">
+                <span style="width:5px;height:5px;border-radius:50%;background:var(--primary)"></span>
+                <span style="width:5px;height:5px;border-radius:50%;background:#C9CED6"></span>
+                <span style="width:5px;height:5px;border-radius:50%;background:#C9CED6"></span>
+                <span style="width:5px;height:5px;border-radius:50%;background:#C9CED6"></span>
+                <span style="width:5px;height:5px;border-radius:50%;background:#C9CED6"></span>
+                <span style="width:5px;height:5px;border-radius:50%;background:#C9CED6"></span>
+              </span>
+            </div>
+          </div>
+          <div class="body" style="padding-top:12px">
+            <div class="card kv">
+              <div class="kvrow">
+                <div class="k">文件名</div>
+                <div class="v">高等数学（下）第三章.pdf<span class="m">szDisplayName</span></div>
+              </div>
+              <div class="kvrow">
+                <div class="k">类型</div>
+                <div class="v">PDF · 课程讲义<span class="m">x_doctype.type / x_doctype.classtype</span></div>
+              </div>
+              <div class="kvrow">
+                <div class="k">大小</div>
+                <div class="v">2.4 MB<span class="m">dwFileSize = 2516582 B · B/KB/MB 三级换算</span></div>
+              </div>
+              <div class="kvrow">
+                <div class="k">扫描时间</div>
+                <div class="v">2026-11-24 09:12<span class="m">dwSubmitDate + dwSubmitTime · YYYY-MM-DD HH:mm</span></div>
+              </div>
+              <div class="kvrow">
+                <div class="k">有效期</div>
+                <div class="v">剩余 14 天（2026-12-24 到期）<span class="m">dwStatus &amp; 256 != 0 → 已过期，置灰且禁下载/禁删除</span></div>
+              </div>
+              <div class="kvrow">
+                <div class="k">作业号</div>
+                <div class="v" style="font-family:var(--mono);font-size:12px;color:var(--text-2)">JOB-2026112400912-0041</div>
+              </div>
+            </div>
+            <div class="banner ok">
+              <svg class="ic sm" style="color:var(--success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.2 12.3l2.6 2.6 5-5.4"/></svg>
+              <div class="bt">文件仍可下载，保留至 2026-12-24 09:12<span class="mono">GET /api/client/Scan/Download?dwJobId=JOB-2026112400912-0041</span></div>
+            </div>
+          </div>
+          <div class="actions">
+            <span class="btn primary" style="flex:1">
+              <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg>保存到手机</span>
+            <span class="btn ghost">
+              <svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.4 10.8l7.2-4.3"/><path d="M8.4 13.2l7.2 4.3"/></svg>分享</span>
+            <span class="btn danger">删除</span>
+          </div>
+        </div>
+        <div class="frame-cap">02-A · 详情 / 预览<span class="mono">元信息行下方浅灰等宽字标注真实字段名</span></div>
+      </div>
+
+      <div class="flowpanel" style="width:806px;flex-direction:column;gap:0">
+        <div style="display:flex;gap:30px">
+          <div class="flow-main">
+            <div class="flow-title">字段映射与接口契约</div>
+            <div class="flow-sub">页面文案与云打印服务端返回字段一一对应，前端不做二次推断；大小统一换算、时间统一格式化、过期统一由位运算判定。</div>
+            <div class="endpointlist" style="margin-top:18px">
+              <div class="h">列表数据源</div>
+              <div class="e">GET http://zzwy.cwxu.edu.cn:9130/api/client/Scan/Get?timestamp=&lt;rand&gt;</div>
+              <div class="e">{ code:0, result:[ { dwJobId, dwSubmitTime, dwSubmitDate, szDisplayName, x_doctype:{type, classtype}, dwFileSize, dwStatus } ] }</div>
+              <div class="h" style="margin-top:14px">会话</div>
+              <div class="e">cookie: OSESSIONID</div>
+              <div class="e">未登录 → { "code":4, "message":"无效会话，未登录" }</div>
+              <div class="h" style="margin-top:14px">下载 / 删除</div>
+              <div class="e">GET  /api/client/Scan/Download?dwJobId=&lt;id&gt;</div>
+              <div class="e">POST /api/client/Scan/Del  body { "dwJobId":"..." }</div>
+            </div>
+          </div>
+          <div class="flow-side">
+            <div class="notecard">
+              <div class="h">过期判定</div>
+              <p>dwStatus &amp; 256 != 0 → 已过期。列表项置灰、下载与删除按钮同时禁用，详情页不展示保存与删除入口。</p>
+              <p style="margin-top:10px">服务器保留期 30 天，到期后文件由云打印侧清理。</p>
+            </div>
+            <div class="notecard" style="margin-top:14px">
+              <div class="h">保存到手机</div>
+              <p>按 dwJobId 发起下载流，边写边存到 App 私有目录，完成后弹出「已保存到手机」并提供「去查看」。</p>
+              <p style="margin-top:10px">分享使用 share_plus 的 Share.shareXFiles，传同一份本地临时文件。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-states">
+    <div class="section-head">
+      <span class="section-idx">03</span><span class="section-name">状态态合集</span>
+      <div class="section-desc">覆盖 9 个状态：加载骨架屏、空态、错误态（登录过期 / 网络不可达 / WebVPN 未登录）、服务端未登录（code 4）、下载中、下载失败、WebVPN 网关未授权、已过期项。插画沿用 App 内 EmptyArt 规范：84×84、底色晕圈主色 9%、主描边 3.0、次描边主色 50% 2.2。</div>
+    </div>
+    <div class="frames">
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="chips">
+              <span class="chip on">全部</span><span class="chip">PDF</span><span class="chip">图片</span><span class="chip">文档</span>
+            </div>
+            <div class="loadingbox" style="padding:14px 0 6px">
+              <span class="spinner dark" style="width:20px;height:20px"></span>
+              <span style="font-size:12.5px;color:var(--text-2)">正在同步云打印扫描件…</span>
+              <span class="mono" style="font-size:10.5px;color:var(--text-4)">GET /api/client/Scan/Get</span>
+            </div>
+            <div class="doclist">
+              <div class="skel-card">
+                <div class="skel skel-thumb"></div>
+                <div class="skel-lines"><i style="width:72%"></i><i style="width:44%;height:8px"></i></div>
+              </div>
+              <div class="skel-card">
+                <div class="skel skel-thumb"></div>
+                <div class="skel-lines"><i style="width:64%"></i><i style="width:38%;height:8px"></i></div>
+              </div>
+              <div class="skel-card">
+                <div class="skel skel-thumb"></div>
+                <div class="skel-lines"><i style="width:80%"></i><i style="width:50%;height:8px"></i></div>
+              </div>
+              <div class="skel-card">
+                <div class="skel skel-thumb"></div>
+                <div class="skel-lines"><i style="width:58%"></i><i style="width:42%;height:8px"></i></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-A · 加载骨架屏<span class="mono">骨架卡 + 同步提示</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <path d="M22 47h34a8 8 0 0 0 8-8V25a5 5 0 0 0-5-5H29a5 5 0 0 0-5 5v22" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M22 47l-4 7a7 7 0 0 0 6 10h38a7 7 0 0 0 6-10l-4-7" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M34 38l8-8 8 8M42 30v17" stroke="#1F2937" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <div class="state-msg">还没有扫描件</div>
+              <div class="state-hint">去图书馆自助打印机扫描后，文件会出现在这里<br/>仅保留 30 天，记得及时保存</div>
+              <div class="state-action">去图书馆自助打印</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-B · 空态<span class="mono">EmptyState + 引导按钮</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="banner err">
+              <svg class="ic sm" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2"/><path d="M12 16.3h.01"/></svg>
+              <div class="bt">统一认证会话已过期<span class="mono">OSESSIONID 失效 · 请重新登录后继续同步扫描件</span></div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <path d="M42 26v20" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+                <path d="M42 55h.01" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+                <path d="M56 32a22 22 0 1 1-28 0" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M56 25v8h-8" stroke="rgba(31,41,55,.50)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <div class="state-msg">登录状态已过期</div>
+              <div class="state-hint">云打印会话已失效，重新登录统一认证<br/>即可继续查看你的扫描件</div>
+              <div class="state-action">重新登录</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-C · 错误态-登录已过期<span class="mono">顶部红条 + 重登</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="banner err">
+              <svg class="ic sm" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5a15 15 0 0 1 19 0"/><path d="M6 12.2a10 10 0 0 1 12 0"/><path d="M9.5 15.9a5 5 0 0 1 5 0"/><path d="M12 19.6h.01"/></svg>
+              <div class="bt">网络不可达<span class="mono">无法连接 zzwy.cwxu.edu.cn:9130 · 请检查校园网或改用 WebVPN</span></div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <path d="M24 36a22 22 0 0 1 33-3" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round"/>
+                <path d="M30 45a14 14 0 0 1 11-3" stroke="rgba(31,41,55,.50)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M36 54a7 7 0 0 1 6 1" stroke="rgba(31,41,55,.50)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M42 62h.01" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+                <path d="M58 30L26 62" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+              <div class="state-msg">网络不可达</div>
+              <div class="state-hint">请确认已连接校园网；校外请先登录<br/>WebVPN 网关再重试</div>
+              <div class="state-action">重试</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-D · 错误态-网络不可达<span class="mono">ErrorState + 重试</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill vpn"><span class="dot"></span>WebVPN 网关</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">校外访问 · <b style="color:var(--warning-text)">未登录</b></span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <rect x="30" y="38" width="24" height="19" rx="4" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M36 38v-5a6 6 0 0 1 12 0v5" stroke="#1F2937" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M42 47v5" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+              <div class="state-msg">WebVPN 未登录</div>
+              <div class="state-hint">当前处于校外网络模式，请先在 WebVPN<br/>统一认证网关登录后再访问云打印</div>
+              <div class="state-action">去登录 WebVPN</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-E · 错误态-WebVPN 未登录<span class="mono">橙色网关 chip</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="banner err">
+              <svg class="ic sm" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2"/><path d="M12 16.3h.01"/></svg>
+              <div class="bt">未登录：无效会话，未登录<span class="mono">GET /api/client/Scan/Get → { "code":4, "message":"无效会话，未登录" }</span></div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <circle cx="42" cy="36" r="9" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round"/>
+                <path d="M26 62c2-9 8-13 16-13s14 4 16 13" stroke="rgba(31,41,55,.50)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M58 22l12 12M70 22L58 34" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+              <div class="state-msg">统一认证会话已失效</div>
+              <div class="state-hint">云打印服务返回「无效会话，未登录」。<br/>重新登录统一认证后将自动回到扫描件列表。</div>
+              <div class="state-action">重新登录</div>
+              <div class="state-code">code = 4 · message = 无效会话，未登录</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-F · 服务端未登录（code 4）<span class="mono">顶部红条 + 重新登录</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead">取消</div>
+            <div class="title">已选 3 项</div>
+            <div class="trail"><span style="font-size:14px;font-weight:600">全选</span></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="doclist">
+              <div class="doc">
+                <span class="check on"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">高等数学（下）第三章.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>2.4 MB</span><span class="sep"></span><span class="dlstat">正在下载… 62%</span></div>
+                <span class="dlbtn busy"><span class="ring"></span></span>
+              </div>
+              <div class="doc">
+                <span class="check on"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <div class="thumb doc">DOC</div>
+                <div class="docinfo"><div class="docname">毕业论文初稿.docx</div></div>
+                <div class="docmeta"><span>DOCX</span><span class="sep"></span><span>1.1 MB</span><span class="sep"></span><span class="dlstat">正在下载…</span></div>
+                <span class="dlbtn busy"><span class="ring"></span></span>
+              </div>
+              <div class="doc">
+                <span class="check on"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">大学英语四级真题.pdf</div></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>860 KB</span><span class="sep"></span><span style="color:var(--text-3)">等待中</span></div>
+                <span class="dlbtn" style="background:var(--fill);color:var(--text-4)"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb img">JPG</div>
+                <div class="docinfo"><div class="docname">实验报告_数字图像处理.jpg</div></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>3.2 MB</span><span class="sep"></span><span>2026-11-23 15:08</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+            </div>
+          </div>
+          <div class="actionbar">
+            <span class="selinfo">下载中 <b>2</b>/5</span>
+            <span class="pbar" style="max-width:120px"><i></i></span>
+            <span class="spacer"></span>
+            <span class="btn ghost sm">全部取消</span>
+          </div>
+        </div>
+        <div class="frame-cap">03-G · 下载中<span class="mono">进度圈 + 底部「下载中 2/5」</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="toast">
+              <svg class="ic sm" style="color:var(--danger-text)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2"/><path d="M12 16.3h.01"/></svg>
+              <span>下载失败：网络中断，点击重试</span>
+              <span class="spacer"></span>
+              <a>重试</a>
+            </div>
+            <div class="doclist">
+              <div class="doc">
+                <span class="check"></span>
+                <div class="thumb pdf">PDF</div>
+                <div class="docinfo"><div class="docname">高等数学（下）第三章.pdf</div><span class="badge err">下载失败</span></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>2.4 MB</span><span class="sep"></span><span class="dlstat fail">下载失败</span></div>
+                <span class="dlbtn fail"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb doc">DOC</div>
+                <div class="docinfo"><div class="docname">毕业论文初稿.docx</div></div>
+                <div class="docmeta"><span>DOCX</span><span class="sep"></span><span>1.1 MB</span><span class="sep"></span><span style="color:var(--success-text);font-weight:600">已保存到手机</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16.5L9.5 22 20 6"/></svg></span>
+              </div>
+              <div class="doc nosel">
+                <div class="thumb img">JPG</div>
+                <div class="docinfo"><div class="docname">实验报告_数字图像处理.jpg</div></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>3.2 MB</span><span class="sep"></span><span>2026-11-23 15:08</span></div>
+                <span class="dlbtn"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-H · 下载失败<span class="mono">红色提示条 + 该项保留</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill vpn"><span class="dot"></span>WebVPN 网关</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">校外访问 · <b style="color:var(--warning-text)">未授权</b></span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="statewrap">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(31,41,55,.09)"/>
+                <path d="M20 52a22 22 0 0 1 44 0" stroke="rgba(31,41,55,.50)" stroke-width="3" stroke-linecap="round"/>
+                <rect x="30" y="52" width="24" height="14" rx="4" stroke="rgba(31,41,55,.50)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M42 30v10" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+                <path d="M42 24h.01" stroke="#1F2937" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+              <div class="state-msg">WebVPN 网关未授权</div>
+              <div class="state-hint">校外访问需通过 WebVPN 统一认证网关<br/>（webvpn.cwxu.edu.cn）授权后才能访问云打印</div>
+              <div class="state-action">去授权</div>
+              <div class="state-code">https://webvpn.cwxu.edu.cn</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-I · WebVPN 深澜网关未授权<span class="mono">橙色未授权 chip + 去授权</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">云打印扫描件</div>
+            <div class="trail"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></div>
+          </div>
+          <div class="body">
+            <div class="card statuscard">
+              <div class="status-row">
+                <span class="pill ok"><span class="dot"></span>校内直连</span>
+                <span class="linkbtn">切换网络</span>
+              </div>
+              <div class="status-row">
+                <span class="status-meta">统一认证 · 已登录</span>
+                <span class="who">2030612018</span>
+              </div>
+            </div>
+            <div class="chips">
+              <span class="chip">全部 <span class="cnt">8</span></span>
+              <span class="chip">PDF <span class="cnt">5</span></span>
+              <span class="chip on">已过期 <span class="cnt">2</span></span>
+            </div>
+            <div class="banner warn">
+              <svg class="ic sm" style="color:var(--warning)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.8v4.6"/><path d="M12 16.2h.01"/></svg>
+              <div class="bt">2 个扫描件已过期<span class="mono">dwStatus &amp; 256 != 0 · 已置灰，下载与删除均不可用</span></div>
+            </div>
+            <div class="doclist">
+              <div class="doc expired">
+                <span class="check"></span>
+                <div class="thumb ex">JPG</div>
+                <div class="docinfo"><div class="docname">课程表打印件.jpg</div><span class="badge warn">已过期</span></div>
+                <div class="docmeta"><span>JPG</span><span class="sep"></span><span>1.6 MB</span><span class="sep"></span><span>2026-11-12 08:30</span></div>
+                <span class="dlbtn" disabled><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+              <div class="doc expired">
+                <span class="check"></span>
+                <div class="thumb ex">PDF</div>
+                <div class="docinfo"><div class="docname">实验报告_数字图像处理.pdf</div><span class="badge warn">已过期</span></div>
+                <div class="docmeta"><span>PDF</span><span class="sep"></span><span>1.2 MB</span><span class="sep"></span><span>2026-11-08 16:22</span></div>
+                <span class="dlbtn" disabled><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">03-J · 已过期项样式<span class="mono">置灰 + 橙色徽标 + 禁用下载</span></div>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="sec-auth">
+    <div class="section-head">
+      <span class="section-idx">04</span><span class="section-name">登录 / 授权状态页</span>
+      <div class="section-desc">正常路径不出现账号密码表单：App 先查本机 TGT 缓存，命中即静默换票，全程无密码、无验证码；只有 TGT 缺失且本机未保存密码时，才弹一次账号密码输入框。下方流程图给出真实 CAS 链路（TGT 复用 / ST 换发 / OSESSIONID 换取）与三会话分层，以及静默授权中、会话失效需重连、授权成功三种页面状态。</div>
+    </div>
+
+    <div class="flowpanel" style="margin-bottom:26px">
+      <div class="flow-main">
+        <div class="flow-title">统一认证 → 云打印会话：TGT 复用链路</div>
+        <div class="flow-sub">App 优先复用本机已缓存的 CAS TGT（学号归属、TTL 约 2 小时）：命中即静默换 ST，全程不弹输入框、不出现图形验证码；TGT 缺失时用本机 secure storage 里已保存的统一认证密码补登一次，同样不打扰用户。</div>
+        <div class="steps">
+          <div class="step">
+            <div class="n">1</div>
+            <div>
+              <div class="t">检测网络模式</div>
+              <div class="e">NetMode.direct（校内直连） / NetMode.webvpn（校外 WebVPN） / NetMode.offline</div>
+              <div class="d">决定后续请求是否需要走 WebVPN 深澜网关改写地址；offline 时不发起任何请求。</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="n">2</div>
+            <div style="flex:1;min-width:0">
+              <div class="t">查本机 TGT 缓存</div>
+              <div class="e">key = CAS TGT · owner = 当前学号 · TTL ≈ 2h</div>
+              <div class="d">先读本机缓存判断是否已有可用票据，再决定是否需要账号密码。</div>
+              <div class="branch">
+                <div class="branchrow hit"><span class="tag">命中</span><span>直接进入第 3 步换 ST —— <b>全程无密码、无验证码、静默完成</b>。</span></div>
+                <div class="branchrow miss"><span class="tag">未命中 / 失效</span><span>用本机 secure storage 已保存的统一认证密码做一次 CAS 登录（验证码由 App 本地识别）→ 得 TGT → 写缓存 → 继续第 3 步。</span></div>
+                <div class="branchrow miss"><span class="tag">无保存密码</span><span>仅此时弹<b>一次</b>账号密码输入框；登录成功后同样写入 TGT 缓存，下次免输。</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="n">3</div>
+            <div>
+              <div class="t">TGT → ST 换票</div>
+              <div class="e">POST wxcas/lyuapServer/v1/tickets/&lt;TGT&gt; form{ service = https://kjyy.cwxu.edu.cn/authcenter/doAuth/&lt;32hex&gt; }</div>
+              <div class="d">同一张 TGT 可换任意 service 的 ST（实测同一 TGT 连跑两次云打印 SSO 均可）；ST 一次性使用。</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="n">4</div>
+            <div>
+              <div class="t">authcenter 校验 ST 并回跳</div>
+              <div class="e">GET kjyy.cwxu.edu.cn/authcenter/doAuth/&lt;id&gt;?ticket=ST-… → 302 → /api/client/Auth/SSOLogin?targetPageUrl=…&amp;uniToken=…</div>
+              <div class="d">认证中心校验 ST 后 302 回云打印站点，并带上本次会话标识 sessionId。</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="n">5</div>
+            <div>
+              <div class="t">换取云打印会话 cookie</div>
+              <div class="e">GET /api/client/Auth/SSOLogin?uniToken=… → 302 → /api/client/Auth/UniEntry?SessionId=…&amp;Func=BackUrl_… → GET UniEntry → 302 回目标页 → Set-Cookie: OSESSIONID</div>
+              <div class="d">OSESSIONID 才是真正凭据，写入 WebView Cookie 容器并被 App 复用；未登录时接口返回 code 4。</div>
+            </div>
+          </div>
+          <div class="step">
+            <div class="n">6</div>
+            <div>
+              <div class="t">之后所有扫描件请求携带 OSESSIONID</div>
+              <div class="e">GET /api/client/Scan/Get · Download · POST /api/client/Scan/Del</div>
+              <div class="d">列表、下载、删除三个动作共用同一会话；会话失效统一按「重新登录」处理，并可复用缓存 TGT 静默恢复。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flow-side">
+        <div class="reuse">
+          <div class="h"><span class="rt">账密复用</span>用户不需要再次输入学号密码</div>
+          <p>统一认证密码来自<b>本机 secure storage</b>，App 内已加密保存；<b>TGT 缓存命中时全程不弹输入框、不出现图形验证码</b>，静默换票即可。</p>
+          <p>实测同一张 TGT 可连跑两次云打印 SSO，说明 TGT 是<b>长生命周期身份票据</b>，可反复换发新的 ST。</p>
+        </div>
+        <div class="tiers">
+          <div class="h">三会话分层</div>
+          <div class="tier">
+            <span class="td" style="background:var(--primary)"></span>
+            <div class="tt">
+              <div class="n1">CAS TGT · 身份</div>
+              <div class="n2">代表「你是谁」，长 TTL（约 2 小时），本机缓存、可换任意 service 的 ST。</div>
+              <div class="n3">wxcas.cwxu.edu.cn/lyuapServer/v1/tickets/&lt;TGT&gt;</div>
+            </div>
+          </div>
+          <div class="tier">
+            <span class="td" style="background:var(--info)"></span>
+            <div class="tt">
+              <div class="n1">ST · 单次 service</div>
+              <div class="n2">代表「你可以进这个服务」，一次性、绑定单个 service，用完即废。</div>
+              <div class="n3">service = kjyy.cwxu.edu.cn/authcenter/doAuth/&lt;32hex&gt;</div>
+            </div>
+          </div>
+          <div class="tier">
+            <span class="td" style="background:var(--success)"></span>
+            <div class="tt">
+              <div class="n1">OSESSIONID · 云打印站点会话</div>
+              <div class="n2">代表「云打印站点里的你是谁」，扫描件接口唯一凭据，失效返回 code 4。</div>
+              <div class="n3">Set-Cookie: OSESSIONID=…</div>
+            </div>
+          </div>
+        </div>
+        <div class="endpointlist">
+          <div class="h">会话与接口</div>
+          <div class="e">cookie: OSESSIONID</div>
+          <div class="e">未登录 → { "code":4, "message":"无效会话，未登录" }</div>
+          <div class="e">GET  /api/client/Scan/Get?timestamp=&lt;rand&gt;</div>
+          <div class="e">GET  /api/client/Scan/Download?dwJobId=&lt;id&gt;</div>
+          <div class="e">POST /api/client/Scan/Del { "dwJobId":"..." }</div>
+        </div>
+        <div class="notecard" style="margin-top:14px">
+          <div class="h">两条网络出口</div>
+          <p>校内直连：zzwy.cwxu.edu.cn:9130 直连。</p>
+          <p style="margin-top:8px">校外 WebVPN：经 https://webvpn.cwxu.edu.cn 统一认证网关改写后访问，网关未授权时引导「去授权」。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="frames">
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">统一身份认证</div>
+            <div class="trail"></div>
+          </div>
+          <div class="authbody">
+            <div class="loadingbox" style="padding-top:30px">
+              <span class="spinner dark" style="width:26px;height:26px"></span>
+            </div>
+            <div style="text-align:center;margin-top:16px">
+              <div class="auth-title" style="font-size:22px">正在静默登录统一认证</div>
+              <div class="auth-sub">已命中本机 TGT 缓存 —— 全程无需输入密码与验证码</div>
+            </div>
+            <div class="auth-card">
+              <div class="reuse-step done">
+                <div class="k"><svg class="ic xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+                <div class="v">命中本机 TGT 缓存<em>CAS TGT · 当前学号 · 剩余约 1 小时 42 分</em></div>
+              </div>
+              <div class="reuse-step active">
+                <div class="k"><span class="spinner dark" style="width:12px;height:12px;border-width:2px"></span></div>
+                <div class="v">正在换取一次性 ST<em>service = kjyy.cwxu.edu.cn/authcenter/doAuth/&lt;32hex&gt;</em></div>
+              </div>
+              <div class="reuse-step">
+                <div class="k">3</div>
+                <div class="v">换取云打印会话 OSESSIONID<em>GET /api/client/Auth/SSOLogin?uniToken=…</em></div>
+              </div>
+            </div>
+            <div class="auth-note">本机已缓存统一认证票据，授权成功后会自动返回「云打印扫描件」。</div>
+            <div class="netpick">
+              <span class="chip">切换到校园网重试</span>
+              <span class="chip">用 WebVPN 登录</span>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">04-A · 静默授权中<span class="mono">TGT 命中 · 无密码无验证码</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">重新连接</div>
+            <div class="trail"></div>
+          </div>
+          <div class="authbody" style="padding-top:16px">
+            <div class="banner err">
+              <svg class="ic sm" style="color:var(--danger)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.2"/><path d="M12 16.3h.01"/></svg>
+              <div class="bt">云打印会话已失效<span class="mono">code 4 · 无效会话，未登录 —— 将自动重连，无需重新输入</span></div>
+            </div>
+            <div style="text-align:center;margin-top:18px">
+              <div class="auth-title" style="font-size:21px">重新连接统一认证</div>
+              <div class="auth-sub">本机已保存账号密码，将直接重连并同步扫描件列表</div>
+            </div>
+            <div class="auth-card" style="padding:15px 14px">
+              <div class="savedrow">
+                <span class="sic"><svg class="ic sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="9.5" rx="2.2"/><path d="M8 10.5V8a4 4 0 018 0v2.5"/></svg></span>
+                <div class="sb">
+                  <div class="st">本机已保存账号密码，直接重连<span style="white-space:nowrap">（不需输入）</span></div>
+                  <div class="sm">学号 2030612018 · 密码取自本机 secure storage（已加密保存）</div>
+                </div>
+              </div>
+              <div class="authbtn" style="margin-top:12px">重新连接并同步</div>
+              <div class="dashedbox" style="margin-top:12px">
+                <b>仅当本机未保存密码时</b>，才会弹出一次账号密码输入框（含图形验证码本地识别）；登录成功后立即写入 TGT 缓存，下次免输。
+              </div>
+            </div>
+            <div class="authdivider"><span>其他方式</span></div>
+            <div class="netpick" style="margin-top:0">
+              <span class="chip">切换到校园网重试</span>
+              <span class="chip">用 WebVPN 登录</span>
+            </div>
+            <div class="auth-note">统一认证由学校提供，账号与校园网 / 教务系统一致。</div>
+          </div>
+        </div>
+        <div class="frame-cap">04-B · 会话失效自动重连<span class="mono">账密复用 · 不再输入密码</span></div>
+      </div>
+
+      <div>
+        <div class="phone">
+          <div class="appbar">
+            <div class="lead"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19l-7-7 7-7"/></svg></div>
+            <div class="title">统一身份认证</div>
+            <div class="trail"></div>
+          </div>
+          <div class="authbody">
+            <div class="statewrap" style="padding-bottom:0">
+              <svg class="art" viewBox="0 0 84 84" fill="none">
+                <circle cx="42" cy="42" r="38" fill="rgba(16,185,129,.12)"/>
+                <circle cx="42" cy="42" r="20" stroke="rgba(16,185,129,.55)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M33 42.5l6.5 6.5L52 36" stroke="#10B981" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <div class="state-msg" style="color:#0B7A57">认证成功</div>
+              <div class="state-hint">已用缓存 TGT 换到 ST 并取得云打印会话 OSESSIONID，<br/>正在返回云打印扫描件…</div>
+              <div style="margin-top:16px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--text)"><span class="spinner dark" style="width:14px;height:14px"></span>正在跳转</div>
+            </div>
+          </div>
+        </div>
+        <div class="frame-cap">04-C · 授权成功回跳<span class="mono">拿到 OSESSIONID · 回到列表页</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

@@ -78,10 +78,27 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
   void _onEntered(NavPageRef page) {
     if (page != NavPageRef.service || !mounted) return;
     if (!_canQuery) return;
+    // 🔴 2026-11-26：这一页被 IndexedStack 保活着，清除数据 / 换账号后
+    //    `_balance` 还是上一个人的钱 —— 用户 B 登录进来会看到 A 的余额。
+    //    切到服务页时先对一次登录态，不在登录态就清空（宁可显示「登录后查看」）。
+    unawaited(_resetIfLoggedOut());
     final cardFailed = _error != null;
     final elecFailed = _dorm != null && _elec == null;
     if (!cardFailed && !elecFailed) return;
     unawaited(_refreshAll());
+  }
+
+  /// 已退出登录就把卡片上的旧数据抹掉，别让它跨账号显示。
+  Future<void> _resetIfLoggedOut() async {
+    final logged = await AuthGate.isLoggedIn();
+    if (!mounted || logged) return;
+    if (_balance == null && _elec == null && _error == null) return;
+    setState(() {
+      _balance = null;
+      _elec = null;
+      _error = null;
+      _elecError = null;
+    });
   }
 
   /// 宿舍变了（用户在「我的」页改的）→ 立刻作废旧电费并查新房间。

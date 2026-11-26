@@ -191,6 +191,13 @@ class _InvitePageState extends ConsumerState<InvitePage>
                         style: TextStyle(
                             fontSize: AppTheme.fontSmall,
                             color: AppTheme.primaryColor)),
+                    const SizedBox(height: 2),
+                    // 判据说清楚，省得同学填完码才发现「不算」——
+                    // 圈定规则在服务端（api.invite_bind），这里只是把它讲成人话。
+                    Text('只算注册 3 天内、且不在同一台手机上的新同学',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontSmall,
+                            color: context.textTertiary)),
                   ],
                 ),
               ),

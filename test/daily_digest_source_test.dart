@@ -27,6 +27,17 @@ void main() {
   final longAgo = today.subtract(const Duration(days: 30));
 
   group('每日消息（近 3 天汇总）', () {
+    test('汇总源自己从不写档案 → hasArchive() 恒为 false（铺档案时不能按它过滤）', () async {
+      // 🔴 2026-11-26 实机：「每日消息」进页面永远是「暂无内容 / 下拉可刷新」，
+      //    因为 primeArchives 用 hasArchive() 过滤，把汇总源整趟跳过了，它只能
+      //    等 refreshAll 排到最后（前面 10 个源联网跑完）才算。修法在
+      //    MessageRepository.primeArchives：铺完别人的档案后，再单独算汇总源。
+      final src = DailyDigestSource(subscribedIds: const {'jwc'});
+      await MessageArchive.save('jwc', [_m('a', 'jwc', _d(today))]);
+      expect(src.isLocalOnly, isTrue);
+      expect(await src.hasArchive(), isFalse);
+    });
+
     test('近 3 天保留，第 4 天起丢掉', () async {
       await MessageArchive.save('jwc', [
         _m('a', 'jwc', _d(today)),

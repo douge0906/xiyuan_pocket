@@ -32,6 +32,7 @@ import 'class_picker_page.dart';
 import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
 import 'tools/course_table_settings_page.dart';
+import 'tools/timetable_search_page.dart';
 import '../widgets/course_grid_widgets.dart';
 import '../widgets/semester_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -395,7 +396,24 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         await _clearCurrentTable();
       case _ImportAction.bundle:
         await _importBundle();
+      case _ImportAction.timetable:
+        await _openTimetableLibrary();
     }
+  }
+
+  /// 去「锡院在线课表」检索并导入同学们上传的班级课表。
+  ///
+  /// 这里**不在本页做任何写入**：选版本、看差异、覆盖确认都在那边完成。
+  /// 回来只需要刷新一下 —— 导入成功会切表，本页的课程列表必须跟着变，
+  /// 否则用户会看到「导完了但课表还是旧的」。
+  Future<void> _openTimetableLibrary() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const TimetableSearchPage()),
+    );
+    // 不做「有没有导入」的判断：那边可能导入、也可能只是看了一眼。
+    // 无论如何回来自检一次 —— 读本机存储很便宜，而漏刷的代价是
+    // 用户看着旧课表以为导入失败，然后重新导一遍。
+    if (mounted) await _load();
   }
 
   /// 导入掌上锡院自己导出的方案文件（课表 / 外观 / 两者）。

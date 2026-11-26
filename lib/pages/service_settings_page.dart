@@ -1,23 +1,45 @@
 import 'package:flutter/material.dart';
 
+import '../models/service_group.dart';
 import '../models/tool_model.dart';
 import '../services/service_catalog.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'user/user_cards.dart';
 
-/// 服务管理页（v1.9.0，2026-11-03 加拖动排序）：服务页右上角设置进入。
+/// 服务管理页（v1.9.0，2026-11-03 加拖动排序，2026-11-25 加收藏与排序模式）。
 ///
 /// UI 与「我的」页的框框规范保持一致（复用 [userCard]）：
 /// 圆角 20 + 1px 灰线边框 + 行高统一、分割线左右贯通到卡片边缘。
-/// 每行一个开关 —— 关闭后该服务从服务页隐藏（功能与数据都保留，随时可再打开）。
-/// **长按右侧拖动手柄可调整顺序**（2026-11-03 新增）。
+///
+/// 三件事都在这一页：
+/// - **显示 / 隐藏**：关闭后该服务从服务页消失（功能与数据都保留）。
+/// - **收藏**：点左侧星标。收藏项在服务页固定在最上面，不受排序模式影响。
+/// - **排序**：两种模式二选一
+///     · 手动（默认）：长按右侧手柄拖动；
+///     · 按使用次数：最近用得多的排前面（收藏仍然钉在最上）。
+///
 /// 修改**即时保存**，返回服务页自动生效。
 class ServiceSettingsPage extends StatefulWidget {
-  const ServiceSettingsPage({super.key, required this.hidden});
+  const ServiceSettingsPage({
+    super.key,
+    required this.hidden,
+    this.favorites = const <String>[],
+    this.sortMode = 'manual',
+    this.grouped = false,
+  });
 
   /// 进入时的隐藏服务 id（服务页传入，避免重复读存储）。
   final List<String> hidden;
+
+  /// 进入时的收藏 id。
+  final List<String> favorites;
+
+  /// 进入时的排序模式：`manual` / `usage`。
+  final String sortMode;
+
+  /// 进入时是否已打开「按用途分组」（默认关 —— 默认是单列平铺）。
+  final bool grouped;
 
   @override
   State<ServiceSettingsPage> createState() => _ServiceSettingsPageState();
@@ -28,6 +50,9 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
   static const double _rowHeight = 56;
 
   late final Set<String> _hidden = widget.hidden.toSet();
+  late final Set<String> _favorites = widget.favorites.toSet();
+  late String _sortMode = widget.sortMode;
+  late bool _grouped = widget.grouped;
 
   /// 按用户拖出来的顺序排好的服务清单。加载完成后替换。
   ///
@@ -69,7 +94,27 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
     await StorageService.saveHiddenServices(_hidden.toList());
   }
 
+  Future<void> _toggleFavorite(String id) async {
+    setState(() => _favorites.contains(id) ? _favorites.remove(id) : _favorites.add(id));
+    await StorageService.saveFavoriteServices(_favorites.toList());
+  }
+
+  Future<void> _setSortMode(String mode) async {
+    if (_sortMode == mode) return;
+    setState(() => _sortMode = mode);
+    await StorageService.saveServiceSortMode(mode);
+  }
+
+  Future<void> _setGrouped(bool value) async {
+    if (_grouped == value) return;
+    setState(() => _grouped = value);
+    await StorageService.saveServicesGrouped(value);
+  }
+
   Future<void> _onReorder(int oldIndex, int newIndex) async {
+    // 手动模式下才有意义。使用模式时列表按次数排，拖动会立刻被覆盖，
+    // 所以那种模式下直接不响应拖动（拖动把手也隐藏）。
+    if (_sortMode != 'manual') return;
     // ReorderableListView 语义：向下拖时 newIndex 多算了一格。
     if (newIndex > oldIndex) newIndex -= 1;
     setState(() {
@@ -90,7 +135,8 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('服务管理',
-            style: TextStyle(fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
+            style: TextStyle(
+                fontSize: AppTheme.fontHeading, fontWeight: FontWeight.w600)),
       ),
       body: ListView(
         // 2026-11-03：底部 padding 叠上系统手势条高度。
@@ -104,14 +150,17 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
         ),
         children: [
           Text(
-            '关闭开关后，该服务会从服务页隐藏（功能与数据都保留，随时可再打开）。',
+            '关闭开关后，该服务会从服务页隐藏（功能与数据都保留，随时可再打开）。点左侧星标可以把它钉在服务页最上面。',
             style: TextStyle(
-                fontSize: AppTheme.fontSmall, height: 1.5, color: context.textTertiary),
+                fontSize: AppTheme.fontSmall,
+                height: 1.5,
+                color: context.textTertiary),
           ),
+          const SizedBox(height: 14),
+          _sortModeCard(context),
           const SizedBox(height: 10),
-          // 2026-11-03：改成可拖动排序。卡片圆角由外层的 ClipRRect 兜住
-          // —— ReorderableListView 拖动时子项会被抬到列表之上，
-          //   不裁剪的话会和卡片的圆角/阴影打架。
+          _groupedCard(context),
+          const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(AppTheme.radiusLg),
             child: userCard(
@@ -144,23 +193,154 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
           Text(
             '当前显示 $visibleCount / ${mainServices.length} 个服务',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: AppTheme.fontSmall, color: context.textTertiary),
+            style: TextStyle(
+                fontSize: AppTheme.fontSmall, color: context.textTertiary),
           ),
         ],
       ),
     );
   }
 
+  /// 排序模式选择：两个整宽选项，选中打勾。
+  ///
+  /// 用自绘而不是 `RadioListTile`：全 App 的选择器都是「选中行底色 + 对勾」
+  /// 这一套语言（学期选择、筛选弹窗），这里保持一致。
+  Widget _sortModeCard(BuildContext context) {
+    Widget option(String mode, String title, String desc) {
+      final on = _sortMode == mode;
+      return InkWell(
+        onTap: () => _setSortMode(mode),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: AppTheme.fontBody,
+                        fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+                        color: on ? context.textPrimary : context.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      desc,
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption,
+                          color: context.textTertiary),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                on ? Icons.check_circle_rounded : Icons.circle_outlined,
+                size: 19,
+                color: on ? AppTheme.primaryColor : context.textTertiary,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+      child: userCard(
+        context,
+        padding: EdgeInsets.zero,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            option('manual', '手动排序', '长按右侧手柄拖动，放到你顺手的位置'),
+            Divider(height: 1, color: context.borderColor),
+            option('usage', '按使用次数', '最近用得多的排前面；收藏永远在最上面'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 是否按用途分组。默认关，因为默认形态必须是用户熟悉的那一列。
+  Widget _groupedCard(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+      child: userCard(
+        context,
+        padding: EdgeInsets.zero,
+        child: InkWell(
+          onTap: () => _setGrouped(!_grouped),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '按用途分组',
+                        style: TextStyle(
+                          fontSize: AppTheme.fontBody,
+                          fontWeight: _grouped ? FontWeight.w600 : FontWeight.w500,
+                          color:
+                              _grouped ? context.textPrimary : context.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '打开后服务页分成教务与成绩 / 课程与学习 / 资料与工具 / 校园与生活四块',
+                        style: TextStyle(
+                            fontSize: AppTheme.fontCaption,
+                            color: context.textTertiary),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Transform.scale(
+                  scale: 0.85,
+                  child: Switch(
+                    value: _grouped,
+                    onChanged: _setGrouped,
+                    activeColor: Colors.white,
+                    activeTrackColor: AppTheme.primaryColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _row(ToolModel tool, {required int index}) {
     final shown = !_hidden.contains(tool.id);
+    final fav = _favorites.contains(tool.id);
     return InkWell(
       onTap: () => _toggle(tool.id, !shown),
       child: SizedBox(
         height: _rowHeight,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.only(left: 4, right: 16),
           child: Row(
             children: [
+              // 收藏星：独立点击区，与「点整行切显示」分开。
+              IconButton(
+                onPressed: () => _toggleFavorite(tool.id),
+                tooltip: fav ? '取消收藏' : '收藏',
+                iconSize: 19,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  fav ? Icons.star_rounded : Icons.star_border_rounded,
+                  color: fav ? context.warningColor : context.textTertiary,
+                ),
+              ),
               Container(
                 width: 34,
                 height: 34,
@@ -180,24 +360,23 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                     Text(
                       tool.name,
                       style: TextStyle(
-                        // 2026-11-03 #3：服务名从 fontBody(14) 提到 fontTitle(16)
-                        // 并加 w500。服务页每行只有图标 + 名称，名称是唯一
-                        // 识别信息，14 号在一屏 7 行里偏小、扫读吃力。
                         fontSize: AppTheme.fontTitle,
                         fontWeight: FontWeight.w500,
-                        // 已隐藏的行名称变灰，与「显示中」一眼区分
-                        color: shown
-                            ? context.textPrimary
-                            : context.textTertiary,
+                        color: shown ? context.textPrimary : context.textTertiary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      shown ? '显示中' : '已隐藏',
+                      // 副标题把「分组」也带出来：用户在这里能看懂
+                      // 这个服务在服务页会落到哪一块，不用回去找。
+                      shown
+                          ? '显示中 · ${ServiceGroup.titleOf(tool.group)}'
+                          : '已隐藏',
                       style: TextStyle(
-                          fontSize: AppTheme.fontSmall, color: context.textTertiary),
+                          fontSize: AppTheme.fontSmall,
+                          color: context.textTertiary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -205,7 +384,6 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                 ),
               ),
               const SizedBox(width: 8),
-              // 选中色用主题色；主题色较深时靠「已隐藏行名称变灰」辅助区分。
               Transform.scale(
                 scale: 0.85,
                 child: Switch(
@@ -215,18 +393,20 @@ class _ServiceSettingsPageState extends State<ServiceSettingsPage> {
                   activeTrackColor: AppTheme.primaryColor,
                 ),
               ),
-              // 拖动把手：只有按在这里才拖，避免和「点一行切开关」抢手势。
-              ReorderableDragStartListener(
-                index: index,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Icon(
-                    Icons.drag_handle_rounded,
-                    size: 20,
-                    color: context.textTertiary,
+              // 拖动把手：只有手动模式才给。使用模式下拖动不生效，
+              // 留着把手会让人以为坏了。
+              if (_sortMode == 'manual')
+                ReorderableDragStartListener(
+                  index: index,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Icon(
+                      Icons.drag_handle_rounded,
+                      size: 20,
+                      color: context.textTertiary,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

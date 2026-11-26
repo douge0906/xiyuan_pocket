@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/service_group.dart';
 import '../models/tool_model.dart';
 
 /// 服务页全部服务的**唯一数据源**（v1.9.0：原为 toolbox_page 内的私有常量）。
@@ -12,6 +13,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.assessment_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'exam_query',
@@ -19,6 +21,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.event_note_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'empty_classroom',
@@ -26,6 +29,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.meeting_room_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'my_study',
@@ -33,6 +37,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.school_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.academic,
   ),
   ToolModel(
     id: 'library',
@@ -40,6 +45,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.folder_special_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.tools,
   ),
   ToolModel(
     id: 'xyl_calendar',
@@ -47,6 +53,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.calendar_month_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.study,
   ),
   ToolModel(
     id: 'textbook',
@@ -54,6 +61,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.menu_book_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.study,
   ),
   ToolModel(
     id: 'campus_map',
@@ -61,6 +69,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.map_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.campus,
   ),
   ToolModel(
     id: 'student_handbook',
@@ -68,6 +77,7 @@ const List<ToolModel> mainServices = [
     icon: Icons.auto_stories_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: false,
+    group: ServiceGroup.tools,
   ),
   // 2026-11-23：学习通（超星）作业与考试同步。
   //
@@ -80,5 +90,33 @@ const List<ToolModel> mainServices = [
     icon: Icons.sync_rounded,
     color: Color(0xFF1F2937),
     needsNetwork: true,
+    group: ServiceGroup.study,
+  ),
+  // 2026-11-25：图书馆云打印的扫描件。
+  //
+  // 它**不需要另一个账号**，用的是 App 已有的统一认证身份再换一张
+  // 云打印会话票（校外自动套 WebVPN），所以对用户来说就是「点进去就有」。
+  ToolModel(
+    id: 'cprint_scan',
+    // 名字保留「云打印」这个大家熟悉的入口名，但里面已经是网页版那一整套
+    // 五个功能（上传 / 打印文档 / 扫描文档 / 打印点 / 使用记录），
+    // 所以不能再叫「扫描件」——那只是其中一页。
+    name: '图书馆云打印',
+    icon: Icons.print_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+    group: ServiceGroup.tools,
+  ),
+  // 2026-11-25：同学们自己上传、审核通过的班级课表。
+  //
+  // 主入口在课表页的导入面板里（那里才是「我想换一份课表」发生的地方），
+  // 这一项是给「在服务页顺手看一眼」的人留的次入口。
+  ToolModel(
+    id: 'timetable_library',
+    name: '锡院在线课表',
+    icon: Icons.school_rounded,
+    color: Color(0xFF1F2937),
+    needsNetwork: true,
+    group: ServiceGroup.study,
   ),
 ];

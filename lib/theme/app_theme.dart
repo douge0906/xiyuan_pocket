@@ -362,9 +362,27 @@ class AppTheme {
       useMaterial3: true,
       brightness: brightness,
       fontFamily: family.isEmpty ? null : family,
+      // 🔴 2026-11-25：`ColorScheme.fromSeed` 会把种子色**重新调色**成一个
+      //    谐调色板 —— 种子是墨黑 0xFF1F2937 时，它算出来的 primary 偏蓝紫。
+      //    没写 style 的 `FilledButton` 取的就是 colorScheme.primary，
+      //    于是全 App 的主按钮变成了「用户没选过的蓝色」（实机截图确认）。
+      //    这里显式把 primary 系三项钉回用户真的选的那个色。
+      //    ⚠️ 只覆盖这几项：surface / outline 等仍交给 M3 从种子推导，
+      //    否则整套配色会失去明暗层次。
       colorScheme: ColorScheme.fromSeed(
         seedColor: primaryColor,
         brightness: brightness,
+      ).copyWith(
+        primary: primaryColor,
+        onPrimary: Colors.white,
+        primaryContainer: primaryColor,
+        onPrimaryContainer: Colors.white,
+        // `FilledButton.tonal` / Chip / 分段控件取的是 secondaryContainer。
+        // 种子色是墨黑时 M3 会把它算成一层**淡薰衣草灰**，在设置页那种
+        // 大块配色里仍然偏冷。这里改成一个与卡片同族的中性灰，
+        // 让「次要按钮」看起来像墨色的浅色版，而不是另一个品牌色。
+        secondaryContainer: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF2F2F5),
+        onSecondaryContainer: isDark ? const Color(0xFFEDEDED) : const Color(0xFF1F2937),
       ),
       scaffoldBackgroundColor: isDark
           ? (backgroundDarkNotifier.value ?? scaffoldDark)
@@ -423,6 +441,53 @@ class AppTheme {
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          textStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+      // 🔴 2026-11-25：全局主按钮（FilledButton）规范。
+      //
+      // 加它之前：全库 30+ 处 `FilledButton` 都没写 style，用的是 M3 的
+      // colorScheme.primary —— 那是 fromSeed 从墨黑算出来的蓝紫，用户从没选过。
+      // 实机截图里那个蓝色的「重新授权」就是它。
+      // 现在统一：底色 = 用户选的主题色、白字、圆角与 ElevatedButton 一致。
+      // 危险操作（红色）仍由调用方 `style:` 覆盖，不受影响。
+      // 2026-11-25：`ChoiceChip` 默认取 `colorScheme.secondaryContainer` 当选中底色。
+      // 种子色是墨黑时 M3 算出来的那个淡薰衣草灰在深色下还会发亮，
+      // 用户在课表设置里选颜色方案时能看到一排灰紫色块。
+      // 这里统一成「选中 = 主色，未选 = 卡片底 + 细边」，
+      // 与全 App 的选择器语言（notification_page 的 FilterChip）对齐。
+      // 2026-11-25：`ChoiceChip` 默认取 M3 由种子色算出的 secondaryContainer
+      // 当选中底色 —— 种子是墨黑时那是一层淡薰衣草紫，在课表设置里选配色方案
+      // 时能看到一排灰紫色块。
+      // 这里只改「底色 / 描边 / 圆角 / 不要对勾」，**不动 label 配色** ——
+      // 选中底色用主色的 10% 浅染，深色下 16% 白，这样 M3 默认的 onSurface
+      // 文字两种模式都读得清。想反白的设计自己传 selectedColor + 白字
+      // （notification_page 的 FilterChip 就是这么做的）。
+      chipTheme: ChipThemeData(
+        backgroundColor: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+        selectedColor:
+            isDark ? Colors.white.withValues(alpha: 0.16) : primaryColor.withValues(alpha: 0.10),
+        disabledColor: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+        side: BorderSide(color: isDark ? borderDark : borderLight),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(radiusLg),
+        ),
+        showCheckmark: false,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: primaryColor,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: primaryColor.withValues(alpha: 0.35),
+          disabledForegroundColor: Colors.white.withValues(alpha: 0.8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(radiusMd),
           ),
           padding: const EdgeInsets.symmetric(vertical: 14),
           textStyle: const TextStyle(

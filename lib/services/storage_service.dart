@@ -218,6 +218,67 @@ class StorageService {
     await prefs.setStringList(_kHiddenServices, ids);
   }
 
+  // ---------------- 服务页收藏（2026-11-25） ----------------
+  // 收藏 = 「我常用，钉在最上面」。存 id 列表，顺序不重要（同组内按清单原序）。
+  static const String _kFavoriteServices = 'favorite_services';
+
+  static Future<List<String>> loadFavoriteServices() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_kFavoriteServices) ?? <String>[];
+  }
+
+  static Future<void> saveFavoriteServices(List<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kFavoriteServices, ids);
+  }
+
+  // ---------------- 服务页排序模式（2026-11-25） ----------------
+  // 'manual' = 用户拖出来的顺序（默认，向后兼容）
+  // 'usage'  = 按使用次数从多到少
+  // 收藏永远优先于两种模式 —— 它不是排序，是「钉住」。
+  static const String _kServiceSortMode = 'service_sort_mode';
+
+  /// 已经用叠层卡片介绍过的服务 id（含一个 `showcase_yyyy-mm-dd` 标记位）。
+  /// 用集合而不是布尔：以后再加新服务时，只介绍「没见过的那些」。
+  static const String _kServiceIntroSeen = 'service_intro_seen_v1';
+
+  static Future<Set<String>> loadServiceIntroSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_kServiceIntroSeen) ?? const <String>[]).toSet();
+  }
+
+  static Future<void> saveServiceIntroSeen(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kServiceIntroSeen, ids.toList());
+  }
+
+  static Future<String> loadServiceSortMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getString(_kServiceSortMode) ?? 'manual';
+    return v == 'usage' ? 'usage' : 'manual';
+  }
+
+  static Future<void> saveServiceSortMode(String mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kServiceSortMode, mode == 'usage' ? 'usage' : 'manual');
+  }
+
+  // ---------------- 服务页是否分组（2026-11-25） ----------------
+  // false = 原样的单列平铺（默认）
+  // true  = 按用途分四块（教务与成绩 / 课程与学习 / 资料与工具 / 校园与生活）
+  // 用户 2026-11-25：分组是「可以在设置里自己选」的东西，不是默认行为。
+  static const String _kServicesGrouped = 'services_grouped';
+
+  static Future<bool> loadServicesGrouped() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kServicesGrouped) ?? false;
+  }
+
+  static Future<void> saveServicesGrouped(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kServicesGrouped, value);
+  }
+
   // ---- 我的成绩（本地缓存，仅在推送时更新） ----
 
   static const String _kGradeCache = 'grade_cache_v1';

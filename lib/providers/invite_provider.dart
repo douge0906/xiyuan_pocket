@@ -243,7 +243,9 @@ class InviteNotifier extends Notifier<InviteState> {
   String _invalidMessage(String? reason, String? fallback) {
     switch (reason) {
       case 'old_user':
-        return '该账号不是新注册的同学，不能计入邀请';
+        return '这个账号注册超过 3 天了，只能算老用户';
+      case 'same_device':
+        return '同一台手机上切换账号不算邀请，换台设备再试';
       case 'self_invite':
         return '不能填写自己的邀请码';
       case 'duplicate':

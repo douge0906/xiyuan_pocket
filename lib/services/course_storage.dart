@@ -272,6 +272,40 @@ class CourseStorage {
     return t.id;
   }
 
+  /// 覆盖**指定 id 那份**课表的课程（不动其他表、不动 activeId）。
+  ///
+  /// 2026-11-25：在线班级课表导入用。产品要求「本地同一个班级只保留一份」——
+  /// 之前导入班级课表走 [createTable] 每次新建，同一个班导两次就有两份，
+  /// 用户在课表切换列表里会看到两张同名的表，分不清哪张是新的。
+  ///
+  /// 与 [saveCourses] 的区别：[saveCourses] 写的是「当前激活那份」，这里写的是
+  /// 「点名的那份」。导入时当前激活的可能是别的班的课表，用 [saveCourses]
+  /// 会把它覆盖掉。
+  ///
+  /// 传 [semesterStart] 为 null 表示不动原来的开学日（`clearSemesterStart`
+  /// 为真才真的清空）。
+  static Future<bool> replaceTableCourses(
+    String id,
+    List<Course> courses, {
+    DateTime? semesterStart,
+    String? semesterStartSource,
+    bool clearSemesterStart = false,
+  }) async {
+    final all = await _loadAll();
+    final idx = all.tables.indexWhere((t) => t.id == id);
+    if (idx < 0) return false;
+    final next = List<CourseTable>.of(all.tables);
+    next[idx] = next[idx].copyWith(
+      courses: List<Course>.of(courses),
+      semesterStart: semesterStart,
+      clearSemesterStart: clearSemesterStart,
+      semesterStartSource: semesterStartSource,
+    );
+    await _writeAll(next, all.activeId);
+    unawaited(WidgetSyncService.syncTodayCourses());
+    return true;
+  }
+
   /// 给一份课表改名。
   static Future<bool> renameTable(String id, String name) async {
     final trimmed = name.trim();
