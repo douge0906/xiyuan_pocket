@@ -124,10 +124,14 @@ class _CourseFormPageState extends State<_CourseFormPage> {
     startSlot = widget.presetStartSlot ?? c?.startSlot ?? 1;
     endSlot = widget.presetEndSlot ?? c?.endSlot ?? 2;
     if (endSlot < startSlot) endSlot = startSlot;
-    // 周数选择（方块点击式）：每周时按所选周数；单/双周时忽略具体周数。
-    selectedWeeks = (c != null && c.weekType == CourseWeekType.every)
-        ? (parseWeeks(c.weeks) ?? {for (int i = 1; i <= 16; i++) i})
-        : {for (int i = 1; i <= 16; i++) i};
+    // 周数选择（方块点击式）。
+    //
+    // 🔴 2026-11-26：单/双周课**也要**按原周次回填。此前这里对单/双周一律
+    //    塞 `1..16`，而保存时又写死 `1-16周(单)`，于是「只改个教室」就把
+    //    `5-15周(单)` 改成 `1-16周(单)`，17-20 周的课直接凭空消失。
+    //    `parseWeeks` 能处理 `(单)/(双)` 后缀（会展开成对应奇偶周），
+    //    所以这里统一走它，拿不到才退回 1..16。
+    selectedWeeks = parseWeeks(c?.weeks) ?? {for (int i = 1; i <= 16; i++) i};
     colorValue = c?.colorValue ?? coursePalette[0];
   }
 
@@ -450,10 +454,17 @@ class _CourseFormPageState extends State<_CourseFormPage> {
                       }
                       // 周次文本（与 parseWeeks 互转）
                       String weeksText;
-                      if (weekType == CourseWeekType.odd) {
-                        weeksText = '1-16周(单)';
-                      } else if (weekType == CourseWeekType.even) {
-                        weeksText = '1-16周(双)';
+                      if (weekType == CourseWeekType.odd ||
+                          weekType == CourseWeekType.even) {
+                        // 保留用户实际选的范围，只把奇偶写进后缀。
+                        // （原来这里写死 `1-16周(单)`，把 5-15 周的课改成
+                        //   1-16 周、把 17-20 周的课整段抹掉。）
+                        final sortedWeeks = selectedWeeks.toList()..sort();
+                        final lo = sortedWeeks.first;
+                        final hi = sortedWeeks.last;
+                        final span = lo == hi ? '$lo' : '$lo-$hi';
+                        weeksText =
+                            '$span周${weekType == CourseWeekType.odd ? '(单)' : '(双)'}';
                       } else {
                         // 🔴 2026-11-04 审查 P0：空集合会被 `formatWeeks`
                         //    写成空串，而空串在 `parseWeeks` 里等于 null、

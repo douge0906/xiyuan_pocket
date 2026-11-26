@@ -137,14 +137,23 @@ class _ClassPickerPageState extends State<ClassPickerPage> {
         final wd = _asInt(m['weekday'], 0);
         if (name.isEmpty || wd <= 0) continue;
         final start = _asInt(m['start_slot'], 1);
+        // 🔴 2026-11-26：id 里必须带上节次上界和周次。
+        //    原来只写 `cls_<班>_<周几>-<起始节>`，同一个班同一时段的两门课
+        //    （单周一门、双周一门，或者 1-2 节和 1-4 节的实验课）会拿到同一个
+        //    id，而 `CourseStorage.deleteCourse` 是按 id `removeWhere` ——
+        //    删掉一门会把另一门一起删掉，且用户完全看不出原因。
+        final endSlot = _asInt(m['end_slot'], start);
+        final weeksKey =
+            (m['weeks'] ?? '').toString().trim().replaceAll(RegExp(r'\s+'), '');
         courses.add(Course(
-          id: 'cls_${bhId}_$wd-$start',
+          id: 'cls_${bhId}_$wd-$start-$endSlot'
+              '${weeksKey.isEmpty ? '' : '_$weeksKey'}',
           name: name,
           teacher: (m['teacher'] ?? '').toString().trim(),
           classroom: (m['classroom'] ?? '').toString().trim(),
           weekday: wd,
           startSlot: start,
-          endSlot: _asInt(m['end_slot'], start),
+          endSlot: endSlot,
           weeks: (m['weeks'] ?? '').toString().trim(),
           colorValue: colorForName(name),
           source: CourseSource.server,
