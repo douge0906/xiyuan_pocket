@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xiyuan_pocket/services/campus/cprint_models.dart';
+import 'package:xiyuan_pocket/services/campus/cprint_client.dart';
 
 /// 云打印「打印文档 / 打印点 / 使用记录 / 上传」四块的数据解析回归。
 ///
@@ -11,6 +12,36 @@ import 'package:xiyuan_pocket/services/campus/cprint_models.dart';
 ///
 /// 任何一条解析错都会让用户看到错误的信息（或直接空列表），所以逐条钉住。
 void main() {
+
+  group('上传回跳地址（2026-11-26 线上 500 事故）', () {
+    test('BackURL 必须是绝对地址，且指向 printDoc', () {
+      // 原来传相对路径 `result.html`，服务端拼不出回跳地址 → 500
+      // {"Message":"An error has occurred."}，但任务其实已经进队列，
+      // 用户看到「上传失败」再传一次就多打一份。
+      expect(CprintClient.uploadBackUrl, startsWith('http'));
+      expect(CprintClient.uploadBackUrl, endsWith('/printDoc.html'));
+    });
+
+    test('真实 302 Location 能解析出 code/fee/message', () {
+      const loc = 'http://zzwy.cwxu.edu.cn:9130/api/client/new/cprintPc/'
+          'printDoc.html?code=0&fee=20&message=';
+      final r = CprintUploadResult.parseLocation(loc);
+      expect(r.ok, isTrue);
+      expect(r.feeFen, 20);
+    });
+  });
+
+  group('扫描件列表不可变（2026-11-26 打开就崩）', () {
+    test('没有扫描件时 parseList 返回 const 列表', () {
+      // 客户端如果对它原地 sort 会抛
+      // `Unsupported operation: Cannot modify an unmodifiable list`。
+      final r = CprintScanItem.parseList(<String, dynamic>{'code': 0});
+      expect(r.ok, isTrue);
+      expect(r.items, isEmpty);
+      expect(() => r.items.sort((a, b) => 0),
+          throwsA(isA<UnsupportedError>()));
+    });
+  });
   group('打印文档', () {
     test('真实返回样本：文件名、时间、纸型、单双面', () {
       // 2026-11-25 实测该账号队列里的那一条，字段一字未改。

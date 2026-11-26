@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:convert' show base64Decode;
+import 'dart:convert' show Utf8Decoder, base64Decode;
 import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
@@ -93,11 +93,29 @@ class CprintClient {
   /// 网页版的落地页，`backurl` 要的就是它。
   static const String backUrl = '$host/client/new/cprintPc/scanDoc.html';
 
+  /// 上传成功后站点要把浏览器送回这个页面，并把结果拼在
+  /// `?code=&fee=&message=` 上。
+  ///
+  /// 🔴 必须是**绝对地址**。站点自己用的是 `window.location.href` 换掉最后
+  /// 一段（`cp_cprint.js` 的 `gourl`），也就是 printDoc.html。我们原来传相对
+  /// 路径 `result.html`，服务端拼不出完整回跳地址，直接回
+  /// `500 {"Message":"An error has occurred."}` —— 但**任务其实已经进队列了**，
+  /// 于是用户看到「上传失败」，再传一次就多一份（2026-11-26 实测）。
+  static const String uploadBackUrl = '$host/api/client/new/cprintPc/printDoc.html';
+
   static const String _api = '$host/api/client';
 
   /// 持久会话：**校外时 WebVPN 网关 cookie 也在这里面**，所以不能每次请求都新建。
   /// 这与 [DormService] 踩过的坑是同一个：新建空会话 = 网关认为你没登录。
   static CampusSession? _session;
+
+  /// [_session] 是在哪种网络模式下建的（`direct` / `webvpn`）。
+  ///
+  /// 会话的 `urlRewrite` 在创建那一刻就定死了：校内建的会话没有改写函数，
+  /// 出校门后继续用它去连内网地址必然 SocketException，而 `needReauth`
+  /// 只在站点回 `code:4` 时才触发 —— 连接层失败根本走不到，于是五个页签
+  /// 会一直失败到用户杀进程为止。
+  static String _sessionMode = '';
 
   static String _username = '';
   static String? _trueName;
@@ -111,10 +129,36 @@ class CprintClient {
   /// 已有可用会话（不再打网络）。
   static bool get hasSession => _session != null;
 
-  static CampusSession _newSession() => CampusSession(
-        urlRewrite:
-            NetMode.current == CampusNetMode.webvpn ? WebVpn.wrapUrl : null,
-      );
+  static CampusSession _newSession() {
+    _sessionMode = _netModeKey();
+    return CampusSession(
+      urlRewrite:
+          NetMode.current == CampusNetMode.webvpn ? WebVpn.wrapUrl : null,
+    );
+  }
+
+  /// 会话所属模式与当前模式不一致就丢弃（下次请求会重登）。
+  static void _dropSessionIfModeMoved() {
+    final s = _session;
+    if (s == null || _sessionMode.isEmpty) return;
+    if (_sessionMode == _netModeKey()) return;
+    s.close();
+    _session = null;
+    debugPrint('[cprint] 网络模式已从 $_sessionMode 变到 ${_netModeKey()}，'
+        '丢弃旧会话');
+  }
+
+  /// 网络模式探测错了吗？错就重探一次并返回 true。
+  ///
+  /// 校外被误判成校内时，请求会直接打内网地址、必然连不上；反过来也一样。
+  /// 自愈一次比让用户看到「连不上」要好 —— 而 `ensureFresh` 的 TTL 是 60 秒，
+  /// 刚出校门那一次探测结果很可能还是旧的。
+  static Future<bool> _netModeMoved() async {
+    final before = NetMode.current;
+    if (before == CampusNetMode.offline) return false;
+    final now = await NetMode.probe(force: true);
+    return now != before;
+  }
 
   /// 当前网络模式的短标识，用来给缓存分区。
   ///
@@ -141,6 +185,7 @@ class CprintClient {
     bool force = false,
   }) async {
     await NetMode.ensureFresh();
+    _dropSessionIfModeMoved();
     if (NetMode.current == CampusNetMode.offline) {
       return const CprintAuthResult(
         CprintAuthStage.offline,
@@ -222,6 +267,10 @@ class CprintClient {
       final st = await _ssoToCprint(s, tgt, pwd);
       if (st == null || st.isEmpty) {
         s.close();
+        if (await _netModeMoved()) {
+          debugPrint('[cprint] 换票失败，但网络模式变了，重试一次');
+          return authorize(password: password, force: true);
+        }
         return const CprintAuthResult(
           CprintAuthStage.failed,
           '统一认证没有换到云打印的通行票据，请稍后重试。',
@@ -281,6 +330,15 @@ class CprintClient {
       // 原始 `$e` 里通常是 `SocketException: OS Error...` 这种，直接显示
       // 只会让人以为 App 坏了，所以按「网络类 / 其它」分开说。
       debugPrint('[cprint] authorize 未预期异常：$e');
+      // 网络层失败最常见的原因是「探测说校内、其实在校外」（或反过来）。
+      // 重探一次，模式真的变了就整条重跑 —— 否则用户只能看到一个笼统的
+      // 「云打印连接失败」，永远等不到它自己好。
+      if (password != null || pwd.isNotEmpty) {
+        if (await _netModeMoved()) {
+          debugPrint('[cprint] 网络模式变了，重试一次');
+          return authorize(password: password, force: true);
+        }
+      }
       final net = e is Exception &&
           (e.toString().contains('SocketException') ||
               e.toString().contains('TimeoutException') ||
@@ -435,8 +493,19 @@ class CprintClient {
       }
       final parsed = CprintScanItem.parseList(j);
       // 站点忽略 `sort` 参数，排序必须客户端做（复刻它的 `x_sorttime`）。
-      parsed.items.sort((a, b) => b.sortKey.compareTo(a.sortKey));
-      return parsed;
+      //
+      // ⚠️ 不能原地 `parsed.items.sort(...)`：账号里**没有扫描件**时
+      // `parseList` 返回的是 `const CprintScanResult(items: <CprintScanItem>[])`，
+      // 那是个不可变列表，原地排序会抛
+      // `Unsupported operation: Cannot modify an unmodifiable list`
+      // —— 「打开扫描件」直接崩掉（2026-11-26 真实网络实测到）。
+      final sorted = [...parsed.items]
+        ..sort((a, b) => b.sortKey.compareTo(a.sortKey));
+      return CprintScanResult(
+        errorCode: parsed.errorCode,
+        message: parsed.message,
+        items: sorted,
+      );
     } on CampusException catch (e) {
       return CprintScanResult(
           errorCode: -1, message: e.message, items: const []);
@@ -554,7 +623,7 @@ class CprintClient {
         'dwFrom': '0',
         'dwTo': '0',
         'dwCopies': '${copies < 1 ? 1 : copies}',
-        'BackURL': 'result.html',
+        'BackURL': uploadBackUrl,
       };
       final r = await s.postMultipart(
         '$_api/CloudPrint/Upload',
@@ -572,6 +641,19 @@ class CprintClient {
       }
       final loc = r.location ?? '';
       if (loc.isEmpty) {
+        // 有的部署回 `200 + JSON`（`{"code":0,"result":{"dwJobId":…}}`）而不是
+        // 302。实测同一个站点两种形态都出现过，认一下不亏 —— 认不出来就只会
+        // 把「已经进队列的任务」报成失败，用户重传得多打一份。
+        final j = CampusSession.tryJson(
+            const Utf8Decoder(allowMalformed: true).convert(r.bytes));
+        if (j != null && _asInt(j['code']) == 0) {
+          final res = j['result'];
+          return CprintUploadResult(
+            code: 0,
+            feeFen: res is Map ? _asInt(res['dwFee'] ?? res['fee']) : 0,
+            message: '',
+          );
+        }
         debugPrint('[cprint] upload HTTP ${r.statusCode} 无 Location');
         return const CprintUploadResult(
             code: -1, feeFen: 0, message: '上传没有成功，请稍后再试。');
