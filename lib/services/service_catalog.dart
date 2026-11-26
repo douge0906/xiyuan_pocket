@@ -89,6 +89,8 @@ const List<ToolModel> mainServices = [
     name: '学习通同步',
     icon: Icons.sync_rounded,
     color: Color(0xFF1F2937),
+    // 2026-11-26（同学要求）：先明确标出来，别让人以为是做完了的功能。
+    badgeText: '暂未完成',
     needsNetwork: true,
     group: ServiceGroup.study,
   ),
@@ -107,16 +109,10 @@ const List<ToolModel> mainServices = [
     needsNetwork: true,
     group: ServiceGroup.tools,
   ),
-  // 2026-11-25：同学们自己上传、审核通过的班级课表。
+  // 2026-11-26（同学要求）：**不再**在服务页放「锡院在线课表」。
   //
-  // 主入口在课表页的导入面板里（那里才是「我想换一份课表」发生的地方），
-  // 这一项是给「在服务页顺手看一眼」的人留的次入口。
-  ToolModel(
-    id: 'timetable_library',
-    name: '锡院在线课表',
-    icon: Icons.school_rounded,
-    color: Color(0xFF1F2937),
-    needsNetwork: true,
-    group: ServiceGroup.study,
-  ),
+  // 它本质上是「课表导入」的一个可选来源，不是一项独立服务 —— 放在服务页
+  // 反而要用户先想「我要换课表该去服务页还是课表页」。现在唯一入口是
+  // 课表页 → 导入课表 → 「从锡院在线课表导入」（见 `course_import_sheet.dart`），
+  // `tool_navigator` 仍然保留 `timetable_library` 这个 case 供那条路径跳转。
 ];

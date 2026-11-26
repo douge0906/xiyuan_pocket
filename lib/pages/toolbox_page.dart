@@ -66,7 +66,6 @@ class _ToolboxPageState extends State<ToolboxPage> {
   static const String _kIntroTag = 'showcase_2026-11-26';
 
   static const List<String> _kIntroIds = [
-    'timetable_library',
     'cprint_scan',
     'chaoxing_sync',
   ];

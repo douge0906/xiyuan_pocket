@@ -1,26 +1,28 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/campus/cprint_client.dart';
+import '../../services/campus/webvpn.dart';
+import '../../services/net_mode.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_card.dart';
 import 'cprint_jobs_tab.dart';
 import 'cprint_records_tab.dart';
 import 'cprint_scan_tab.dart';
 import 'cprint_shared.dart';
-import 'cprint_stations_tab.dart';
 import 'cprint_upload_tab.dart';
 
 /// 图书馆云打印。
 ///
-/// ## 为什么是「五个页签」
+/// ## 为什么是「四个页签」
 ///
-/// 网页版（`zzwy.cwxu.edu.cn`）本身就有五个功能入口：
+/// 网页版（`zzwy.cwxu.edu.cn`）有五个功能入口：
 /// **云打印（上传）· 打印文档 · 扫描文档 · 打印点 · 使用记录**。
-/// 之前 App 里只做了「扫描文档」一件，用户看到「云打印」这个名字点进来
-/// 却只能看扫描件，功能上是缺的。这里按网页版的功能划分补齐，
-/// 但交互按手机重做（网页版是表格 + 批量勾选，手机上一屏放不下）。
+/// 2026-11-26 按同学要求去掉「打印点」—— 它只是「哪台打印机在哪个房间」
+/// 的静态表格，手机上点进来还得自己认房间，不如直接去网页版看。
+/// 剩下四个按手机重做（网页版是表格 + 批量勾选，手机上一屏放不下）。
 ///
 /// ## 登录只做一次
 ///
@@ -177,20 +179,49 @@ class _CprintPageState extends State<CprintPage>
           ),
         ),
         actions: [
-          if (_authed)
-            IconButton(
-              tooltip: '换个账号',
-              onPressed: () => _askPasswordAndLogin(force: true),
-              icon: const Icon(Icons.swap_horiz_rounded, size: 20),
-            ),
+          // 2026-11-26（同学要求）：去掉「换个账号」，改成「在网页打开」。
+          //
+          // 理由：换账号这个动作在手机上很容易误触，而它要的就是「用一个
+          // 不是本机主账号的身份去打印」—— 那种场景用学校网页版更自然
+          // （那里本来就是为共用电脑设计的）。这是兜底入口：App 里的授权
+          // 出任何问题，用户还有一条看得见的路。
+          IconButton(
+            tooltip: '在网页打开',
+            onPressed: _openWeb,
+            icon: const Icon(Icons.open_in_new_rounded, size: 20),
+          ),
         ],
       ),
       body: _booting
-          ? cprintLoading()
+          ? const CprintBootingHint()
           : _authed
               ? _tabs()
               : _loginView(),
     );
+  }
+
+  /// 备用通道：用系统浏览器打开图书馆云打印的网页版。
+  ///
+  /// 校外时站点在内网，必须套学校 WebVPN —— 和 App 内走的是同一个网关，
+  /// 只是让用户在浏览器里自己登录一次。
+  Future<void> _openWeb() async {
+    const base =
+        'http://zzwy.cwxu.edu.cn:9130/api/client/new/cprintPc/printDoc.html';
+    final url = NetMode.current == CampusNetMode.webvpn
+        ? WebVpn.wrapUrl(base)
+        : base;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!ok) {
+        messenger.showSnackBar(
+            const SnackBar(content: Text('没能打开浏览器，请稍后重试')));
+      }
+    } catch (e) {
+      debugPrint('[cprint] open web failed: $e');
+      messenger.showSnackBar(
+          const SnackBar(content: Text('没能打开浏览器，请稍后重试')));
+    }
   }
 
   Widget _loginView() {
@@ -269,7 +300,7 @@ class _CprintPageState extends State<CprintPage>
       ),
       if (!_scanDisabled)
         ('扫描文档', CprintScanTab(authed: _authed, onNeedAuth: _onNeedAuth)),
-      ('打印点', CprintStationsTab(authed: _authed, onNeedAuth: _onNeedAuth)),
+      // 2026-11-26：去掉「打印点」（静态房间表格，手机上不如网页版好用）。
       ('使用记录', CprintRecordsTab(authed: _authed, onNeedAuth: _onNeedAuth)),
     ];
   }

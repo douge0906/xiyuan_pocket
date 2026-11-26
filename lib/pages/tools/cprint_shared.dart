@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../services/campus/cprint_models.dart';
@@ -136,6 +138,71 @@ class CprintNeedAuthView extends StatelessWidget {
 /// 五页签统一的加载态。
 Widget cprintLoading() =>
     const Center(child: SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.4)));
+
+/// 「正在登录中…」的等待态。
+///
+/// 2026-11-26：原来进页面只有一个转圈，用户（同学截图）看到的是**一片白 + 一个小圈**，
+/// 不知道在等什么、也不知道要等多久。这里补一句会走省略号的说明：
+/// 统一认证在校外要多走一次 WebVPN，本来就比校内慢，越是这样越要说清楚。
+class CprintBootingHint extends StatefulWidget {
+  const CprintBootingHint({super.key});
+
+  @override
+  State<CprintBootingHint> createState() => _CprintBootingHintState();
+}
+
+class _CprintBootingHintState extends State<CprintBootingHint> {
+  Timer? _timer;
+  int _dots = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 420), (_) {
+      if (!mounted) return;
+      setState(() => _dots = (_dots + 1) % 4);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final suffix = '.' * _dots;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 26,
+            height: 26,
+            child: CircularProgressIndicator(strokeWidth: 2.4),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '正在登录中$suffix',
+            style: TextStyle(
+              fontSize: AppTheme.fontSmall,
+              color: context.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '校外会经学校 WebVPN，可能要多等一会儿',
+            style: TextStyle(
+              fontSize: AppTheme.fontCaption,
+              color: context.textTertiary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 /// 五页签统一的「一行说明」。
 Widget cprintHint(BuildContext context, String text) => Padding(
