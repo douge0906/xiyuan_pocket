@@ -238,6 +238,20 @@ class StorageService {
   // 收藏永远优先于两种模式 —— 它不是排序，是「钉住」。
   static const String _kServiceSortMode = 'service_sort_mode';
 
+  /// 已经用叠层卡片介绍过的服务 id（含一个 `showcase_yyyy-mm-dd` 标记位）。
+  /// 用集合而不是布尔：以后再加新服务时，只介绍「没见过的那些」。
+  static const String _kServiceIntroSeen = 'service_intro_seen_v1';
+
+  static Future<Set<String>> loadServiceIntroSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_kServiceIntroSeen) ?? const <String>[]).toSet();
+  }
+
+  static Future<void> saveServiceIntroSeen(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kServiceIntroSeen, ids.toList());
+  }
+
   static Future<String> loadServiceSortMode() async {
     final prefs = await SharedPreferences.getInstance();
     final v = prefs.getString(_kServiceSortMode) ?? 'manual';

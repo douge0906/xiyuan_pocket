@@ -16,6 +16,7 @@ class ServiceEntry extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.favorite = false,
+    this.highlightTick = 0,
   });
 
   final ToolModel tool;
@@ -27,11 +28,14 @@ class ServiceEntry extends StatelessWidget {
   /// 是否已收藏（显示实心星）。
   final bool favorite;
 
+  /// 新功能卡片被滑掉时 +1 —— 这个格子会亮一下，表示「它落在这儿了」。
+  final int highlightTick;
+
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final tint = AppTheme.primaryColor;
-    return Material(
+    final body = Material(
       color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
       borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: InkWell(
@@ -93,6 +97,32 @@ class ServiceEntry extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    if (highlightTick <= 0) return body;
+    // 新功能卡片被滑掉时亮一下：光晕从有到无，900ms 收干净。
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<String>('service-pulse-$highlightTick'),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 900),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, child) {
+        final glow = (1 - v).clamp(0.0, 1.0);
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            boxShadow: [
+              BoxShadow(
+                color: tint.withValues(alpha: 0.40 * glow),
+                blurRadius: 20 * glow,
+                spreadRadius: 1.5 * glow,
+              ),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: body,
     );
   }
 }

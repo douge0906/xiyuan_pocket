@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../models/service_group.dart';
 import '../models/tool_model.dart';
+import '../services/service_catalog.dart';
 import '../services/current_tab.dart';
 import '../services/dorm_service.dart';
-import '../services/service_catalog.dart';
 import '../services/storage_service.dart';
 import '../services/tool_navigator.dart';
 import '../services/tool_usage_storage.dart';
 import '../theme/app_theme.dart';
 import '../widgets/balance_cards.dart';
 import '../widgets/service_entry.dart';
+import '../widgets/service_intro_overlay.dart';
 import '../widgets/service_tile.dart';
 import 'balance_detail_pages.dart';
 import 'service_settings_page.dart';
@@ -51,6 +52,25 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 用户拖出来的服务顺序（2026-11-03）。空 = 从未排过，按 mainServices 原序。
   List<String> _order = [];
 
+  /// 「新功能叠层卡片」要介绍的服务；空 = 不展示。
+  List<ToolModel> _introTools = const [];
+
+  /// 卡片被滑掉时的计数：让对应格子亮一下（值是第几次，变化即重放动画）。
+  final Map<String, int> _pulse = <String, int>{};
+
+  /// 本批新功能的展示标记。以后再加服务时换成新日期即可再展示一次。
+  ///
+  /// 为什么要一个手写标记而不是「跟上次见过的服务集合做差」：差集算法在老用户
+  /// 第一次升级时会把 12 个服务全当成「新的」，一口气弹 3 张卡讲云打印，
+  /// 而用户可能压根不用云打印 —— 那是打扰，不是介绍。宁可人工指定这一批讲什么。
+  static const String _kIntroTag = 'showcase_2026-11-26';
+
+  static const List<String> _kIntroIds = [
+    'timetable_library',
+    'cprint_scan',
+    'chaoxing_sync',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +79,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
     // 必须挂在 CurrentTab 而不是 initState：App 启动会预热所有 Tab，
     // 预热阶段就把页面推出来，用户还没看到服务页就被弹一脸。
     _unsubEntered = CurrentTab.addListener(_onEntered);
+    // 首帧后再问一次要不要弹新功能卡片：启动时停在服务页也算一次「看到」。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || CurrentTab.current != NavPageRef.service) return;
+      _maybeShowIntro();
+    });
   }
 
   void Function()? _unsubEntered;
@@ -76,6 +101,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 优先级按 exam > card > countdown（同一次点击只会置一个）。
   void _onEntered(NavPageRef page) {
     if (page != NavPageRef.service || !mounted) return;
+    _maybeShowIntro();
     final openExam = AppTabs.pendingOpenExam;
     final openCard = AppTabs.pendingOpenCard;
     final openCountdown = AppTabs.pendingOpenCountdown;
@@ -209,6 +235,39 @@ class _ToolboxPageState extends State<ToolboxPage> {
     await _loadAll();
   }
 
+  /// 决定要不要弹「新功能」叠层卡片。
+  ///
+  /// 只在这个页面**真正被看到**之后才弹（见 [_onEntered] / 首帧回调），
+  /// 因为 App 启动会把五个 Tab 全建出来，预热阶段弹就是弹给空气看。
+  Future<void> _maybeShowIntro() async {
+    if (!mounted || _introTools.isNotEmpty) return;
+    final seen = await StorageService.loadServiceIntroSeen();
+    if (!mounted || seen.contains(_kIntroTag)) return;
+    final tools = <ToolModel>[
+      for (final id in _kIntroIds)
+        if (!_hidden.contains(id))
+          for (final t in mainServices)
+            if (t.id == id) t,
+    ];
+    if (tools.isEmpty) return;
+    setState(() => _introTools = tools);
+  }
+
+  Future<void> _finishIntro() async {
+    final seen = await StorageService.loadServiceIntroSeen();
+    seen
+      ..add(_kIntroTag)
+      ..addAll(_kIntroIds);
+    await StorageService.saveServiceIntroSeen(seen);
+    if (!mounted) return;
+    setState(() => _introTools = const []);
+  }
+
+  void _pulseTool(ToolModel tool) {
+    if (!mounted) return;
+    setState(() => _pulse[tool.id] = (_pulse[tool.id] ?? 0) + 1);
+  }
+
   @override
   Widget build(BuildContext context) {
     final tools = _visibleTools;
@@ -220,8 +279,10 @@ class _ToolboxPageState extends State<ToolboxPage> {
       //    是那块灰 —— 切 Tab 时是一道明显的色带，看起来像设置没生效。
       //    `context.scaffoldColor` 会读 backgroundNotifier / backgroundDarkNotifier。
       backgroundColor: context.scaffoldColor,
-      body: SafeArea(
-        child: Column(
+      body: Stack(
+        children: [
+          SafeArea(
+            child: Column(
           children: [
             const SizedBox(height: 12),
             // 标题居中 + 右上角服务管理入口。
@@ -262,7 +323,17 @@ class _ToolboxPageState extends State<ToolboxPage> {
                       : _flatList(tools),
             ),
           ],
-        ),
+          ),
+            ),
+          if (_introTools.isNotEmpty)
+            Positioned.fill(
+              child: ServiceIntroOverlay(
+                tools: _introTools,
+                onCardDismissed: _pulseTool,
+                onFinished: _finishIntro,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -385,6 +456,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
                 child: ServiceEntry(
                   tool: t,
                   favorite: _favorites.contains(t.id),
+                  highlightTick: _pulse[t.id] ?? 0,
                   onTap: () => _onTap(context, t),
                   onLongPress: () => _toggleFavorite(t.id),
                 ),
