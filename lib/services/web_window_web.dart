@@ -32,3 +32,25 @@ bool openNamedWindow(String url, String name) {
     return false;
   }
 }
+
+/// 让浏览器直接下载一个地址（资源中心网页版用）。
+///
+/// 为什么不用 `location.href = url`：那会把当前页面导航走，用户下完文件
+/// 还要自己按返回。这里塞一个隐藏 `<a download>` 点一下，浏览器按响应的
+/// `Content-Disposition: attachment` 落到下载栏，页面留在原地。
+/// 跨域时 `download` 属性会被忽略，但我们服务端本来就发附件头。
+void triggerBrowserDownload(String url) {
+  try {
+    final a = html.AnchorElement(href: url)
+      ..style.display = 'none'
+      ..setAttribute('download', '');
+    html.document.body?.children.add(a);
+    a.click();
+    a.remove();
+  } catch (_) {
+    // 兜底：连锚点都点不动时退回直接导航（附件响应不会离开页面）。
+    try {
+      html.window.location.assign(url);
+    } catch (_) {}
+  }
+}

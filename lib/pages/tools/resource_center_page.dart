@@ -6,6 +6,8 @@ import '../../services/cancel_token.dart';
 import '../../services/control_service.dart';
 import '../../services/resource_download_service.dart';
 import '../../services/resource_store.dart';
+import '../../services/web_window_stub.dart'
+    if (dart.library.js_util) '../../services/web_window_web.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/empty_state_art.dart' show EmptyArtVariant;
 import '../../widgets/state_views.dart';
@@ -16,8 +18,9 @@ import 'resource_text_preview_page.dart';
 import 'resource_viewer_page.dart';
 
 /// 网页版没有本地文件系统：path_provider 没有 Web 实现，dart:io 的
-/// File 在浏览器里只会抛异常。涉及存盘/读盘的入口统一用这句提示。
-const String _kWebFileHint = '网页版暂不支持下载到本机，请用安卓 App 打开';
+/// File 在浏览器里只会抛异常。下载改成「换签名直链交给浏览器」，
+/// 但「我的下载」是本地文件列表，网页版仍然没有。
+const String _kWebFileHint = '网页版没有本地文件列表，下载的文件在浏览器下载栏里';
 
 /// 资源中心（）。
 ///
@@ -542,13 +545,10 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
   }
 
   Future<void> _openEntry(ResourceEntry entry) async {
-    // docx 的正文由服务端抽取，网页版照样能看。
-    // 其余（PDF 预览、doc、压缩包）都要先落成本地文件再打开，网页版做不到。
+    // docx 的正文由服务端抽取，网页版照样能看（见下方 isDocx 分支）。
+    // 其余（PDF、doc、压缩包）网页版没有本地文件系统，直接交给浏览器下载。
     if (kIsWeb && !entry.isDocx) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_kWebFileHint)),
-      );
+      await _downloadInBrowser(entry);
       return;
     }
     if (entry.isDocx) {
@@ -615,10 +615,7 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
 
   Future<void> _download(ResourceEntry entry) async {
     if (kIsWeb) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_kWebFileHint)),
-      );
+      await _downloadInBrowser(entry);
       return;
     }
     // 先看本机有没有：有就别再下一遍（费流量，也费用户等待）。
@@ -641,6 +638,30 @@ class _CourseResourcesPageState extends State<_CourseResourcesPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已保存到：$path')),
     );
+  }
+
+  void _show(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// 网页版下载：换一条 10 分钟有效的签名直链，让浏览器自己把文件取下来。
+  ///
+  /// 为什么不能直接复用 [ControlService.downloadResourceFile]：浏览器做顶层
+  /// 导航时带不了 `Authorization`，而网页版也没有本地文件系统可以落盘。
+  Future<void> _downloadInBrowser(ResourceEntry entry) async {
+    final link =
+        await ControlService.fetchResourceDownloadLink(fileId: entry.fileId);
+    if (!mounted) return;
+    final url = link.url;
+    if (url == null || url.isEmpty) {
+      _show('${link.failure?.message ?? '下载失败，请稍后重试'}');
+      return;
+    }
+    triggerBrowserDownload(url);
+    unawaited(_loadQuota());
+    _show('已开始下载，可在浏览器下载列表查看');
   }
 
   /// 本机是否已有这个文件（按服务端 fileId 认，同名不同课不会串）。

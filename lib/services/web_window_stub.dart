@@ -7,3 +7,7 @@
 
 /// Web 端之外没有「命名窗口」这个概念，返回 false 表示不支持。
 bool openNamedWindow(String url, String name) => false;
+
+/// 安卓 / iOS 上没有「浏览器直接下载」这条路：文件走
+/// [ResourceDownloadService] 落到本机目录，所以这里什么都不做。
+void triggerBrowserDownload(String url) {}

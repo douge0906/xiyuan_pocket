@@ -90,6 +90,14 @@ class ResourceTextPreview {
   final ControlFailure? failure;
 }
 
+/// 网页版下载直链：换到一条带签名的 URL，浏览器直接导航即可取到文件。
+class ResourceDownloadLink {
+  const ResourceDownloadLink({this.url, this.failure});
+
+  final String? url;
+  final ControlFailure? failure;
+}
+
 ControlFailure _failureForStatus(int status, String message) {
   final kind = switch (status) {
     401 => ControlFailureKind.unauthorized,
@@ -422,6 +430,70 @@ class ControlService {
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 网页版下载直链。
+  ///
+  /// 浏览器做顶层导航带不了 `Authorization`，网页版也没有本地文件系统，
+  /// 所以这里只做一件事：拿一次设备令牌，换一条 10 分钟内有效的签名 URL，
+  /// 之后由浏览器自己把文件取下来（配额与计数在真正下载时消费）。
+  static Future<ResourceDownloadLink> fetchResourceDownloadLink(
+      {required int fileId}) async {
+    if (!ControlConfig.enabled) {
+      return const ResourceDownloadLink(
+        failure: ControlFailure(ControlFailureKind.unknown, '资源服务未启用'),
+      );
+    }
+    final token = await ensureDevice();
+    if (token == null || token.isEmpty) {
+      return const ResourceDownloadLink(
+        failure:
+            ControlFailure(ControlFailureKind.unauthorized, '设备身份未就绪，无法下载'),
+      );
+    }
+    final uri = Uri.parse(
+        '${ControlConfig.baseUrl}/api/v1/resources/files/$fileId/link');
+    try {
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Device $token',
+      }).timeout(Duration(seconds: ControlConfig.timeoutSeconds));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        String message = '下载链接获取失败，请稍后重试';
+        try {
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          if (decoded is Map && decoded['error'] is Map) {
+            final m = decoded['error']['message'];
+            if (m != null && m.toString().isNotEmpty) message = m.toString();
+          }
+        } catch (_) {}
+        return ResourceDownloadLink(
+          failure: _failureForStatus(response.statusCode, message),
+        );
+      }
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final path = decoded is Map ? (decoded['path'] ?? '').toString() : '';
+      if (path.isEmpty) {
+        return const ResourceDownloadLink(
+          failure: ControlFailure(ControlFailureKind.unknown, '下载地址无效，请重试'),
+        );
+      }
+      final url =
+          path.startsWith('http') ? path : '${ControlConfig.baseUrl}$path';
+      return ResourceDownloadLink(url: url);
+    } on TimeoutException {
+      return const ResourceDownloadLink(
+        failure: ControlFailure(ControlFailureKind.timeout, '下载链接获取超时，请重试'),
+      );
+    } on SocketException {
+      return const ResourceDownloadLink(
+        failure: ControlFailure(ControlFailureKind.offline, '当前无网络，无法下载'),
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[control] 下载直链失败：$e');
+      return const ResourceDownloadLink(
+        failure: ControlFailure(ControlFailureKind.unknown, '下载失败，请稍后重试'),
+      );
     }
   }
 
