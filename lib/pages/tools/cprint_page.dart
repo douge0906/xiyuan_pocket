@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/campus/cprint_client.dart';
@@ -28,7 +29,7 @@ import 'cprint_upload_tab.dart';
 /// 五个功能共用同一个 OSESSIONID，所以授权统一在这一层做：
 /// 没登录时显示一张登录卡，登录一次五个页签都能用。
 /// 会话过期（`code:4`）时子页签回调 [onNeedAuth]，这里统一退回登录态。
-const String _kWebUnsupported = '网页版暂不支持图书馆云打印，请用安卓 App 打开';
+const String _kWebUnsupported = '网页版暂不支持云打印，请在校园网内打开云打印网页';
 
 class CprintPage extends StatefulWidget {
   const CprintPage({super.key});
@@ -235,12 +236,29 @@ class _CprintPageState extends State<CprintPage>
               ),
               const SizedBox(height: 10),
               Text(
-                '上传文件打印、下载扫描件都需要本机文件权限，网页版拿不到。'
-                '请在手机上用安卓 App 打开「图书馆云打印」。',
+                '上传文件打印、下载扫描件都要读写本机文件，网页版做不到。'
+                '图书馆的云打印网页本身可以正常用，只是必须连校园网。',
                 style: TextStyle(
                   fontSize: AppTheme.fontBody,
                   height: 1.55,
                   color: context.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => _openCprintWeb(context),
+                  child: const Text('打开云打印网页'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '打不开一般是没连校园网；也可以回安卓 App 里直接打印与取件。',
+                style: TextStyle(
+                  fontSize: AppTheme.fontCaption,
+                  height: 1.5,
+                  color: context.textTertiary,
                 ),
               ),
             ],
@@ -248,6 +266,19 @@ class _CprintPageState extends State<CprintPage>
         ),
       ],
     );
+  }
+
+  /// 跳到图书馆自己的云打印网页（`zzwy` 内网站点，必须连校园网）。
+  Future<void> _openCprintWeb(BuildContext context) async {
+    try {
+      await launchUrl(Uri.parse(CprintClient.backUrl),
+          mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('打开失败：$e')));
+    }
   }
 
   Widget _loginView() {

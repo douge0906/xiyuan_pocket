@@ -200,15 +200,10 @@ class _ToolboxPageState extends State<ToolboxPage> {
   }
 
   /// 可见服务（服务清单唯一数据源见 service_catalog.dart）。
-  /// 网页版跑不起来的服务（安卓专有）：在服务页直接不显示，避免点进去撞墙。
-  /// 目前只有「图书馆云打印」——它要选本机文件、要把扫描件写进相册，
-  /// 网页版没有这两样能力；页面里另有兜底说明，防深链直达。
-  static const Set<String> _webHidden = {'cprint_scan'};
-
-  List<ToolModel> get _visibleTools => _sortedTools
-      .where((t) =>
-          !_hidden.contains(t.id) && !(kIsWeb && _webHidden.contains(t.id)))
-      .toList();
+  /// 网页版也保留全部入口：跑不起来的服务（如图书馆云打印）在页面里给
+  /// 明确说明与外部跳转，不让用户点进空白页。
+  List<ToolModel> get _visibleTools =>
+      _sortedTools.where((t) => !_hidden.contains(t.id)).toList();
 
   List<ToolModel> get _visibleFavorites =>
       _visibleTools.where((t) => _favorites.contains(t.id)).toList();
