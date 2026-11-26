@@ -292,10 +292,25 @@ class MessageRepository extends ChangeNotifier {
   /// [silent] = true（默认）不置 loading、不推进 `loadSeq`：
   /// 这一趟不是「用户在等的一次更新」，不该亮更新条、也不该弹提示。
   Future<void> primeArchives({bool silent = true}) async {
+    // ① 先铺联网源的档案。
     for (final s in registeredSources) {
       if (_disposed) return;
+      if (s.isLocalOnly) continue; // 汇总源要读别人，得等别人铺完
       if (!await s.hasArchive()) continue;
       if (_disposed) return;
+      await load(s.channel.id, mode: FetchMode.archive, silent: silent);
+    }
+    // ② 再算汇总源（「每日消息」）。
+    //
+    // 🔴 这一步不能省，也不能用 `hasArchive()` 过滤：汇总源自己**从不写档案**
+    //    （它只是把别人的档案读出来按日期合并），`hasArchive()` 永远是 false。
+    //    以前它只在 `refreshAll` 里排到最后才第一次算，而前面那 10 个源要联网、
+    //    校外 5G 下要等十几秒 —— 用户进消息页看到的就是「暂无每日消息内容 / 下拉
+    //    可刷新」，可本机档案里明明有东西（2026-11-26 实机截图）。
+    //    放这里：纯本地读盘，零网络、零等待。
+    for (final s in registeredSources) {
+      if (_disposed) return;
+      if (!s.isLocalOnly) continue;
       await load(s.channel.id, mode: FetchMode.archive, silent: silent);
     }
   }
