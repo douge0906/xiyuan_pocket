@@ -68,7 +68,7 @@ class ResourceQuota {
   final int limit;
   final int used;
 
-  /// 每日基础额度，默认 5 次。
+  /// 每日基础额度，默认 10 次（服务端 RESOURCE_DAILY_DOWNLOAD_LIMIT）。
   final int baseLimit;
 
   /// 邀请加成；每成功邀请 1 人加 10 次/天。

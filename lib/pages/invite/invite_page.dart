@@ -132,6 +132,8 @@ class _InvitePageState extends ConsumerState<InvitePage>
                         ),
                         const SizedBox(height: 12),
                       ] else ...[
+                        _buildSvipBanner(),
+                        const SizedBox(height: 12),
                         _buildHero(state),
                         const SizedBox(height: 12),
                         _buildStats(state),
@@ -149,6 +151,36 @@ class _InvitePageState extends ConsumerState<InvitePage>
                 ),
               ),
             ),
+    );
+  }
+
+  /// 里程碑激励。只做一行：一句能看完的话 + 一个礼物图标，
+  /// 不占版面，也不做成需要点进去的活动页（奖品是人工发的）。
+  Widget _buildSvipBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+        border: Border.all(
+            color: AppTheme.primaryColor.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.card_giftcard_rounded,
+              size: 16, color: AppTheme.primaryColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '累计邀请 10 位新同学，可获 1 个月 QQ SVIP，联系开发者领取',
+              style: TextStyle(
+                  fontSize: AppTheme.fontSmall,
+                  height: 1.35,
+                  color: context.textPrimary),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -191,13 +223,6 @@ class _InvitePageState extends ConsumerState<InvitePage>
                         style: TextStyle(
                             fontSize: AppTheme.fontSmall,
                             color: AppTheme.primaryColor)),
-                    const SizedBox(height: 2),
-                    // 判据说清楚，省得同学填完码才发现「不算」——
-                    // 圈定规则在服务端（api.invite_bind），这里只是把它讲成人话。
-                    Text('只算注册 3 天内、且不在同一台手机上的新同学',
-                        style: TextStyle(
-                            fontSize: AppTheme.fontSmall,
-                            color: context.textTertiary)),
                   ],
                 ),
               ),
@@ -478,7 +503,7 @@ class _InvitePageState extends ConsumerState<InvitePage>
 
   Widget _buildNotes() {
     return Text(
-      '邀请码填写后立即生效并计入邀请；邀请记录仅以脱敏标签展示。',
+      '邀请码填写后立即生效并计入邀请；只算注册 3 天内、且不在同一台手机上的新同学；邀请记录仅以脱敏标签展示。',
       style: TextStyle(
           fontSize: AppTheme.fontCaption, color: context.textTertiary),
     );
