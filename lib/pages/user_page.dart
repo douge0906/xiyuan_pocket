@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -689,12 +690,15 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   ///
   /// 只给还没登录过的人看：登录成功后这个页面本身就不再出现；
   /// 确实用不上的人点右上角 × 永久关掉。
+  /// 未登录时的引导卡：不放在页面顶上，而是紧贴在那行「新生需要进行统一认证
+  /// 登录账户激活 点击跳转」**上面**，底下带一个小箭头指着它 —— 用户要点的就是
+  /// 下面那一行，卡片得朝着它指，而不是飘在屏幕最上方。
   Widget _loginTipCard(bool isDark) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 18),
+    final tipBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final box = Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: tipBg,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: context.borderColor),
       ),
@@ -736,6 +740,35 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
         ],
       ),
     );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        box,
+        // 指向下面那行可点的统一认证链接：菱形只画上、左两条边，
+        // 贴着卡片底边，看起来就是卡片伸出来的一个尖。
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 34, top: 1),
+            child: Transform.rotate(
+              angle: math.pi / 4,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: tipBg,
+                  border: Border(
+                    top: BorderSide(color: context.borderColor),
+                    left: BorderSide(color: context.borderColor),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ],
+    );
   }
 
   Future<void> _dismissLoginTip() async {
@@ -754,8 +787,6 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 40),
-
-              if (!_loginTipHidden) _loginTipCard(isDark),
 
               // 顶部：名称 + 版本
               Center(
@@ -913,6 +944,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
               ),
 
               const SizedBox(height: 16),
+
+              if (!_loginTipHidden) _loginTipCard(isDark),
 
               // v1.7.2：**替换**掉原来那句合规小字（“登录即表示已阅读并同意相关说明…
               // 密码仅保存在本机，不发送给任何服务器。”）—— 用户当时的原话是

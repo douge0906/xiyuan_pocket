@@ -264,7 +264,9 @@ class StorageService {
     await prefs.setBool('$_kGuidePrefix$key', true);
   }
 
-  static const String _kServiceDecided = 'service_decided_v1';
+  // 2026-11-27 第二轮：key 升到 v2 —— v1 那一版把「老服务」预置成了已处理，
+  // 那批数据留着会让升级上来的人只看到两张卡片，与「全部轮一遍」相悖。
+  static const String _kServiceDecided = 'service_decided_v2';
   static const String _kServiceDecidedSeeded = 'service_decided_seeded_v1';
 
   static Future<Set<String>> loadServiceDecided() async {

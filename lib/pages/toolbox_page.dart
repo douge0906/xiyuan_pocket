@@ -58,20 +58,11 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 卡片被滑掉时的计数：让对应格子亮一下（值是第几次，变化即重放动画）。
   final Map<String, int> _pulse = <String, int>{};
 
-  /// 这一批要介绍的新服务。
-  ///
-  /// 2026-11-27 第 2 条改法：放哪几张不再靠这份清单硬编码 —— 真正的判据是
-  /// `StorageService.loadServiceDecided()`（用户对每条服务做过决定没有）。
-  /// 这份清单只在**第一次初始化**时用来划一条线：「除这几个以外，其他服务
-  /// 都算老服务，直接记成已处理」。
-  ///
-  /// 为什么要这条线：老用户升级上来时，12 个服务在他眼里都「没见过」——
-  /// 真按差集弹就是一口气 12 张，那是打扰不是介绍。划线之后，以后再新增服务，
-  /// 只要不在 decided 集合里就会自己冒出来，不用再改代码。
-  static const List<String> _kIntroIds = [
-    'cprint_scan',
-    'chaoxing_sync',
-  ];
+  // 2026-11-27 第二次改：取消「只介绍新增服务」那条线。
+  // 用户的判断是：第一次就该把每个服务都过一遍，由本人决定要不要留着 ——
+  // 这正是「服务管理」里关掉某个入口的代价最低的时机。
+  // 判据只剩一个：这一条有没有被决定过（`service_decided_v1`）。
+  // 决定过的永远不再出现；没决定过的，不管新旧，一次轮一遍。
 
   @override
   void initState() {
@@ -244,15 +235,6 @@ class _ToolboxPageState extends State<ToolboxPage> {
   Future<void> _maybeShowIntro() async {
     if (!mounted || _introTools.isNotEmpty) return;
     final decided = await StorageService.loadServiceDecided();
-    final seeded = await StorageService.loadServiceDecidedSeeded();
-    if (!seeded) {
-      decided.addAll(<String>[
-        for (final t in mainServices)
-          if (!_kIntroIds.contains(t.id)) t.id,
-      ]);
-      await StorageService.saveServiceDecided(decided);
-      await StorageService.saveServiceDecidedSeeded();
-    }
     if (!mounted) return;
     final tools = <ToolModel>[
       for (final t in mainServices)

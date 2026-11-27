@@ -165,7 +165,8 @@ class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
       children: [
         SizedBox(
           width: 300,
-          height: 330,
+          // 3 张牌，最下面那张往上错开 40px，还要留旋转的余量。
+          height: 372,
           child: Stack(
             alignment: Alignment.center,
             children: [
@@ -208,11 +209,14 @@ class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
   /// 一张牌的位置。`i == 0` 是最上面那张（可拖动）。
   Widget _slot(int i, bool isDark) {
     final top = i == 0;
-    final scale = 1 - i * 0.055;
-    final offsetY = i * 13.0;
-    final dx = top ? _drag.dx : 0.0;
+    final scale = 1 - i * 0.05;
+    // 🔴 2026-11-27：offsetY 原来是正的（往下），而 scale < 1 又把牌缩到中间，
+    //    两个效果叠起来正好让后面的牌被最上面那张整块盖住 —— 看起来只有一张。
+    //    改成往上错开，边缘才会露出来；再各转一点点，牌堆的层次一眼可见。
+    final offsetY = -i * 20.0;
+    final dx = top ? _drag.dx : i * 5.0;
     final dy = top ? _drag.dy : 0.0;
-    var rotate = top ? (_drag.dx / 1400).clamp(-0.12, 0.12) : 0.0;
+    var rotate = top ? (_drag.dx / 1400).clamp(-0.12, 0.12) : i * 0.03;
 
     // 抖动：左右各摆三次，幅度随进度衰减。
     var shakeX = 0.0;
