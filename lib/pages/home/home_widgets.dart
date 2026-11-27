@@ -256,8 +256,11 @@ class TodoTimelineItem extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 2026-11-27 用户第 8 条：卡片往左拉伸、时间轴的点也往左移。
+          // 原来是 40 宽 + 12 间隔（卡片起点 52），点画在正中（x≈20）；
+          // 收到 22 + 10 后卡片起点 32、点中心 x≈11 —— 左边那截空白还给内容。
           SizedBox(
-            width: 40,
+            width: 22,
             child: Column(
               children: [
                 if (!isFirst)
@@ -284,7 +287,7 @@ class TodoTimelineItem extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(child: card),
         ],
       ),

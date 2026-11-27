@@ -42,7 +42,7 @@ void main() {
         await repo.registerSources(subscribedIds: {'jwc', 'news', 'tw'});
 
     final daily = sources.firstWhere((s) => s.channel.id == kDailyChannelId);
-    expect(daily.channel.desc, contains('近 3 天'));
+    expect(daily.channel.desc, contains('近 2 天'));
   });
 
   test('订阅面板列出的是「可订阅」栏目，不含每日消息', () {

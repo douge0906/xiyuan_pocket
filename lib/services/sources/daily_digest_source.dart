@@ -7,7 +7,7 @@ import 'cached_source.dart';
 
 /// 「每日消息」—— **不是抓取源，是汇总视图**。
 ///
-/// 用户口径（2026-11-23）：*「新增一个每日消息栏目，自动加载订阅栏目中近 3 天的
+/// 用户口径（2026-11-23 定为近 3 天，2026-11-27 改为近 2 天）：*「新增一个每日消息栏目，自动加载订阅栏目中近 2 天的
 /// 消息，并且加一个来源小标识。」*
 ///
 /// ## 它和别的源有什么不同
@@ -36,8 +36,8 @@ class DailyDigestSource extends CachedMessageSource {
   /// 用户当前订阅的栏目集合 —— 没订阅的栏目不该出现在汇总里。
   final Set<String> subscribedIds;
 
-  /// 汇总最近几天。用户要求「近 3 天」= 今天 + 昨天 + 前天。
-  static const int days = 3;
+  /// 汇总最近两天（2026-11-27 用户改为「近两天」）= 今天 + 昨天。
+  static const int days = 2;
 
   @override
   MessageChannel get channel => kDailyChannel;
@@ -81,7 +81,7 @@ class DailyDigestSource extends CachedMessageSource {
   @override
   Future<MessageDetail?> fetchDetail(Message message) async => null;
 
-  /// 读各栏目档案 → 过滤近 3 天 → 打来源标识 → 按日期倒序。
+  /// 读各栏目档案 → 过滤近 2 天 → 打来源标识 → 按日期倒序。
   Future<List<Message>> _collect() async {
     final cutoff = _cutoffKey();
     final out = <Message>[];

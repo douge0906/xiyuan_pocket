@@ -133,7 +133,7 @@ const String kDailyChannelId = 'daily';
 const MessageChannel kDailyChannel = MessageChannel(
   id: kDailyChannelId,
   name: '每日消息',
-  desc: '近 3 天各栏目的新消息汇总',
+  desc: '近 2 天各栏目的新消息汇总',
   badge: '每日消息',
 );
 

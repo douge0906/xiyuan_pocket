@@ -7,7 +7,7 @@ import 'package:xiyuan_pocket/services/message_source.dart';
 import 'package:xiyuan_pocket/services/sources/daily_digest_source.dart';
 
 /// 「每日消息」是**汇总视图**，不是抓取源。这里锁住它四条不变量：
-/// ① 只看近 3 天 ② 给每条打上原栏目名当来源标识 ③ 保持原 sourceId（已读状态
+/// ① 只看今天和昨天 ② 给每条打上原栏目名当来源标识 ③ 保持原 sourceId（已读状态
 /// 与详情路由都靠它）④ 一个请求都不发。
 String _d(DateTime d) =>
     '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
@@ -26,7 +26,7 @@ void main() {
   final threeDaysAgo = today.subtract(const Duration(days: 3));
   final longAgo = today.subtract(const Duration(days: 30));
 
-  group('每日消息（近 3 天汇总）', () {
+  group('每日消息（近 2 天汇总）', () {
     test('汇总源自己从不写档案 → hasArchive() 恒为 false（铺档案时不能按它过滤）', () async {
       // 🔴 2026-11-26 实机：「每日消息」进页面永远是「暂无内容 / 下拉可刷新」，
       //    因为 primeArchives 用 hasArchive() 过滤，把汇总源整趟跳过了，它只能
@@ -38,7 +38,7 @@ void main() {
       expect(await src.hasArchive(), isFalse);
     });
 
-    test('近 3 天保留，第 4 天起丢掉', () async {
+    test('今天和昨天保留，前天起丢掉', () async {
       await MessageArchive.save('jwc', [
         _m('a', 'jwc', _d(today)),
         _m('b', 'jwc', _d(yesterday)),
@@ -50,8 +50,8 @@ void main() {
       final page = await DailyDigestSource(subscribedIds: {'jwc'})
           .fetch(mode: FetchMode.cached);
 
-      expect(page.items.map((m) => m.id), ['a', 'b', 'c']);
-      expect(page.total, 3);
+      expect(page.items.map((m) => m.id), ['a', 'b']);
+      expect(page.total, 2);
       expect(page.fromCache, isTrue);
     });
 
@@ -88,16 +88,17 @@ void main() {
     test('跨栏目按日期倒序合并', () async {
       await MessageArchive.save('jwc', [
         _m('old', 'jwc', _d(yesterday)),
-        _m('new', 'jwc', _d(today)),
       ]);
       await MessageArchive.save('xgc', [
-        _m('mid', 'xgc', _d(twoDaysAgo)),
+        _m('new', 'xgc', _d(today)),
       ]);
 
       final page = await DailyDigestSource(subscribedIds: {'jwc', 'xgc'})
           .fetch(mode: FetchMode.cached);
 
-      expect(page.items.map((m) => m.id), ['new', 'old', 'mid']);
+      // 跨栏目也要按日期倒序：今天那条排在昨天那条前面，
+      // 不管它来自哪个栏目、也不管哪个栏目先被读。
+      expect(page.items.map((m) => m.id), ['new', 'old']);
     });
 
     test('空档案 → 空列表且没有 error（「没有新消息」不是「加载失败」）', () async {

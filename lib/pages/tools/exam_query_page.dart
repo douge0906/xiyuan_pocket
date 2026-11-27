@@ -34,6 +34,20 @@ class ExamQueryPage extends ConsumerStatefulWidget {
 }
 
 class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
+  /// 还没考的考试门数。
+  ///
+  /// 2026-11-27 第 5 条顺带修的：原来直接用 `_exams.length`，考完的也
+  /// 算在「还剩 N 门」里 —— 卡片上都画了斜线还说要考，自相矛盾。
+  /// 日期解析不出来的（手动加的空日期）算待考，宁可多提醒一次。
+  int get _upcomingExamCount {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return _exams.where((e) {
+      final d = DateTime.tryParse((e['date'] ?? '').toString().trim());
+      if (d == null) return true;
+      return !DateTime(d.year, d.month, d.day).isBefore(today);
+    }).length;
+  }
   bool _checking = true;
   bool _credentialBound = false;
 
@@ -622,7 +636,7 @@ class _ExamQueryPageState extends ConsumerState<ExamQueryPage> {
         child: SizedBox(
           width: double.infinity,
           child: Text(
-            '还剩 ${_exams.length} 门考试',
+            '还剩 $_upcomingExamCount 门考试',
             textAlign: TextAlign.center,
             style: TextStyle(
                 fontSize: AppTheme.fontSmall,
@@ -724,8 +738,11 @@ class _ExamTile extends StatelessWidget {
     final isResit = name.contains('补考');
     final isManual = exam['source'] == ExamStorage.sourceManual;
     final days = _daysUntil(exam);
+    // 2026-11-27 第 5 条：考完的（日期已过）画一道斜线并标「已完成」。
+    // 只认日期，不认教务状态 —— 教务的状态列经常是空的，日期才是硬事实。
+    final done = days != null && days < 0;
 
-    return AppCard(
+    final card = AppCard(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       radius: AppTheme.radiusMd,
@@ -767,6 +784,22 @@ class _ExamTile extends StatelessWidget {
                           fontSize: AppTheme.fontSmall,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFFEF4444))),
+                ),
+              ],
+              if (done) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                  ),
+                  child: const Text('已完成',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF059669))),
                 ),
               ],
               if (isManual) ...[
@@ -829,6 +862,26 @@ class _ExamTile extends StatelessWidget {
         ],
       ),
     );
+    if (!done) return card;
+    // 斜线单独盖在卡片上（`AppCard` 自带外边距，所以不套 Positioned.fill
+    // 到外层，而是按卡片自身尺寸画，线不会跑到两张卡之间）。
+    return Stack(
+      children: [
+        Opacity(opacity: 0.66, child: card),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _DoneStrikePainter(
+                bottomGap: 12,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.white.withValues(alpha: 0.30)
+                    : const Color(0xFF9CA3AF).withValues(alpha: 0.70),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   /// 距考试还有几天（`date` 形如 `2026-07-08`）。
@@ -840,4 +893,32 @@ class _ExamTile extends StatelessWidget {
         .difference(DateTime(today.year, today.month, today.day))
         .inDays;
   }
+}
+
+/// 已完成考试的斜线：左上角划到右下角，两端各留 6px 不压边框。
+class _DoneStrikePainter extends CustomPainter {
+  _DoneStrikePainter({required this.color, this.bottomGap = 0});
+
+  final Color color;
+
+  /// 卡片自带的底部外边距：斜线不能画进这个缝里，否则会看到一条
+  /// 悬在两张卡之间的灰线，像穿帮。
+  final double bottomGap;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      const Offset(6, 6),
+      Offset(size.width - 6, size.height - bottomGap - 6),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DoneStrikePainter old) =>
+      old.color != color || old.bottomGap != bottomGap;
 }

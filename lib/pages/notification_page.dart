@@ -16,6 +16,7 @@ import 'message/message_cards.dart';
 import 'message/message_detail.dart';
 import 'message/msg_style.dart';
 import 'message_settings_page.dart';
+import '../widgets/coach_tip.dart';
 
 /// 消息页 —— **一个页签 = 一个消息源**，所有源的渲染完全同一套代码。
 ///
@@ -84,6 +85,9 @@ class _NotificationPageState extends State<NotificationPage>
   /// （下拉刷新）才弹，自动更新静默完成。
   bool _noticeWanted = false;
 
+  /// 第 9 条 C：首次进消息页，指一下「＋」（订阅更多栏目）。
+  bool _showAddTip = false;
+
   // ---------------- 教程锚点（v2.0.0）----------------
   final GlobalKey _kTabsRow = GlobalKey();
   final GlobalKey _kAddChannelBtn = GlobalKey();
@@ -107,6 +111,11 @@ class _NotificationPageState extends State<NotificationPage>
   @override
   void initState() {
     super.initState();
+    // 第 9 条 C：只在真正进到消息页且没看过时弹。
+    unawaited(StorageService.loadGuideSeen('message_add').then((seen) {
+      if (!mounted || seen) return;
+      setState(() => _showAddTip = true);
+    }));
     _loadMessageStyle();
     // 发布-订阅是**两端**契约：只写 notifyListeners() 而没人订阅，
     // 等于没接线（历史上「搜索完全失效」就是这么来的）。
@@ -297,6 +306,12 @@ class _NotificationPageState extends State<NotificationPage>
     // 静默会让新页签先冒出一句「还没有消息」。取消订阅不会走到这里造成
     // 多余请求：注册表里已经没有那个源了。
     unawaited(_refreshFromEntry(silent: false));
+  }
+
+  Future<void> _dismissAddTip() async {
+    await StorageService.saveGuideSeen('message_add');
+    if (!mounted) return;
+    setState(() => _showAddTip = false);
   }
 
   /// 让「当前页签」始终有效：被取消订阅后落到第一个栏目。
@@ -923,6 +938,15 @@ class _NotificationPageState extends State<NotificationPage>
               bottom: 20,
               child: IgnorePointer(child: _buildStatusBar()),
             ),
+            if (_showAddTip)
+              CoachTipOverlay(
+                top: MediaQuery.of(context).padding.top + 138,
+                arrowRightInset: 22,
+                title: '栏目可以自己加',
+                message: '点这个 ＋ 能订阅更多栏目：教务处、校园要闻、图书馆、'
+                    '讲座与资助……已订阅的也能在这里取消。',
+                onDismissed: _dismissAddTip,
+              ),
           ],
         ),
       ),

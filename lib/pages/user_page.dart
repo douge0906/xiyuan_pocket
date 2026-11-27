@@ -59,6 +59,9 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   String? _loginError;
   bool _obscurePassword = true;
 
+  /// 登录页顶部那张「友情提醒」是否已关掉。
+  bool _loginTipHidden = false;
+
   /// 学生姓名（来自教务成绩查询的学生信息；拿不到时为空）
   String _studentName = '';
 
@@ -142,6 +145,10 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 第 3 条：给第一次登录的人看一次；关过就不再显示。
+    unawaited(StorageService.loadGuideSeen('login_tip').then((seen) {
+      if (mounted && seen) setState(() => _loginTipHidden = true);
+    }));
     // 设置页改了导航（隐藏/排序）→ 本页开关状态跟着变
     NavPrefs.notifier.addListener(_onNavPrefsChanged);
     // 首页齿轮请求「打开设置」时，由本页接收并打开（2026-11-03）。
@@ -678,6 +685,65 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
 
   // ------------------------------------------------------------ 登录页
 
+  /// 登录页顶部的一次性「友情提醒」。
+  ///
+  /// 只给还没登录过的人看：登录成功后这个页面本身就不再出现；
+  /// 确实用不上的人点右上角 × 永久关掉。
+  Widget _loginTipCard(bool isDark) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 18),
+      padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded,
+              size: 16, color: AppTheme.primaryColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('友情提醒',
+                    style: TextStyle(
+                        fontSize: AppTheme.fontSmall,
+                        fontWeight: FontWeight.w600,
+                        color: context.textPrimary)),
+                const SizedBox(height: 4),
+                Text(
+                  '系统使用学校统一认证登录。忘记密码或账号还没激活，'
+                  '点登录按钮下方那行「新生需要进行统一认证登录账户激活」，'
+                  '去统一认证页面处理完再回来登录。',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontSmall,
+                      height: 1.55,
+                      color: context.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '不再提示',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close_rounded,
+                size: 18, color: context.textTertiary),
+            onPressed: _dismissLoginTip,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _dismissLoginTip() async {
+    await StorageService.saveGuideSeen('login_tip');
+    if (!mounted) return;
+    setState(() => _loginTipHidden = true);
+  }
+
   Widget _buildLoginPage(bool isDark) {
     return Scaffold(
       backgroundColor: context.scaffoldColor,
@@ -688,6 +754,8 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 40),
+
+              if (!_loginTipHidden) _loginTipCard(isDark),
 
               // 顶部：名称 + 版本
               Center(

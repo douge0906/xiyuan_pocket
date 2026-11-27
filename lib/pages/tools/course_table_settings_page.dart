@@ -9,6 +9,9 @@ import '../../models/course_model.dart';
 import '../../services/course_storage.dart';
 import '../../services/course_transfer_service.dart';
 import '../../services/storage_service.dart';
+import '../../services/timetable/timetable_models.dart';
+import '../../widgets/coach_tip.dart';
+import 'timetable_upload_page.dart';
 import '../../services/widget_sync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/course_bg_color_picker.dart';
@@ -148,11 +151,18 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
   double _asDouble(String k, double fallback) =>
       double.tryParse('${_display[k] ?? fallback}') ?? fallback;
 
+  /// 第 9 条 B：首次进设置页，指一下右上角的导出/上传。
+  bool _showExportTip = false;
+
   @override
   void initState() {
     super.initState();
     _future = CourseStorage.loadDisplaySettings();
     _loadPreviewData();
+    unawaited(StorageService.loadGuideSeen('course_export').then((seen) {
+      if (!mounted || seen) return;
+      setState(() => _showExportTip = true);
+    }));
     CourseStorage.loadAppearancePresets().then((v) {
       if (mounted) setState(() => _presets = v);
     });
@@ -475,7 +485,9 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       backgroundColor: context.scaffoldColor,
       appBar: AppBar(
         title: const Text('课表设置',
@@ -483,6 +495,11 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
         // 用户 m06905 第 2 条：右上角导出按钮，向左下方弹三种导出方式。
         // 页内「完整方案」板块原样保留，两处入口等价（用户要求「做好适配」）。
         actions: [
+          IconButton(
+            tooltip: '上传至班级课表',
+            icon: const Icon(Icons.cloud_upload_outlined),
+            onPressed: _openUploadToClass,
+          ),
           PopupMenuButton<_ExportKind>(
             tooltip: '导出方案',
             icon: const Icon(Icons.ios_share_rounded),
@@ -945,6 +962,17 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
           );
         },
       ),
+    ),
+        if (_showExportTip)
+          CoachTipOverlay(
+            top: MediaQuery.of(context).padding.top + kToolbarHeight + 6,
+            arrowRightInset: 26,
+            title: '这里能把课表分享出去',
+            message: '导出成方案发给同学，对方在「导入课表 → 掌上锡院专属方案」里'
+                '选一下就能用；上传到班级课表还能让同班同学搜到。',
+            onDismissed: _dismissExportTip,
+          ),
+      ],
     );
   }
 
@@ -990,6 +1018,28 @@ class _CourseTableSettingsPageState extends State<CourseTableSettingsPage> {
       (v - v.roundToDouble()).abs() < 0.001
           ? v.round().toString()
           : v.toStringAsFixed(1);
+
+  /// 第 4 条：把当前学期的课表传成「班级课表」，别人就能搜到。
+  ///
+  /// 学期用当前时间推（与在线课表页同一个函数），不看用户正在翻第几周 ——
+  /// 上传是「我这学期上什么」，不是「我正在看哪一周」。
+  Future<void> _openUploadToClass() async {
+    final (xnm, xqm) = CourseStorage.semesterArgsFor(DateTime.now());
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => TimetableUploadPage(term: TimetableTerm(xnm, xqm)),
+      ),
+    );
+    if (created == true && mounted) {
+      _toast('已提交，审核通过后其他同学就能搜到');
+    }
+  }
+
+  Future<void> _dismissExportTip() async {
+    await StorageService.saveGuideSeen('course_export');
+    if (!mounted) return;
+    setState(() => _showExportTip = false);
+  }
 
   /// 可折叠板块（2026-10-13）：标题行点一下展开/收起，收起时只占一行。
   Widget _buildPreviewCollapse() {

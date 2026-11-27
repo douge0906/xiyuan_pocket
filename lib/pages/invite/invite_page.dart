@@ -172,7 +172,7 @@ class _InvitePageState extends ConsumerState<InvitePage>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '累计邀请 10 位新同学，可获 1 个月 QQ SVIP，联系开发者领取',
+              '累计邀请 10 位新同学，可获 1 个月 QQ SVIP，先到先得，联系开发者领取',
               style: TextStyle(
                   fontSize: AppTheme.fontSmall,
                   height: 1.35,

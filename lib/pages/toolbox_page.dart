@@ -58,13 +58,16 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 卡片被滑掉时的计数：让对应格子亮一下（值是第几次，变化即重放动画）。
   final Map<String, int> _pulse = <String, int>{};
 
-  /// 本批新功能的展示标记。以后再加服务时换成新日期即可再展示一次。
+  /// 这一批要介绍的新服务。
   ///
-  /// 为什么要一个手写标记而不是「跟上次见过的服务集合做差」：差集算法在老用户
-  /// 第一次升级时会把 12 个服务全当成「新的」，一口气弹 3 张卡讲云打印，
-  /// 而用户可能压根不用云打印 —— 那是打扰，不是介绍。宁可人工指定这一批讲什么。
-  static const String _kIntroTag = 'showcase_2026-11-26';
-
+  /// 2026-11-27 第 2 条改法：放哪几张不再靠这份清单硬编码 —— 真正的判据是
+  /// `StorageService.loadServiceDecided()`（用户对每条服务做过决定没有）。
+  /// 这份清单只在**第一次初始化**时用来划一条线：「除这几个以外，其他服务
+  /// 都算老服务，直接记成已处理」。
+  ///
+  /// 为什么要这条线：老用户升级上来时，12 个服务在他眼里都「没见过」——
+  /// 真按差集弹就是一口气 12 张，那是打扰不是介绍。划线之后，以后再新增服务，
+  /// 只要不在 decided 集合里就会自己冒出来，不用再改代码。
   static const List<String> _kIntroIds = [
     'cprint_scan',
     'chaoxing_sync',
@@ -240,31 +243,54 @@ class _ToolboxPageState extends State<ToolboxPage> {
   /// 因为 App 启动会把五个 Tab 全建出来，预热阶段弹就是弹给空气看。
   Future<void> _maybeShowIntro() async {
     if (!mounted || _introTools.isNotEmpty) return;
-    final seen = await StorageService.loadServiceIntroSeen();
-    if (!mounted || seen.contains(_kIntroTag)) return;
+    final decided = await StorageService.loadServiceDecided();
+    final seeded = await StorageService.loadServiceDecidedSeeded();
+    if (!seeded) {
+      decided.addAll(<String>[
+        for (final t in mainServices)
+          if (!_kIntroIds.contains(t.id)) t.id,
+      ]);
+      await StorageService.saveServiceDecided(decided);
+      await StorageService.saveServiceDecidedSeeded();
+    }
+    if (!mounted) return;
     final tools = <ToolModel>[
-      for (final id in _kIntroIds)
-        if (!_hidden.contains(id))
-          for (final t in mainServices)
-            if (t.id == id) t,
+      for (final t in mainServices)
+        if (!decided.contains(t.id)) t,
     ];
     if (tools.isEmpty) return;
     setState(() => _introTools = tools);
   }
 
-  Future<void> _finishIntro() async {
-    final seen = await StorageService.loadServiceIntroSeen();
-    seen
-      ..add(_kIntroTag)
-      ..addAll(_kIntroIds);
-    await StorageService.saveServiceIntroSeen(seen);
+  /// 用户在叠层卡片上做了决定：左滑/「启用」= 保留，右滑/「不启用」= 隐藏。
+  ///
+  /// 这里直接改 `_hidden` —— 它和服务设置页的开关是同一份数据，
+  /// 所以「服务页滑一下」和「去设置里关掉」是等价操作，不会互相打架。
+  Future<void> _onIntroDecided(ToolModel tool, bool enabled) async {
+    final decided = await StorageService.loadServiceDecided();
+    decided.add(tool.id);
+    await StorageService.saveServiceDecided(decided);
+
+    final hidden = List<String>.of(_hidden);
+    if (enabled) {
+      hidden.remove(tool.id);
+    } else if (!hidden.contains(tool.id)) {
+      hidden.add(tool.id);
+    }
+    await StorageService.saveHiddenServices(hidden);
+
     if (!mounted) return;
-    setState(() => _introTools = const []);
+    setState(() {
+      _hidden = hidden;
+      _introTools = _introTools.where((t) => t.id != tool.id).toList();
+      if (enabled) _pulse[tool.id] = (_pulse[tool.id] ?? 0) + 1;
+    });
   }
 
-  void _pulseTool(ToolModel tool) {
+  Future<void> _finishIntro() async {
+    // 兼容上一版留下的键：写一次就不再写，读的地方已经删了。
     if (!mounted) return;
-    setState(() => _pulse[tool.id] = (_pulse[tool.id] ?? 0) + 1);
+    setState(() => _introTools = const []);
   }
 
   @override
@@ -328,7 +354,7 @@ class _ToolboxPageState extends State<ToolboxPage> {
             Positioned.fill(
               child: ServiceIntroOverlay(
                 tools: _introTools,
-                onCardDismissed: _pulseTool,
+                onDecided: _onIntroDecided,
                 onFinished: _finishIntro,
               ),
             ),

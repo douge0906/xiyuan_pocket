@@ -61,6 +61,7 @@ class StorageService {
   static const String _kCourseRatingEntryCount = 'course_rating_entry_count';
   static const String _kCourseRatingShown = 'course_rating_shown';
   static const String _kCourseRatingSnoozeUntil = 'course_rating_snooze_until';
+  static const String _kCourseRatingStage = 'course_rating_stage';
   static const String _kAppRatingScore = 'app_rating_score';
   static const String _kAppRatingAt = 'app_rating_at';
 
@@ -241,6 +242,51 @@ class StorageService {
   /// 已经用叠层卡片介绍过的服务 id（含一个 `showcase_yyyy-mm-dd` 标记位）。
   /// 用集合而不是布尔：以后再加新服务时，只介绍「没见过的那些」。
   static const String _kServiceIntroSeen = 'service_intro_seen_v1';
+
+  // ---- 服务「用户是否处理过」（2026-11-27）----
+  //
+  // 和上面的 `service_intro_seen_v1` 不是一件事：那个记「这批展示看过没有」，
+  // 这个记「**这一条服务**用户做过决定了没有」。按条记，才能做到
+  // 「以后加新服务只弹没处理过的那几个」，而不是每发一版把老服务重弹一遍。
+  // ---- 一次性引导气泡（2026-11-27 第 9 条）----
+  //
+  // 三处引导各用一个 key（`course_import` / `course_export` / `message_add`），
+  // 登录页那张友情提醒也用这套（`login_tip`）。
+  static const String _kGuidePrefix = 'guide_seen_';
+
+  static Future<bool> loadGuideSeen(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('$_kGuidePrefix$key') ?? false;
+  }
+
+  static Future<void> saveGuideSeen(String key) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_kGuidePrefix$key', true);
+  }
+
+  static const String _kServiceDecided = 'service_decided_v1';
+  static const String _kServiceDecidedSeeded = 'service_decided_seeded_v1';
+
+  static Future<Set<String>> loadServiceDecided() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_kServiceDecided) ?? const <String>[]).toSet();
+  }
+
+  static Future<void> saveServiceDecided(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_kServiceDecided, ids.toList());
+  }
+
+  /// 是否已经做过一次「老服务全部记为已处理」的初始化。
+  static Future<bool> loadServiceDecidedSeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kServiceDecidedSeeded) ?? false;
+  }
+
+  static Future<void> saveServiceDecidedSeeded() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kServiceDecidedSeeded, true);
+  }
 
   static Future<Set<String>> loadServiceIntroSeen() async {
     final prefs = await SharedPreferences.getInstance();
@@ -661,6 +707,18 @@ class StorageService {
   static Future<void> saveCourseRatingEntryCount(int count) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kCourseRatingEntryCount, count);
+  }
+
+  /// 评价已经问到第几档（0 = 10 次，1 = 50，2 = 100，3 = 200）。
+  /// 点「以后再说」就升一档；四档用完不再打扰。
+  static Future<int> loadCourseRatingStage() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_kCourseRatingStage) ?? 0;
+  }
+
+  static Future<void> saveCourseRatingStage(int stage) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kCourseRatingStage, stage);
   }
 
   static Future<bool> loadCourseRatingShown() async {

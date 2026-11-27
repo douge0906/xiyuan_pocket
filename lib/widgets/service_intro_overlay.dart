@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/service_group.dart';
 import '../models/tool_model.dart';
@@ -8,33 +9,32 @@ import '../theme/app_theme.dart';
 
 /// 服务页的「新功能」叠层卡片。
 ///
-/// 交互（用户 2026-11-26 提的形态）：
-///   1. 首次进入服务页 → 背景压一层灰，屏幕中间浮起一叠卡片；
-///   2. 卡片上写着这次新增的服务，往左一滑 → 卡片飞走，它对应的格子亮一下；
-///   3. 全部滑完 → 灰层淡出，服务页恢复原样。
+/// 2026-11-27 用户第 2 条要求重做，相比 11-26 的第一版：
+/// 1. 卡片变小、几张牌有明显折叠层次，底下有小圆点表示还剩几张；
+/// 2. **向左滑 = 启用，向右滑 = 不启用（丢弃）**，另外给两个淡按钮兜底；
+/// 3. 处理结果直接落到「服务设置页」的启用/隐藏状态上 —— 这里滑一下，
+///    设置页里那个开关就跟着变，不再是一个只看不动的介绍页；
+/// 4. 弹哪几张由「这条服务有没有被处理过」决定（见 toolbox_page 的
+///    `_maybeShowIntro`），以后加新服务不用再手改展示清单。
 ///
-/// 刻意做成**叠层**而不是弹窗列表：卡片一张张减少的过程本身就是「还剩几个新东西」
-/// 的进度感；滑动的动作比点「下一步」更像在翻东西，而不是在读完一份说明书。
-///
-/// 不用 `showDialog`：这里需要背景、卡片、下面格子的高亮同时动，放进 Navigator
-/// 反而拿不到页面坐标系（高亮要落在真实格子上）。所以它是一个盖在页面上的
-/// `Positioned.fill`，由页面自己插进 Stack。
+/// 为什么不用 showDialog：灰层、牌堆、格子高亮要同时动，放进 Navigator
+/// 就拿不到页面坐标，也压不住底下的 TabBar 动画。
 class ServiceIntroOverlay extends StatefulWidget {
   const ServiceIntroOverlay({
     super.key,
     required this.tools,
+    required this.onDecided,
     required this.onFinished,
-    this.onCardDismissed,
   });
 
-  /// 要介绍的「新」服务，顺序就是卡片从上到下的顺序（最多展示 3 张）。
+  /// 还没被处理过的服务，第一张在最上面。
   final List<ToolModel> tools;
 
-  /// 全部滑完（或用户点了「知道了」）之后调用。
-  final VoidCallback onFinished;
+  /// 用户对某一条做了决定：`enabled` 为 true 表示启用（保留），false 表示不启用。
+  final void Function(ToolModel tool, bool enabled) onDecided;
 
-  /// 每滑掉一张回调一次 —— 页面用它让对应格子闪一下，做成「变成一条服务」的落点。
-  final ValueChanged<ToolModel>? onCardDismissed;
+  /// 全部处理完（或被划完）。
+  final VoidCallback onFinished;
 
   @override
   State<ServiceIntroOverlay> createState() => _ServiceIntroOverlayState();
@@ -42,268 +42,399 @@ class ServiceIntroOverlay extends StatefulWidget {
 
 class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
     with TickerProviderStateMixin {
-  /// 入场：0 → 1（灰层 + 卡片一起用这条曲线）。
-  late final AnimationController _enter = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 320),
-  );
+  // 三套动画各自独立：进场、飞出、点击别处抖动。
+  // ⚠️ 必须是 TickerProviderStateMixin（多 ticker），Single 那个会直接抛。
+  late final AnimationController _enter;
+  late final AnimationController _fly;
+  late final AnimationController _shake;
 
-  /// 滑出：当前卡片飞走的那 200ms。
-  late final AnimationController _fly = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 220),
-  );
-
-  int _index = 0;
   Offset _drag = Offset.zero;
-  bool _closing = false;
-
-  bool get _flying => _fly.isAnimating;
+  ToolModel? _flying;
+  int _flyDir = -1; // -1 向左（启用） / 1 向右（不启用）
 
   @override
   void initState() {
     super.initState();
-    _enter.forward();
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 340),
+    )..forward();
+    _fly = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _shake = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
     _fly.addStatusListener((s) {
-      if (s != AnimationStatus.completed || !mounted) return;
-      _fly.value = 0;
-      setState(() {
-        _index++;
-        _drag = Offset.zero;
-      });
-      if (_index >= _shown.length) _close();
+      if (s != AnimationStatus.completed) return;
+      final tool = _flying;
+      _flying = null;
+      _drag = Offset.zero;
+      _fly.reset();
+      if (tool == null) return;
+      widget.onDecided(tool, _flyDir < 0);
+      if (!mounted) return;
+      _enter.forward(from: 0);
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant ServiceIntroOverlay old) {
+    super.didUpdateWidget(old);
+    // 父级把某张牌去掉之后，牌堆要重新弹一下，否则看起来像卡住了。
+    if (widget.tools.length != old.tools.length && widget.tools.isNotEmpty) {
+      _enter.forward(from: 0);
+    }
   }
 
   @override
   void dispose() {
     _enter.dispose();
     _fly.dispose();
+    _shake.dispose();
     super.dispose();
   }
 
-  /// 最多 3 张 —— 再多就不是「眼前一亮」，是又一份要读的清单。
-  List<ToolModel> get _shown =>
-      widget.tools.length > 3 ? widget.tools.sublist(0, 3) : widget.tools;
-
-  void _close() {
-    if (_closing) return;
-    _closing = true;
-    _enter.reverse().whenComplete(() {
-      if (mounted) widget.onFinished();
+  void _decide(bool enabled) {
+    if (_flying != null || widget.tools.isEmpty) return;
+    setState(() {
+      _flying = widget.tools.first;
+      _flyDir = enabled ? -1 : 1;
     });
+    _fly.forward(from: 0);
   }
 
-  void _dismissCurrent({required bool bySwipe}) {
-    if (_flying || _index >= _shown.length) return;
-    final tool = _shown[_index];
-    widget.onCardDismissed?.call(tool);
-    if (bySwipe) {
-      _fly.forward();
-    } else {
-      // 「知道了」直接收：跳过飞行，整体淡出。
-      _close();
-    }
+  void _shakeIt() {
+    if (_flying != null) return;
+    HapticFeedback.mediumImpact();
+    _shake.forward(from: 0);
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final shown = _shown;
-    if (shown.isEmpty) return const SizedBox.shrink();
+    if (widget.tools.isEmpty) {
+      // 全部处理完，交给父级收尾（下一帧再动 setState，避免 build 期间改状态）。
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onFinished();
+      });
+      return const SizedBox.shrink();
+    }
 
-    return AnimatedBuilder(
-      animation: Listenable.merge([_enter, _fly]),
-      builder: (context, _) {
-        final t = Curves.easeOutCubic.transform(_enter.value.clamp(0.0, 1.0));
-        final flyT = Curves.easeInCubic.transform(_fly.value);
-        return Stack(
-          children: [
-            // 灰层：不是纯黑遮罩，带一点点模糊感的深灰，压住但不闷。
-            Positioned.fill(
-              child: IgnorePointer(
-                child: ColoredBox(
-                  color: Colors.black.withValues(alpha: 0.42 * t),
-                ),
-              ),
-            ),
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _close,
-                child: Center(
-                  child: _cards(context, shown, t, flyT, isDark),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
+    final total = widget.tools.length;
+    final shown = math.min(total, 3);
 
-  Widget _cards(
-    BuildContext context,
-    List<ToolModel> shown,
-    double t,
-    double flyT,
-    bool isDark,
-  ) {
-    final remaining = shown.length - _index;
-    if (remaining <= 0) return const SizedBox.shrink();
-
-    return SizedBox(
-      width: 320,
-      height: 400,
+    return Positioned.fill(
       child: Stack(
-        alignment: Alignment.center,
         children: [
-          // 后面的两张：只露出一条边，越靠后越小越淡。
-          for (int i = math.min(remaining, 3); i >= 1; i--)
-            _slot(i - 1, remaining, t, isDark),
+          // 灰层：点它就抖一下卡片，不关闭 —— 用户要么做决定，要么点「知道了」。
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _shakeIt,
+              child: AnimatedBuilder(
+                animation: _enter,
+                builder: (_, __) => ColoredBox(
+                  color: Colors.black.withValues(alpha: 0.34 * _enter.value),
+                ),
+              ),
+            ),
+          ),
+          Center(
+            child: AnimatedBuilder(
+              animation: Listenable.merge([_enter, _fly, _shake]),
+              builder: (context, _) {
+                final t = Curves.easeOutCubic.transform(_enter.value);
+                return Transform.scale(
+                  scale: 0.92 + 0.08 * t,
+                  child: Opacity(opacity: t.clamp(0.0, 1.0), child: _body(context, isDark, shown, total)),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// i = 0 是最上面那张。
-  Widget _slot(int i, int remaining, double t, bool isDark) {
-    final shown = _shown;
-    final idx = _index + i;
-    if (idx >= shown.length) return const SizedBox.shrink();
-    final tool = shown[idx];
+  Widget _body(BuildContext context, bool isDark, int shown, int total) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 300,
+          height: 330,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              for (var i = shown; i >= 1; i--) _slot(i - 1, isDark),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _dots(total),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ghostButton(
+              label: '不启用',
+              onTap: () => _decide(false),
+              isDark: isDark,
+            ),
+            const SizedBox(width: 14),
+            _ghostButton(
+              label: '启用',
+              onTap: () => _decide(true),
+              isDark: isDark,
+              strong: true,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '点空白处可以让卡片停一下',
+          style: TextStyle(
+            fontSize: AppTheme.fontCaption,
+            color: Colors.white.withValues(alpha: 0.62),
+          ),
+        ),
+      ],
+    );
+  }
 
-    // 入场：从下方 24px、缩放 0.94 浮上来，后面的卡片再叠一点延迟。
-    final local = (t - i * 0.08).clamp(0.0, 1.0);
-    final baseScale = 1.0 - i * 0.05;
-    final baseOffset = i * 14.0;
+  /// 一张牌的位置。`i == 0` 是最上面那张（可拖动）。
+  Widget _slot(int i, bool isDark) {
+    final top = i == 0;
+    final scale = 1 - i * 0.055;
+    final offsetY = i * 13.0;
+    final dx = top ? _drag.dx : 0.0;
+    final dy = top ? _drag.dy : 0.0;
+    var rotate = top ? (_drag.dx / 1400).clamp(-0.12, 0.12) : 0.0;
 
-    double dragX = 0;
-    double dragY = 0;
-    double rotate = 0;
-    double fly = 0;
-    if (i == 0) {
-      dragX = _drag.dx;
-      dragY = _drag.dy * 0.15;
-      rotate = (_drag.dx / 900).clamp(-0.22, 0.22);
-      // 往左滑出的位移：卡片按当前拖动方向飞远。
-      fly = _fly.value == 0 ? 0 : -1 * (1 - _fly.value);
-      if (fly != 0) {
-        dragX += fly * 420;
-        rotate += fly * 0.4;
-      }
+    // 抖动：左右各摆三次，幅度随进度衰减。
+    var shakeX = 0.0;
+    if (_shake.isAnimating) {
+      final p = _shake.value;
+      shakeX = math.sin(p * math.pi * 6) * 10 * (1 - p);
     }
 
-    final card = _card(context, tool, i == 0, isDark);
+    // 飞出：朝手势方向滑走并淡出。
+    var flyX = 0.0;
+    var opacity = 1.0;
+    if (top && _flying != null) {
+      final f = Curves.easeInCubic.transform(_fly.value);
+      flyX = _flyDir * 420 * f;
+      opacity = 1 - f;
+      rotate = rotate + _flyDir * 0.16 * f;
+    }
+
+    final card = _card(widget.tools[i], isDark, top);
     return Transform.translate(
-      offset: Offset(dragX, baseOffset * (1 - t) + (24 * (1 - local)) + dragY),
+      offset: Offset(dx + flyX + shakeX, dy + offsetY),
       child: Transform.rotate(
         angle: rotate,
         child: Transform.scale(
-          scale: baseScale * (0.94 + 0.06 * local),
-          child: Opacity(
-            opacity: (local * (i == 0 ? 1 : 0.75)).clamp(0.0, 1.0),
-            child: i == 0
-                ? GestureDetector(
-                    onPanUpdate: _flying
-                        ? null
-                        : (d) => setState(() => _drag += d.delta),
-                    onPanEnd: _flying
-                        ? null
-                        : (_) {
-                            if (_drag.dx.abs() > 110) {
-                              _dismissCurrent(bySwipe: true);
-                            } else {
-                              setState(() => _drag = Offset.zero);
-                            }
-                          },
-                    child: card,
-                  )
-                : card,
-          ),
+          scale: scale,
+          child: Opacity(opacity: opacity, child: card),
         ),
       ),
     );
   }
 
-  Widget _card(BuildContext context, ToolModel tool, bool top, bool isDark) {
-    final tint = tool.color;
-    return Container(
-      width: 300,
-      height: 360,
+  Widget _card(ToolModel tool, bool isDark, bool top) {
+    // 拖动方向决定提示色：向左 = 启用（墨黑），向右 = 不启用（警示黄）。
+    final enabling = _drag.dx < -24;
+    final dropping = _drag.dx > 24;
+    final accent = dropping ? const Color(0xFFB45309) : AppTheme.primaryColor;
+
+    final card = Container(
+      width: 262,
+      height: 300,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF161616) : Colors.white,
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        border: Border.all(color: context.borderColor),
+        border: Border.all(
+          color: dropping
+              ? const Color(0xFFB45309).withValues(alpha: 0.35)
+              : (isDark ? Colors.white12 : const Color(0xFFEDEDF0)),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
-            blurRadius: 28,
-            offset: const Offset(0, 14),
+            color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.16),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
-      padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
-                  color: tint.withValues(alpha: isDark ? 0.22 : 0.10),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                  color: tool.color.withValues(alpha: isDark ? 0.22 : 0.10),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 ),
-                child: Icon(tool.icon, size: 22, color: tint),
+                child: Icon(tool.icon, size: 22, color: tool.color),
               ),
               const Spacer(),
               Text(
-                '新功能',
+                dropping ? '不启用' : (enabling ? '启用' : '新功能'),
                 style: TextStyle(
-                  fontSize: AppTheme.fontCaption,
+                  fontSize: AppTheme.fontSmall,
                   fontWeight: FontWeight.w600,
-                  color: tint,
+                  color: accent,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Text(
             tool.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 22,
+              fontSize: 19,
               fontWeight: FontWeight.w700,
+              height: 1.25,
               color: context.textPrimary,
-              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            ServiceGroup.titleOf(tool.group),
+            style: TextStyle(
+              fontSize: AppTheme.fontCaption,
+              color: context.textTertiary,
             ),
           ),
           const SizedBox(height: 10),
           Text(
-            ServiceGroup.hintOf(tool.group) ?? '刚加的功能，点开就能用。',
+            _descOf(tool),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: AppTheme.fontSmall,
-              height: 1.6,
+              height: 1.45,
               color: context.textSecondary,
             ),
           ),
           const Spacer(),
-          if (top)
-            Row(
-              children: [
-                Icon(Icons.swipe_left_rounded,
-                    size: 16, color: context.textTertiary),
-                const SizedBox(width: 6),
-                Text(
-                  '向左滑动收起',
+          Row(
+            children: [
+              Icon(Icons.swipe_rounded, size: 14, color: context.textTertiary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '向左滑动启用 · 向右滑动不启用',
                   style: TextStyle(
-                      fontSize: AppTheme.fontCaption,
-                      color: context.textTertiary),
+                    fontSize: AppTheme.fontCaption,
+                    color: context.textTertiary,
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
         ],
+      ),
+    );
+
+    if (!top) return IgnorePointer(child: card);
+
+    return GestureDetector(
+      onPanUpdate: (d) => setState(() => _drag += d.delta),
+      onPanEnd: (_) {
+        final dx = _drag.dx;
+        if (dx.abs() > 96) {
+          _decide(dx < 0);
+        } else {
+          setState(() => _drag = Offset.zero);
+        }
+      },
+      child: card,
+    );
+  }
+
+  /// 卡片上的一句话说明。优先用分组说明，其次按「要不要联网」给个中性描述。
+  String _descOf(ToolModel tool) {
+    final hint = ServiceGroup.hintOf(tool.group);
+    if (tool.id == 'cprint_scan') {
+      return '图书馆那台打印机，手机上就能传文件、看扫描件。';
+    }
+    if (tool.id == 'chaoxing_sync') {
+      return '把学习通的作业和考试拉进来，别漏交。';
+    }
+    if (tool.id == 'timetable_library') {
+      return '同学的课表可以直接导入，不用一门门加。';
+    }
+    return hint ?? (tool.needsNetwork ? '联网后可以用。' : '不需要联网。');
+  }
+
+  Widget _dots(int total) {
+    const at = 0;
+    final count = total.clamp(1, 6);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < count; i++)
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            width: i == at ? 16 : 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: i == at ? 0.92 : 0.34),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+        if (total > 6) ...[
+          const SizedBox(width: 8),
+          Text(
+            '共 $total 个',
+            style: TextStyle(
+              fontSize: AppTheme.fontCaption,
+              color: Colors.white.withValues(alpha: 0.72),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _ghostButton({
+    required String label,
+    required VoidCallback onTap,
+    required bool isDark,
+    bool strong = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
+        decoration: BoxDecoration(
+          color: strong
+              ? Colors.white.withValues(alpha: 0.92)
+              : Colors.white.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: strong ? 0.0 : 0.28),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: AppTheme.fontSmall,
+            fontWeight: FontWeight.w600,
+            color: strong ? AppTheme.primaryColor : Colors.white,
+          ),
+        ),
       ),
     );
   }

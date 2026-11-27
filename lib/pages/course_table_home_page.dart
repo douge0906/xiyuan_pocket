@@ -27,6 +27,7 @@ import 'notification_reminder_page.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_day_header.dart';
+import '../widgets/coach_tip.dart';
 import 'class_picker_page.dart';
 import '../widgets/course_date_picker.dart';
 import 'course/course_form_sheet.dart';
@@ -124,6 +125,9 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
 
   /// 正在导入课表（v1.6.8）：抓教务期间盖一层加载遮罩，避免"点了没反应"。
   bool _importing = false;
+
+  /// 第 9 条 A：首次进课表页时指向右上角导入按钮的引导气泡。
+  bool _showImportTip = false;
   late int _selectedWeek;
   DateTime? _semesterStart;
 
@@ -192,7 +196,25 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
     await _maybeShowWelcome();
     if (!mounted) return;
     if (_ratingEnabled) await _maybeShowRating();
+    unawaited(_maybeShowImportTip());
   }
+
+  Future<void> _maybeShowImportTip() async {
+    if (!mounted || _showImportTip) return;
+    if (await StorageService.loadGuideSeen('course_import')) return;
+    if (!mounted) return;
+    setState(() => _showImportTip = true);
+  }
+
+  Future<void> _dismissImportTip() async {
+    await StorageService.saveGuideSeen('course_import');
+    if (!mounted) return;
+    setState(() => _showImportTip = false);
+  }
+
+  /// 评价触发的四道档位（2026-11-27 用户要求：10 / 50 / 100 / 200 次点击）。
+  /// 点「以后再说」就升一档，四档都过了就不再打扰 —— 越用越熟的人才值得问。
+  static const List<int> _kRatingThresholds = [10, 50, 100, 200];
 
   Future<void> _bumpCourseEntryCount() async {
     if (_entryCounting) return;
@@ -228,6 +250,10 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       return;
     }
     final count = await StorageService.loadCourseRatingEntryCount();
+    final stage = await StorageService.loadCourseRatingStage();
+    // 四档都问过了：不再打扰（想再问只能等下一个大版本）。
+    if (stage >= _kRatingThresholds.length) return;
+    final threshold = _kRatingThresholds[stage];
     // 等待期间可能弹了配色引导，或另一路已开始弹评价：再检查一次。
     if (!mounted ||
         _ratingBusy ||
@@ -235,7 +261,7 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
         _welcomeBusy ||
         _semesterOpen ||
         _conflictOpen ||
-        count < 3) {
+        count < threshold) {
       return;
     }
     _ratingBusy = true;
@@ -244,13 +270,12 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
       final rated = await AppRatingDialog.show(context);
       if (!mounted) return;
       if (rated == true) {
-        // 真正点过星才永久标记；「以后再说」只延后 7 天，不再一次性关闭。
+        // 真正点过星才永久标记。
         await StorageService.saveCourseRatingShown(true);
         _ratingDone = true;
       } else {
-        await StorageService.saveCourseRatingSnoozeUntil(
-          DateTime.now().add(const Duration(days: 7)),
-        );
+        // 「以后再说」不是关闭，是升一档：下次要等更多次点击才问。
+        await StorageService.saveCourseRatingStage(stage + 1);
       }
     } finally {
       _ratingBusy = false;
@@ -2955,6 +2980,15 @@ class _CourseTableHomePageState extends ConsumerState<CourseTableHomePage> {
               ),
             ),
             if (_importing) _buildImportingOverlay(context),
+            if (_showImportTip)
+              CoachTipOverlay(
+                top: MediaQuery.of(context).padding.top + 64,
+                arrowRightInset: 58,
+                title: '可以导入更多课程',
+                message: '教务系统、PDF 课表、实验课都能导进来；'
+                    '同学的课表也能从「锡院在线课表」直接导入。',
+                onDismissed: _dismissImportTip,
+              ),
           ],
         ),
       ),
