@@ -73,6 +73,11 @@ void main() {
     );
   }
 
+  setUp(() {
+    DormBridge.resetWarm();
+    DormBridge.resultTimeout = const Duration(seconds: 30);
+  });
+
   group('DormBridge', () {
     test('成功链路：占位窗 → 网关登录页 → 桥页，返回 map', () async {
       final driver = _FakeDriver();
@@ -102,8 +107,9 @@ void main() {
           bridge,
           contains(
               'building=A5%26%E6%9D%8E%E5%9B%AD%E5%A3%B9%E8%99%9FA5'));
-      // 窗口用完要关。
-      expect(driver.closed, isTrue);
+      // 窗口留着复用（下次查询不再新开），但要复位成空白页。
+      expect(driver.closed, isFalse);
+      expect(driver.opened.last, 'about:blank');
     });
 
     test('弹窗被拦截：第一枪就失败，不再发网络请求', () async {
@@ -131,7 +137,7 @@ void main() {
         throwsA(isA<CampusException>()
             .having((e) => e.message, 'message', '平台未授权，请重新登录')),
       );
-      expect(driver.closed, isTrue);
+      expect(driver.closed, isFalse);
     });
 
     test('桥页超时：抛超时文案，窗口仍会关', () async {
@@ -142,7 +148,7 @@ void main() {
         throwsA(isA<CampusException>()
             .having((e) => e.message, 'message', DormBridge.timeoutMessage)),
       );
-      expect(driver.closed, isTrue);
+      expect(driver.closed, isFalse);
     });
 
     test('忽略非本桥来源的消息（防止别处 postMessage 串味）', () async {
@@ -161,6 +167,43 @@ void main() {
       );
     });
 
+    test('第二次查询复用桥窗：不再开占位窗、不再登网关', () async {
+      final driver = _FakeDriver();
+      final payload = {
+        'source': 'xiyuan-bridge',
+        'type': 'dorm-result',
+        'payload': {'ok': true, 'code': 200, 'map': realMap},
+      };
+      DormWebClient.debugClient = _FakeClient(ticketBody);
+      DormBridge.driver = driver;
+      driver.onBridgeOpen = () {
+        scheduleMicrotask(() => driver.emit(payload));
+      };
+
+      Future<Map<String, dynamic>> once() => DormBridge.query(
+            sessionId: 'sid-1',
+            feeitemid: 448,
+            campus: '1',
+            building: 'A5&李园壹號A5',
+            room: '516',
+          );
+
+      await once();
+      final firstCall = driver.opened.length;
+      expect(driver.opened[1], contains('/login?cas_login=true'));
+
+      // 假 driver 的 onBridgeOpen 是一次性的，第二次要重新挂。
+      driver.onBridgeOpen = () {
+        scheduleMicrotask(() => driver.emit(payload));
+      };
+      await once();
+      final secondCall = driver.opened.sublist(firstCall);
+      // 第二次：只有导航桥页 + 复位空白页，没有占位窗、没有再登网关。
+      expect(secondCall.length, 2);
+      expect(secondCall.first, contains('/api/v1/campus/dorm/bridge#'));
+      expect(secondCall.last, 'about:blank');
+    });
+
     test('bridge-ticket 缺字段：明确报票据失败，不导航桥页', () async {
       final driver = _FakeDriver();
       await expectLater(
@@ -173,7 +216,7 @@ void main() {
       );
       // 只开了占位窗，没走到网关登录页。
       expect(driver.opened, ['about:blank']);
-      expect(driver.closed, isTrue);
+      expect(driver.closed, isFalse);
     });
   });
 
@@ -215,8 +258,8 @@ void main() {
       expect(bridgeUrl, contains('type=1'));
       expect((payload['records'] as List).length, 1);
       expect(payload['total'], 204);
-      // 流水只是取数据：窗口用完就关。
-      expect(driver.closed, isTrue);
+      // 流水只是取数据：同样复用窗口，不关。
+      expect(driver.closed, isFalse);
     });
 
     test('弹窗被拦截：直接抛拦截文案，不发网络请求', () async {

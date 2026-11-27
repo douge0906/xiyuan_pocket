@@ -155,6 +155,23 @@ class DormWebClient {
   }
 
   /// 一卡通充值地址（两步：先预热建平台会话，再进充值页）。
+  /// 云打印跳转要用的两组地址（网页版不能上传/下载，只能把正文交给图书馆网页）。
+  ///
+  /// - `loginUrl`：带一次性网关票的网关登录地址，浏览器先打开它换 cookie；
+  /// - `targetUrl`：经网关包装后的云打印页面地址，登录后再打开即可。
+  static Future<CprintLink> cprintLink(String sessionId) async {
+    final data = await _post(
+      '/api/v1/campus/cprint/link',
+      {'session_id': sessionId},
+    );
+    final loginUrl = (data['login_url'] ?? '').toString();
+    final targetUrl = (data['target_url'] ?? '').toString();
+    if (loginUrl.isEmpty || targetUrl.isEmpty) {
+      throw CampusException('云打印地址获取失败，请稍后重试');
+    }
+    return CprintLink(loginUrl: loginUrl, targetUrl: targetUrl);
+  }
+
   static Future<DormCardRechargeUrl> cardRechargeUrl(String sessionId) async {
     final data = await _post('card-recharge-url', {'session_id': sessionId});
     final url = (data['url'] ?? '').toString();
@@ -414,4 +431,19 @@ class DormCardRechargeUrl {
   /// 浏览器有自己的 cookie 罐，拿不到服务端在网关上的票据；所以一卡通那条
   /// 链也得先让浏览器在**网关 origin** 下登一次，再开 [warmupUrl]。
   final String gatewayLoginUrl;
+}
+
+/// 云打印跳转地址。
+class CprintLink {
+  const CprintLink({required this.loginUrl, required this.targetUrl});
+
+  /// 网关登录地址（带一次性 `st_gw`）。
+  final String loginUrl;
+
+  /// 网关包装后的云打印页面地址。
+  final String targetUrl;
+
+
+  @override
+  String toString() => 'CprintLink(target=${targetUrl.split('?').first})';
 }

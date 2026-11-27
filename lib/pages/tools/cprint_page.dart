@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/campus/cprint_client.dart';
+import '../../services/dorm_service.dart';
+import '../../services/dorm_web_client.dart';
+import '../../services/web_window_stub.dart'
+    if (dart.library.js_util) '../../services/web_window_web.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_card.dart';
 import 'cprint_jobs_tab.dart';
@@ -31,6 +34,9 @@ import 'cprint_upload_tab.dart';
 /// 会话过期（`code:4`）时子页签回调 [onNeedAuth]，这里统一退回登录态。
 const String _kWebUnsupported = '网页版暂不支持云打印，请在校园网内打开云打印网页';
 
+/// 网页版打开云打印用的命名窗口（同一个窗口先登网关、再进云打印网页）。
+const String _kWebWindow = 'xiyuan_cprint';
+
 class CprintPage extends StatefulWidget {
   const CprintPage({super.key});
 
@@ -46,6 +52,9 @@ class _CprintPageState extends State<CprintPage>
   bool _authed = false;
   bool _booting = true;
   String _authError = '';
+
+  /// 网页版「打开云打印网页」正在准备中（防连点）。
+  bool _openingWeb = false;
   String _trueName = '';
   bool _scanDisabled = false;
 
@@ -237,7 +246,8 @@ class _CprintPageState extends State<CprintPage>
               const SizedBox(height: 10),
               Text(
                 '上传文件打印、下载扫描件都要读写本机文件，网页版做不到。'
-                '图书馆的云打印网页本身可以正常用，只是必须连校园网。',
+                '点下面的按钮会自动通过 WebVPN 网关打开图书馆的云打印网页，'
+                '校外也能用；云打印自己的统一身份认证第一次仍需在页面里登录一次。',
                 style: TextStyle(
                   fontSize: AppTheme.fontBody,
                   height: 1.55,
@@ -248,13 +258,14 @@ class _CprintPageState extends State<CprintPage>
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: () => _openCprintWeb(context),
-                  child: const Text('打开云打印网页'),
+                  onPressed: _openingWeb ? null : () => _openCprintWeb(context),
+                  child: Text(_openingWeb ? '正在打开…' : '打开云打印网页'),
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                '打不开一般是没连校园网；也可以回安卓 App 里直接打印与取件。',
+                '自动过网关失败时会退回直连地址（那时需要连校园网）。'
+                '也可以回安卓 App 里直接打印与取件。',
                 style: TextStyle(
                   fontSize: AppTheme.fontCaption,
                   height: 1.5,
@@ -269,16 +280,46 @@ class _CprintPageState extends State<CprintPage>
   }
 
   /// 跳到图书馆自己的云打印网页（`zzwy` 内网站点，必须连校园网）。
+  /// 网页版云打印：**先自动过 WebVPN 网关**，再打开云打印网页。
+  ///
+  /// 云打印正文（上传/取件/下载扫描件）必须由图书馆自己的网页做，而那个网页在
+  /// 内网 `zzwy.cwxu.edu.cn:9130`。外网访问要先有网关票据 cookie，而换票必须由
+  /// 浏览器自己完成（服务端出口 IP 被网关 403）。所以：
+  ///
+  /// 1. 控制端现铸一张网关票，回两组地址（网关登录地址 + 包装后的云打印地址）；
+  /// 2. 浏览器在**同一个命名窗口**里先导航到网关登录地址换 cookie；
+  /// 3. 2.5s 后再导航到云打印地址 —— 网关已经认人，直接把页面转过去。
+  ///
+  /// 云打印自己还有一层统一身份认证：第一次仍需用户在页面里登录一次（之后浏览
+  /// 器记着）。拿不到票（没登录 / 网关异常）时退回直连地址，不让用户卡在按钮上。
   Future<void> _openCprintWeb(BuildContext context) async {
-    try {
-      await launchUrl(Uri.parse(CprintClient.backUrl),
-          mode: LaunchMode.externalApplication);
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text('打开失败：$e')));
+    if (_openingWeb) return;
+    // 占位窗必须在手势里**同步**开，晚一步就被弹窗拦截。
+    if (!openNamedWindow('about:blank', _kWebWindow)) {
+      _snack(context, '浏览器拦截了新标签页，请允许本页弹出窗口后重试');
+      return;
     }
+    setState(() => _openingWeb = true);
+    try {
+      final sid = await DormService.webSessionId();
+      final link = await DormWebClient.cprintLink(sid);
+      openNamedWindow(link.loginUrl, _kWebWindow);
+      await Future<void>.delayed(const Duration(milliseconds: 2500));
+      // 第二步打开包装后的云打印页：云打印会自己发起统一身份认证，网关会把
+      // 那一跳也包装进网关域，所以校外登录完照样能回跳到云打印首页。
+      openNamedWindow(link.targetUrl, _kWebWindow);
+    } catch (_) {
+      // 退回直连：校园网内照样能用。
+      openNamedWindow(CprintClient.backUrl, _kWebWindow);
+    } finally {
+      if (mounted) setState(() => _openingWeb = false);
+    }
+  }
+
+  void _snack(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _loginView() {

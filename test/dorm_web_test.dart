@@ -158,6 +158,42 @@ void main() {
       expect(r.gatewayLoginUrl, contains('ST-2'));
     });
 
+    test('cprint/link：给出网关登录地址与包装后的云打印地址', () async {
+      final log = <http.BaseRequest>[];
+      DormWebClient.debugClient = fakeClient(log, {
+        'ok': true,
+        'gateway_origin': 'https://webvpn.cwxu.edu.cn',
+        'login_url':
+            'https://webvpn.cwxu.edu.cn/login?cas_login=true&ticket=ST-gw-9',
+        'target_url':
+            'https://webvpn.cwxu.edu.cn/http-9130/aaa/client/new/cprintPc/scanDoc.html',
+        'expires_in': 300,
+      });
+
+      final r = await DormWebClient.cprintLink('sid-1');
+
+      expect(r.loginUrl, contains('cas_login=true'));
+      expect(r.targetUrl, contains('/http-9130/'));
+      expect(r.targetUrl, endsWith('scanDoc.html'));
+      final req = log.first as http.Request;
+      expect(req.url.path, contains('/api/v1/campus/cprint/link'));
+      final sent = jsonDecode(req.body) as Map<String, dynamic>;
+      expect(sent['session_id'], 'sid-1');
+    });
+
+    test('cprint/link：缺 target_url → 抛 CampusException', () async {
+      final log = <http.BaseRequest>[];
+      DormWebClient.debugClient = fakeClient(log, {
+        'ok': true,
+        'login_url': 'https://webvpn.cwxu.edu.cn/login?cas_login=true&ticket=x',
+      });
+
+      expect(
+        () => DormWebClient.cprintLink('sid-1'),
+        throwsA(isA<CampusException>()),
+      );
+    });
+
     test('错误体：抛 CampusException，session_expired 带 needRelogin', () async {
       final log = <http.BaseRequest>[];
       DormWebClient.debugClient = fakeClient(

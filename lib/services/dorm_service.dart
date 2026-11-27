@@ -512,6 +512,9 @@ class DormService {
       _webPendingUser = null;
       _webCaptchaB64 = null;
       _webCardBundle = null;
+      _webElecAt = null;
+      _webTurnoverCache = null;
+      _webTurnoverAt = null;
       _persistWebSid();
       if (sid != null && sid.isNotEmpty) {
         // 尽力而为：注销失败不影响本地清理。
@@ -601,6 +604,7 @@ class DormService {
       final price = parseUnitPrice(text) ?? defaultUnitPrice;
       if (price > 0) kwh = balance / price;
     }
+    _webElecAt = DateTime.now();
     return ElectricityInfo(
       text: text,
       balance: balance,
@@ -880,6 +884,12 @@ class DormService {
         final sameRoom = (m['room'] ?? '') == dorm.room;
         if (!sameBuilding || !sameRoom) return null;
       }
+      // 记下「这份缓存是什么时候查的」：网页版据此判断要不要再开窗查一次。
+      final ts = (m['ts'] as num?)?.toInt() ?? 0;
+      if (ts > 0) {
+        final at = DateTime.fromMillisecondsSinceEpoch(ts);
+        if (_webElecAt == null || at.isAfter(_webElecAt!)) _webElecAt = at;
+      }
       return ElectricityInfo(
         text: (m['text'] ?? '').toString(),
         balance: (m['balance'] as num?)?.toDouble(),
@@ -899,6 +909,7 @@ class DormService {
       _kElecCache,
       jsonEncode({
         'key': elecCacheKey(dorm),
+        'ts': DateTime.now().millisecondsSinceEpoch,
         'text': i.text,
         'balance': i.balance,
         'kwh': i.kwh,
@@ -926,6 +937,11 @@ class DormService {
     if (_isWeb) {
       // Web 端：流水走浏览器桥（平台接口在网关 origin 内同源可读，
       // 服务端出口 IP 被网关 403，只能由用户浏览器去拿）。
+      // 第一页且刚查过：直接回缓存（来回切详情页时不再开窗）。
+      final cached = _webTurnoverCache;
+      if (page == 1 && type.isEmpty && cached != null && _webFresh(_webTurnoverAt)) {
+        return cached;
+      }
       try {
         final payload = await DormBridge.turnover(
           session: _webSessionForBridge,
@@ -933,7 +949,12 @@ class DormService {
           size: size,
           type: type,
         );
-        return _parseTurnoverPage(payload, page);
+        final parsed = _parseTurnoverPage(payload, page);
+        if (page == 1 && type.isEmpty) {
+          _webTurnoverCache = parsed;
+          _webTurnoverAt = DateTime.now();
+        }
+        return parsed;
       } on CampusException {
         return null;
       } catch (_) {
@@ -1141,6 +1162,22 @@ class DormService {
   /// 和充值页 —— 所以三段地址都要用：网关登录 → 预热 → 充值页。
   static DormCardRechargeUrl? get webCardBundle => _webCardBundle;
 
+  /// Web 端电费/流水「刚查过」的标记。
+  ///
+  /// 网页版每次真正查询都要把浏览器窗口开到网关去，**代价高**（还会打断用户）。
+  /// 所以查过之后 10 分钟内直接沿用结果：进出服务页、来回切详情页都不再开窗，
+  /// 用户点「手动更新」才强制重查。
+  static const Duration _webCacheTtl = Duration(minutes: 10);
+  static DateTime? _webElecAt;
+  static CardTurnoverPage? _webTurnoverCache;
+  static DateTime? _webTurnoverAt;
+
+  static bool _webFresh(DateTime? at) =>
+      at != null && DateTime.now().difference(at) < _webCacheTtl;
+
+  /// 电费是不是刚查过（网页版据此跳过自动刷新，避免反复开新窗口）。
+  static bool get webElecFresh => _webFresh(_webElecAt);
+
   /// 取 Web 会话 id，拿不到就按「上次错误」抛出去（供桥接层复用）。
   static Future<String> _webSessionForBridge() async {
     final sid = await _webSessionId();
@@ -1149,6 +1186,9 @@ class DormService {
     }
     return sid;
   }
+
+  /// 取 Web 会话 id（云打印跳转等外部调用方用；拿不到就抛上次错误）。
+  static Future<String> webSessionId() => _webSessionForBridge();
 
   /// Web 端**电费充值**：桥页现拼充值页地址，并在同一个命名窗口里打开。
   ///

@@ -72,6 +72,23 @@ class DormBridge {
   @visibleForTesting
   static BridgeDriver driver = const RealBridgeDriver();
 
+  /// 桥窗「已经换过网关票据 cookie」了吗。
+  ///
+  /// 一旦为真，后续查询就**不再新开窗口、也不再重复登网关**：把同一个命名窗口
+  /// 直接导航到桥页就行。之前每次查电费/流水都开一个新标签页，用户来回切页面
+  /// 时被反复打断（2026-11-27 反馈），这里靠常驻窗口消掉。
+  static bool _warm = false;
+
+  /// 串行闸门：桥页回执只有 `source` / `type` 标记、没有请求号，两个请求同时
+  /// 在飞会互相吃掉对方的回执，所以一次只放一个进去。
+  static Future<void> _queue = Future<void>.value();
+
+  /// 单测用：把「已登录网关」状态清掉（模拟用户手动关掉了桥窗）。
+  @visibleForTesting
+  static void resetWarm() {
+    _warm = false;
+  }
+
   /// 用浏览器桥接查电费，返回桥页透传的 `getThirdData` 的 `map`。
   ///
   /// 参数口径与安卓端 `DormService._post(feeitemid, 'IEC', 3, {...})` 完全一致；
@@ -183,34 +200,68 @@ class DormBridge {
     int? pageSize,
     String type = '',
     bool keepWindow = false,
+  }) {
+    final completer = Completer<Map<String, dynamic>>();
+    final previous = _queue;
+    _queue = completer.future.then<void>((_) {}, onError: (_) {});
+    previous.whenComplete(() {
+      _runExchange(
+        session: session,
+        action: action,
+        feeitemid: feeitemid,
+        campus: campus,
+        building: building,
+        room: room,
+        current: current,
+        pageSize: pageSize,
+        type: type,
+        keepWindow: keepWindow,
+      ).then(completer.complete, onError: completer.completeError);
+    });
+    return completer.future;
+  }
+
+  /// 真正跑一遍「（首次）占位窗 → 铸票 → 网关登录 → 桥页 → 等回执」。
+  ///
+  /// [action] 交给桥页分派：`query`（电费查询）/ `turnover`（一卡通流水）/
+  /// `recharge`（电费充值地址）/ `card`（一卡通充值地址）。
+  static Future<Map<String, dynamic>> _runExchange({
+    required Future<String> Function() session,
+    required String action,
+    int? feeitemid,
+    String campus = '',
+    String building = '',
+    String room = '',
+    int? current,
+    int? pageSize,
+    String type = '',
+    bool keepWindow = false,
   }) async {
-    // ① 占位窗：必须在用户手势内**同步**打开，抢在任何 await 之前。
-    if (!driver.open('about:blank')) {
+    // 首次：必须在用户手势内**同步**占一个窗（Chrome 只看手势还在不在）。
+    // 之后窗口已经常驻，直接复用，不再新开。
+    if (!_warm && !driver.open('about:blank')) {
       throw CampusException(popupBlockedMessage);
-    }
-    var closed = false;
-    void closeOnce() {
-      if (closed) return;
-      closed = true;
-      driver.close();
     }
 
     void Function()? cancel;
     try {
-      // ② 现铸一次性票（每次都要铸，票是一次性的）。
+      // ① 现铸一次性票（票是一次性的，每次都铸）。
       final sid = await session();
       final ticket = await DormWebClient.bridgeTicket(sid);
 
-      // ③ 网关登录页：拿到浏览器自己的网关票据 cookie。
-      if (!driver.open(
-        '${ticket.gatewayOrigin}/login?cas_login=true'
-        '&ticket=${Uri.encodeQueryComponent(ticket.stGw)}',
-      )) {
-        throw CampusException(popupBlockedMessage);
+      // ② 首次：先打开网关登录页，让浏览器拿到自己的网关票据 cookie。
+      if (!_warm) {
+        if (!driver.open(
+          '${ticket.gatewayOrigin}/login?cas_login=true'
+          '&ticket=${Uri.encodeQueryComponent(ticket.stGw)}',
+        )) {
+          throw CampusException(popupBlockedMessage);
+        }
+        await driver.wait(gatewaySettle);
+        _warm = true;
       }
-      await driver.wait(gatewaySettle);
 
-      // ④ 先挂监听再导航，避免桥页太快回执时漏掉消息。
+      // ③ 先挂监听再导航，避免桥页太快回执时漏掉消息。
       final completer = Completer<Map<String, dynamic>>();
       cancel = driver.listen(ticket.gatewayOrigin, (data) {
         if (completer.isCompleted) return;
@@ -233,7 +284,7 @@ class DormBridge {
         completer.complete(body);
       });
 
-      // ⑤ 同名窗口导航到桥页（参数全在 fragment：票据不进 query、不进访问日志）。
+      // ④ 同名窗口导航到桥页（参数全在 fragment：票据不进 query、不进访问日志）。
       final fragment = _fragment(
         ticket: ticket,
         action: action,
@@ -246,6 +297,7 @@ class DormBridge {
         type: type,
       );
       if (!driver.open('${ticket.gatewayOrigin}${ticket.bridgePath}#$fragment')) {
+        _warm = false;
         throw CampusException(popupBlockedMessage);
       }
 
@@ -253,11 +305,15 @@ class DormBridge {
         resultTimeout,
         onTimeout: () => throw CampusException(timeoutMessage),
       );
-      if (keepWindow) closed = true;
+      // 取完数把窗口复位成空白页：窗口留着（下次免开窗），但不残留桥页。
+      if (!keepWindow) driver.open('about:blank');
       return payload;
+    } catch (_) {
+      // 状态不明（超时 / 回执异常 / 窗口被关）：下一次重新走一遍网关登录最稳。
+      _warm = false;
+      rethrow;
     } finally {
       cancel?.call();
-      closeOnce();
     }
   }
 

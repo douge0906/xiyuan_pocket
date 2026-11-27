@@ -110,6 +110,13 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     _applyDorm(d);
   }
 
+  /// 网页版刚查过电费时跳过自动查询。
+  ///
+  /// 电费查询在网页版要把浏览器窗口开到校园网网关，进出服务页/详情页都自动拉
+  /// 一次的话，用户会被反复弹窗打断（2026-11-27 反馈）。10 分钟内直接沿用上次
+  /// 结果，用户点「手动更新」仍然强制重查。
+  bool get _skipAutoElec => kIsWeb && DormService.webElecFresh;
+
   Future<void> _applyDorm(DormInfo? d) async {
     // 先取新宿舍自己的缓存（按楼栋+房号分键，换房间不会串）
     final cached = d == null ? null : await DormService.loadElecCache(d);
@@ -119,7 +126,7 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
       _elec = cached; // 新房间的缓存（没有就是 null，不显示旧房间的数）
       _elecError = null;
     });
-    if (d != null && _canQuery) await _loadElec();
+    if (d != null && _canQuery && !_skipAutoElec) await _loadElec();
   }
 
   /// 回前台：**不再自动刷新**（2026-10-30）。
@@ -136,7 +143,7 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     if (!_canQuery) return;
     await _load();
     if (!mounted) return;
-    await _loadElec();
+    if (!_skipAutoElec) await _loadElec();
   }
 
   /// 拉一卡通余额。先展示缓存（_bootstrap 里已读），成功后覆盖并写回缓存。
@@ -336,7 +343,7 @@ class _BalanceCardsSectionState extends State<BalanceCardsSection>
     } else {
       // 有宿舍时也要先取一次最新值，否则详情页首屏永远是卡片上那份
       // 可能已过期数天的缓存（详情页 initState 只读 widget.info）。
-      await _loadElec();
+      if (!_skipAutoElec) await _loadElec();
       if (!mounted || _dorm == null) return;
     }
     await Navigator.of(context).push(
