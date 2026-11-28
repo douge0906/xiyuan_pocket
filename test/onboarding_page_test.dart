@@ -48,7 +48,7 @@ void main() {
 
     await tapText(tester, '开始设置');
     // 第二步：五个标签的介绍
-    expect(find.text('五个标签，各管一摊'), findsOneWidget);
+    expect(find.text('五大功能，统一锡院'), findsOneWidget);
 
     await tapText(tester, '继续');
     // 第三步：两张模式卡片

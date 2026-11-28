@@ -222,9 +222,6 @@ class _OnboardingPageState extends State<OnboardingPage>
           const SizedBox(height: 26),
           Center(
             child: _Typewriter(
-              animation: _enter,
-              from: 0.18,
-              to: 0.62,
               text: '欢迎使用掌上锡院',
               style: TextStyle(
                 fontSize: AppTheme.fontHero - 3,
@@ -743,41 +740,107 @@ class _Reveal extends StatelessWidget {
   }
 }
 
-/// 一个字一个字出现。只用在欢迎页标题上 —— 多了会像幻灯片。
-class _Typewriter extends StatelessWidget {
+/// 一个字一个字出现，末尾带一根会闪的竖线。
+///
+/// 2026-11-28 同学反馈「标题字加载太快」：原来它跟着整页进场 controller 走，
+/// 8 个字挤在 300 毫秒里闪完，看着像本来就写在那儿。改成自己的计时器，
+/// 每个字 110 毫秒、起步先留 240 毫秒，整句约 1.1 秒读完 —— 才看得出是在写。
+class _Typewriter extends StatefulWidget {
   const _Typewriter({
-    required this.animation,
     required this.text,
     required this.style,
-    this.from = 0.15,
-    this.to = 0.7,
   });
 
-  final Animation<double> animation;
   final String text;
   final TextStyle style;
-  final double from;
-  final double to;
+
+  /// 每个字停留多久。慢了拖，快了看不出在写字。
+  static const int msPerChar = 110;
+
+  /// 起步空转一小段，让标志先浮起来再开始写。
+  static const int delay = 240;
+
+  @override
+  State<_Typewriter> createState() => _TypewriterState();
+}
+
+class _TypewriterState extends State<_Typewriter>
+    // 两个 controller：打字一个、光标闪一个。只给单 ticker 会直接抛。
+    with TickerProviderStateMixin {
+  late final AnimationController _type = AnimationController(
+    vsync: this,
+    duration: Duration(
+        milliseconds: _Typewriter.delay + widget.text.length * _Typewriter.msPerChar),
+  );
+  late final AnimationController _caret = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
+  bool _showCaret = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _type.forward();
+    _caret.repeat(reverse: true);
+    // 写完再让竖线多闪两下，然后淡出 —— 竖线一直闪会像输入框。
+    _type.addStatusListener((s) {
+      if (s != AnimationStatus.completed) return;
+      Future<void>.delayed(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _showCaret = false);
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _type.dispose();
+    _caret.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: animation,
-      builder: (context, _) {
-        final span = (to - from).abs() < 0.001 ? 1.0 : (to - from);
-        final t = ((animation.value - from) / span).clamp(0.0, 1.0);
-        final n = (text.length * t).ceil().clamp(0, text.length);
-        return SizedBox(
-          height: style.fontSize! * 1.5,
-          child: Center(
-            child: Text(
-              text.substring(0, n),
-              textAlign: TextAlign.center,
-              style: style,
-            ),
-          ),
-        );
-      },
+    final total = _Typewriter.delay + widget.text.length * _Typewriter.msPerChar;
+    return SizedBox(
+      height: widget.style.fontSize! * 1.5,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_type, _caret]),
+        builder: (context, _) {
+          final elapsed = _type.value * total;
+          final typed = elapsed <= _Typewriter.delay
+              ? 0
+              : ((elapsed - _Typewriter.delay) / _Typewriter.msPerChar).floor();
+          final n = typed.clamp(0, widget.text.length);
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                widget.text.substring(0, n),
+                textAlign: TextAlign.center,
+                style: widget.style,
+              ),
+              // 竖线占位固定宽度，不然每多一个字整句会向左跳一下。
+              SizedBox(
+                width: widget.style.fontSize! * 0.16,
+                child: _showCaret && _caret.value < 0.6
+                    ? Padding(
+                        padding: EdgeInsets.only(
+                            left: widget.style.fontSize! * 0.06),
+                        child: Container(
+                          width: widget.style.fontSize! * 0.09,
+                          height: widget.style.fontSize! * 0.92,
+                          color: AppTheme.primaryColor,
+                        ),
+                      )
+                    : null,
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -1080,7 +1143,9 @@ class _TabsStepState extends State<_TabsStep>
   void _startCycle() {
     _cycle?.cancel();
     // 自动轮播：没人动手的时候，让它自己把五个标签讲一遍。
-    _cycle = Timer.periodic(const Duration(milliseconds: 3200), (_) {
+    // 2026-11-28 反馈「循环过快」：每页的示意元素本身要 1 秒多才浮齐，
+    // 3.2 秒一换等于刚看清就切走。放到 5.2 秒。
+    _cycle = Timer.periodic(const Duration(milliseconds: 5200), (_) {
       if (!mounted || _editing) return;
       final shown = _shown;
       if (shown.length < 2) return;
@@ -1154,7 +1219,7 @@ class _TabsStepState extends State<_TabsStep>
             to: 0.45,
             offset: const Offset(0, 14),
             child: Text(
-              '五个标签，各管一摊',
+              '五大功能，统一锡院',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: AppTheme.fontHero - 8,
@@ -1170,7 +1235,7 @@ class _TabsStepState extends State<_TabsStep>
             to: 0.6,
             offset: const Offset(0, 10),
             child: Text(
-              '它们一直在屏幕底下。点一个，看看它替你管什么。',
+              '掌上锡院功能速览与个性化调整',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: AppTheme.fontBody,
@@ -1251,7 +1316,7 @@ class _TabsStepState extends State<_TabsStep>
           ),
           const SizedBox(height: 8),
           Text(
-            '以后在「我的 → 页面设置」里还能改',
+            '以后在「设置 → 外观 → 底部导航」里还能改',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: AppTheme.fontCaption,
@@ -1517,7 +1582,7 @@ class _PreviewStage extends StatelessWidget {
               Icon(Icons.notifications_none_rounded,
                   size: 13, color: context.textTertiary),
               const SizedBox(width: 6),
-              Text('下一节 14:00 · 数字电路',
+              Text('还有 1 节：19:00 自习',
                   style: TextStyle(
                       fontSize: AppTheme.fontCaption,
                       color: context.textTertiary)),
@@ -1641,14 +1706,33 @@ class _PreviewStage extends StatelessWidget {
   }
 
   Widget _course(BuildContext context, double t) {
-    // 一周五列、四行的迷你课表：每一块按顺序淡入，像课表被「排」出来。
-    const blocks = <List<double>>[
-      [0, 0, 2, 1, 0xFF4C6FFF],
-      [2, 0, 1, 2, 0xFF16A34A],
-      [3, 1, 2, 1, 0xFFF59E0B],
-      [0, 2, 1, 2, 0xFF9333EA],
-      [1, 3, 3, 1, 0xFF0EA5E9],
+    // 2026-11-28 同学原话：「课表的素材完全不对，看不出来是课表」。
+    // 上一版只画了彩色小块（没有节次、没有日期、没有课名），确实只是一堆格子。
+    // 这一版按真课表的骨架画：左边节次轴、上面星期轴、今天那列加浅色底，
+    // 每个格子里写课名和教室 —— 一眼就是一张课表。
+    const days = ['一', '二', '三', '四', '五'];
+    const slots = ['1-2 节', '3-4 节', '5-6 节', '7-8 节'];
+    // [列, 行, 跨行, 颜色, 课名, 教室]
+    const blocks = <List<Object>>[
+      [0, 0, 2, 0xFF4C6FFF, '高数', 'A203'],
+      [2, 0, 1, 0xFF16A34A, '电路', 'B108'],
+      [3, 1, 2, 0xFFF59E0B, '英语', 'C305'],
+      [0, 2, 1, 0xFF9333EA, '大物', '实验楼'],
+      [1, 3, 1, 0xFF0EA5E9, '体育', '田径场'],
     ];
+    const today = 1; // 周二
+
+    Widget cell(int c, int r) => Container(
+          margin: const EdgeInsets.all(1.5),
+          decoration: BoxDecoration(
+            color: c == today
+                ? AppTheme.primaryColor.withValues(alpha: 0.05)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(color: context.borderColor),
+          ),
+        );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1656,13 +1740,17 @@ class _PreviewStage extends StatelessWidget {
           t,
           0,
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              for (final d in const ['一', '二', '三', '四', '五'])
-                Text('周$d',
-                    style: TextStyle(
-                        fontSize: AppTheme.fontCaption,
-                        color: context.textTertiary)),
+              Text('第 12 周',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      fontWeight: FontWeight.w600,
+                      color: context.textSecondary)),
+              const Spacer(),
+              Text('周二 · 今天 4 节',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: context.textTertiary)),
             ],
           ),
         ),
@@ -1670,58 +1758,121 @@ class _PreviewStage extends StatelessWidget {
         Expanded(
           child: LayoutBuilder(
             builder: (context, cons) {
-              final cellW = cons.maxWidth / 5;
-              final cellH = cons.maxHeight / 4;
+              const gutter = 34.0;
+              final cellW = (cons.maxWidth - gutter) / 5;
+              const headH = 18.0;
+              final cellH = (cons.maxHeight - headH) / 4;
               return Stack(
                 children: [
+                  // 网格底色
                   for (int r = 0; r < 4; r++)
                     for (int c = 0; c < 5; c++)
                       Positioned(
-                        left: c * cellW,
-                        top: r * cellH,
+                        left: gutter + c * cellW,
+                        top: headH + r * cellH,
                         width: cellW,
                         height: cellH,
-                        child: Container(
-                          margin: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: context.isDark
-                                ? const Color(0xFF1E1E1E)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: context.borderColor),
-                          ),
-                        ),
+                        child: cell(c, r),
                       ),
+                  // 星期轴
+                  for (int c = 0; c < 5; c++)
+                    Positioned(
+                      left: gutter + c * cellW,
+                      top: 0,
+                      width: cellW,
+                      height: headH,
+                      child: Center(
+                        child: Text('周${days[c]}',
+                            style: TextStyle(
+                                fontSize: AppTheme.fontCaption - 1,
+                                fontWeight: c == today
+                                    ? FontWeight.w700
+                                    : FontWeight.w400,
+                                color: c == today
+                                    ? AppTheme.primaryColor
+                                    : context.textTertiary)),
+                      ),
+                    ),
+                  // 第一节次轴
+                  for (int r = 0; r < 4; r++)
+                    Positioned(
+                      left: 0,
+                      top: headH + r * cellH,
+                      width: gutter,
+                      height: cellH,
+                      child: Center(
+                        child: Text(slots[r].split(' ').first,
+                            style: TextStyle(
+                                fontSize: AppTheme.fontCaption - 1,
+                                color: context.textTertiary)),
+                      ),
+                    ),
+                  // 课程块：课名 + 教室
                   for (int i = 0; i < blocks.length; i++)
                     Positioned(
-                      left: blocks[i][0] * cellW,
-                      top: blocks[i][1] * cellH,
-                      width: blocks[i][2] * cellW,
-                      height: blocks[i][3] * cellH,
+                      left: gutter + (blocks[i][0] as int) * cellW + 1.5,
+                      top: headH + (blocks[i][1] as int) * cellH + 1.5,
+                      width: cellW - 3,
+                      height: (blocks[i][2] as int) * cellH - 3,
                       child: _in(
                         t,
-                        0.14 + i * 0.1,
-                        Container(
-                          margin: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: Color(blocks[i][4].toInt()).withValues(alpha: 0.16),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                                color: Color(blocks[i][4].toInt())
-                                    .withValues(alpha: 0.55)),
-                          ),
-                          child: Center(
-                            child: Container(
-                              width: 14,
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: Color(blocks[i][4].toInt()),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
+                        0.12 + i * 0.09,
+                        // 圆角 + 左侧粗色条：不能用 Border 混色（Flutter 会断言
+                        // 「borderRadius 只能配统一颜色的边框」），所以色条画在内部。
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(5),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Color(blocks[i][3] as int)
+                                  .withValues(alpha: 0.14),
+                              border: Border.all(
+                                  color: Color(blocks[i][3] as int)
+                                      .withValues(alpha: 0.45),
+                                  width: 0.8),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Container(
+                                    width: 2.5,
+                                    color: Color(blocks[i][3] as int)),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        4, 4, 3, 3),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(blocks[i][4] as String,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.clip,
+                                            style: TextStyle(
+                                                fontSize:
+                                                    AppTheme.fontCaption - 1,
+                                                height: 1.15,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(
+                                                    blocks[i][3] as int))),
+                                        const SizedBox(height: 2),
+                                        Text(blocks[i][5] as String,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.clip,
+                                            style: TextStyle(
+                                                fontSize:
+                                                    AppTheme.fontCaption - 3,
+                                                height: 1.1,
+                                                color:
+                                                    context.textTertiary)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        scaleFrom: 0.82,
+                        scaleFrom: 0.86,
                       ),
                     ),
                 ],
@@ -1729,10 +1880,10 @@ class _PreviewStage extends StatelessWidget {
             },
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         _in(
           t,
-          0.6,
+          0.58,
           Text('点格子看这周的课；考试和成绩也在这页下面',
               style: TextStyle(
                   fontSize: AppTheme.fontCaption, color: context.textTertiary)),
