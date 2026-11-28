@@ -149,7 +149,17 @@ class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
                 final t = Curves.easeOutCubic.transform(_enter.value);
                 return Transform.scale(
                   scale: 0.92 + 0.08 * t,
-                  child: Opacity(opacity: t.clamp(0.0, 1.0), child: _body(context, isDark, shown, total)),
+                  child: Opacity(
+                    opacity: t.clamp(0.0, 1.0),
+                    // 🔴 2026-11-28：整组按可用高度缩。
+                    // 之前牌堆 + 圆点 + 两个按钮 + 提示是固定高度，
+                    // 在矮一些的屏幕上最下面那条会被挤出屏幕 ——
+                    // 同学反馈「滑完没看到两张选择卡片」就是这个。
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: _body(context, isDark, shown, total),
+                    ),
+                  ),
                 );
               },
             ),
@@ -180,23 +190,27 @@ class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _ghostButton(
+            _choiceCard(
               label: '不启用',
+              hint: '先放着',
+              icon: Icons.visibility_off_rounded,
               onTap: () => _decide(false),
               isDark: isDark,
             ),
-            const SizedBox(width: 14),
-            _ghostButton(
+            const SizedBox(width: 12),
+            _choiceCard(
               label: '启用',
+              hint: '加到服务页',
+              icon: Icons.check_rounded,
               onTap: () => _decide(true),
               isDark: isDark,
               strong: true,
             ),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         Text(
-          '点空白处可以让卡片停一下',
+          '也可以直接把卡片往左 / 往右滑',
           style: TextStyle(
             fontSize: AppTheme.fontCaption,
             color: Colors.white.withValues(alpha: 0.62),
@@ -412,34 +426,74 @@ class _ServiceIntroOverlayState extends State<ServiceIntroOverlay>
     );
   }
 
-  Widget _ghostButton({
+  /// 左右两张选择卡。比两个文字按钮更像「做选择」，也不会被当成装饰。
+  Widget _choiceCard({
     required String label,
+    required String hint,
+    required IconData icon,
     required VoidCallback onTap,
     required bool isDark,
     bool strong = false,
   }) {
+    final fg = strong
+        ? AppTheme.primaryColor
+        : (isDark ? Colors.white : AppTheme.textPrimaryLight);
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
+        width: 132,
+        padding: const EdgeInsets.fromLTRB(14, 11, 14, 11),
         decoration: BoxDecoration(
           color: strong
-              ? Colors.white.withValues(alpha: 0.92)
-              : Colors.white.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(999),
+              ? Colors.white
+              : (isDark
+                  ? Colors.white.withValues(alpha: 0.10)
+                  : Colors.white.withValues(alpha: 0.92)),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(
-            color: Colors.white.withValues(alpha: strong ? 0.0 : 0.28),
+            color: strong
+                ? Colors.transparent
+                : (isDark ? Colors.white24 : const Color(0xFFE3E4E8)),
           ),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: AppTheme.fontSmall,
-            fontWeight: FontWeight.w600,
-            color: strong ? AppTheme.primaryColor : Colors.white,
-          ),
+        child: Row(
+          children: [
+            Icon(icon, size: 17, color: fg),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: AppTheme.fontBody,
+                      fontWeight: FontWeight.w600,
+                      color: fg,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    hint,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: strong
+                          ? fg.withValues(alpha: 0.62)
+                          : (isDark
+                              ? Colors.white.withValues(alpha: 0.5)
+                              : AppTheme.textTertiaryLight),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+
 }

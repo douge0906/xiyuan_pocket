@@ -8,6 +8,7 @@ import 'pages/home_page.dart';
 import 'pages/notification_page.dart';
 import 'pages/toolbox_page.dart';
 import 'pages/user_page.dart';
+import 'pages/onboarding_page.dart';
 import 'pages/course_table_home_page.dart';
 import 'services/app_locale.dart';
 import 'services/current_tab.dart';
@@ -15,6 +16,7 @@ import 'services/nav_prefs.dart';
 import 'services/app_update_service.dart';
 import 'services/course_storage.dart';
 import 'services/course_sync_service.dart';
+import 'services/onboarding_prefs.dart';
 import 'services/legal_consent.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
@@ -213,7 +215,7 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) AppUpdateService.checkAndPrompt(context);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ensurePrivacyConsent());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootGate());
     _registerTabBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) => _handleWidgetClick());
     // 🔴 预热全部 Tab（2026-10-30 六次自检）。
@@ -226,6 +228,44 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     //   · 切页时页面已有内容 → 无「空 → 满」的跳变；
     //   · IndexedStack 本来就只绘制当前页，其余页不产生绘制开销。
     WidgetsBinding.instance.addPostFrameCallback((_) => _prewarmPages());
+  }
+
+  /// 启动闸门：第一次打开先走「快速开始」，走完直接去登录页。
+  ///
+  /// 为什么把它排在隐私弹窗前面：引导的最后一步就是「同意并去登录」，
+  /// 同意在那一步落盘 —— 再弹一次同样的弹窗只会让人以为刚才没生效。
+  /// 老用户（已走过引导）仍然会命中后面的隐私检查，行为和原来一致。
+  Future<void> _bootGate() async {
+    if (!mounted) return;
+    var done = await OnboardingPrefs.isDone();
+    if (!mounted) return;
+    // 老用户升级上来：隐私政策已经同意过，说明不是第一次装 —— 不打扰，
+    // 直接把引导标成走过（导航布局保持他自己原来的，不覆盖）。
+    if (!done && await LegalConsentService.isAccepted()) {
+      await OnboardingPrefs.markDone(await OnboardingPrefs.mode());
+      done = true;
+    }
+    if (!mounted) return;
+    if (!done) {
+      final finished = await Navigator.of(context).push<bool>(
+        PageRouteBuilder<bool>(
+          opaque: true,
+          transitionDuration: const Duration(milliseconds: 340),
+          pageBuilder: (_, animation, __) => FadeTransition(
+            opacity: animation,
+            child: const OnboardingPage(),
+          ),
+        ),
+      );
+      if (!mounted) return;
+      // 用户按返回键退出引导：这次先按老流程走，下次启动再引导。
+      if (finished == true) {
+        // 最终落在登录页（也就是「我的」）。
+        AppTabs.go(NavPage.user);
+      }
+    }
+    if (!mounted) return;
+    await _ensurePrivacyConsent();
   }
 
   /// 首次启动隐私政策确认：拒绝则退出 App，同意后进入。
