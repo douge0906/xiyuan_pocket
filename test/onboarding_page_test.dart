@@ -11,8 +11,11 @@ import 'package:xiyuan_pocket/services/onboarding_prefs.dart';
 /// 这几个点都必须有测试：它们是「首次启动」的唯一路径，
 /// 一旦哪一步不动，新装的人就卡在门口 —— 而老用户永远看不到。
 void main() {
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    // NavPrefs 是进程级 notifier：上一个用例改过的布局会漏到下一个用例，
+    // 必须显式回出厂，否则「点眼睛能不能隐藏」这种断言全看执行顺序。
+    await NavPrefs.reset();
   });
 
   /// 点一下再走两帧：翻页用的是 420ms 动画，只 pump 一次长时长
@@ -42,7 +45,7 @@ void main() {
 
     await tapText(tester, '开始');
     // 第二步：五个标签的介绍
-    expect(find.text('五个标签，各管一块'), findsOneWidget);
+    expect(find.text('五个标签，顺手排一下'), findsOneWidget);
 
     await tapText(tester, '继续');
     // 第三步：两张模式卡片
@@ -64,6 +67,32 @@ void main() {
     expect(await LegalConsentService.isAccepted(), isTrue);
 
     // 让周期定时器随页面销毁
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('第二步点眼睛能真的隐藏一个标签', (tester) async {
+    await pumpOnboarding(tester);
+    await tapText(tester, '开始');
+
+    // 「消息」那一行的眼睛
+    final eye = find.descendant(
+      of: find.byKey(const ValueKey<String>('tab-message')),
+      matching: find.byType(IconButton),
+    );
+    expect(eye, findsOneWidget);
+
+    await tester.tap(eye);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(NavPrefs.layout.hidden.contains(NavPage.message), isTrue);
+    // 模拟导航条上也真的没了
+    expect(NavPrefs.visible.contains(NavPage.message), isFalse);
+
+    // 再点一次恢复
+    await tester.tap(eye);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(NavPrefs.layout.hidden.contains(NavPage.message), isFalse);
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

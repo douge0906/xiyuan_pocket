@@ -239,12 +239,8 @@ class _MainAppState extends State<MainApp> with TickerProviderStateMixin {
     if (!mounted) return;
     var done = await OnboardingPrefs.isDone();
     if (!mounted) return;
-    // 老用户升级上来：隐私政策已经同意过，说明不是第一次装 —— 不打扰，
-    // 直接把引导标成走过（导航布局保持他自己原来的，不覆盖）。
-    if (!done && await LegalConsentService.isAccepted()) {
-      await OnboardingPrefs.markDone(await OnboardingPrefs.mode());
-      done = true;
-    }
+    // 老用户升级上来也走一遍：这次是「介绍新版本」的机会，
+    // 而且第二步是他自己动手排标签，不是被动看广告。
     if (!mounted) return;
     if (!done) {
       final finished = await Navigator.of(context).push<bool>(

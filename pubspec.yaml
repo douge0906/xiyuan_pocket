@@ -1,7 +1,7 @@
 name: xiyuan_pocket
 description: "掌上锡院 —— 无锡学院校园生活助手"
 publish_to: 'none'
-version: 1.0.10+59
+version: 1.0.10+60
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -95,3 +95,4 @@ flutter:
     - assets/legal/user_agreement.md
     # 实验室 → 标准教室对照表（来源：无锡学院实验室_机器可读.csv）
     - assets/data/lab_rooms.json
+    - assets/images/app_icon.png

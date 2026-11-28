@@ -189,7 +189,27 @@ class _OnboardingPageState extends State<OnboardingPage>
               to: 0.50,
               offset: const Offset(0, 22),
               scaleFrom: 0.86,
-              child: _LogoTile(),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // 一层很淡的柔光，让墨黑方块浮起来 —— 只用渐变，不加动画，
+                  // 免得和标志本身的浮动撞在一起变成「两个东西在动」。
+                  Container(
+                    width: 178,
+                    height: 178,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          AppTheme.primaryColor.withValues(alpha: 0.10),
+                          AppTheme.primaryColor.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _LogoTile(),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 26),
@@ -585,7 +605,8 @@ class _OnboardingPageState extends State<OnboardingPage>
       child: SizedBox(
         width: double.infinity,
         height: 52,
-        child: FilledButton(
+        child: _PressScale(
+          child: FilledButton(
           onPressed: _finishing ? null : _next,
           style: FilledButton.styleFrom(
             backgroundColor: AppTheme.primaryColor,
@@ -607,6 +628,7 @@ class _OnboardingPageState extends State<OnboardingPage>
               const Icon(Icons.arrow_forward_rounded, size: 18),
             ],
           ),
+          ),
         ),
       ),
     );
@@ -614,6 +636,41 @@ class _OnboardingPageState extends State<OnboardingPage>
 }
 
 // ==================================================================== 组件
+
+/// 按下时轻微回弹。用 `Listener` 而不是 `GestureDetector`：
+/// 后者会吃掉点击，按钮就点不动了。
+class _PressScale extends StatefulWidget {
+  const _PressScale({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<_PressScale> {
+  bool _down = false;
+
+  void _set(bool v) {
+    if (_down == v) return;
+    setState(() => _down = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => _set(true),
+      onPointerUp: (_) => _set(false),
+      onPointerCancel: (_) => _set(false),
+      child: AnimatedScale(
+        scale: _down ? 0.975 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
+    );
+  }
+}
 
 /// 出现动画：位移 + 淡入，可按时间片错峰。
 class _Reveal extends StatelessWidget {
@@ -780,6 +837,11 @@ class _LogoTileState extends State<_LogoTile>
 ///
 /// 用一条会自己走动的底部导航演示「切页」，上方卡片跟着换 ——
 /// 比列五条文字更直观，也更像 App 本身。
+/// 第二步不是「看一遍」，是「现在就排」：拖动换顺序、点眼睛隐藏，
+/// 底下那条模拟导航实时跟着变 —— 同学当场就能看到自己排出来的样子。
+///
+/// 2026-11-29 改：上一版这里写的是「长按标签可以调整顺序和显隐」，
+/// 但页面本身是只读的演示，那句话等于承诺了做不到的事。
 class _TabsStep extends StatefulWidget {
   const _TabsStep({required this.animation});
 
@@ -790,35 +852,61 @@ class _TabsStep extends StatefulWidget {
 }
 
 class _TabsStepState extends State<_TabsStep> {
-  static const List<_TabInfo> _tabs = [
-    _TabInfo(Icons.home_rounded, '首页', '今天有什么，先看这里'),
-    _TabInfo(Icons.inbox_rounded, '消息', '教务、校园要闻、图书馆'),
-    _TabInfo(Icons.calendar_month_rounded, '课表', '按周看，考试和成绩也在'),
-    _TabInfo(Icons.apps_rounded, '服务', '十几个校园服务，收藏常用的'),
-    _TabInfo(Icons.person_rounded, '我的', '账号、外观、小组件'),
-  ];
-
-  int _index = 0;
-  Timer? _timer;
+  late List<NavPage> _order;
+  late Set<NavPage> _hidden;
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
-      if (!mounted) return;
-      setState(() => _index = (_index + 1) % _tabs.length);
-    });
+    final layout = NavPrefs.layout;
+    _order = List<NavPage>.from(layout.order);
+    _hidden = Set<NavPage>.from(layout.hidden);
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
+  static const Map<NavPage, _TabInfo> _info = <NavPage, _TabInfo>{
+    NavPage.home: _TabInfo(Icons.home_rounded, '首页', '今天有什么，先看这里'),
+    NavPage.message: _TabInfo(Icons.inbox_rounded, '消息', '教务、校园要闻、图书馆'),
+    NavPage.course: _TabInfo(Icons.calendar_month_rounded, '课表', '按周看，考试和成绩也在'),
+    NavPage.service: _TabInfo(Icons.apps_rounded, '服务', '十几个校园服务，收藏常用的'),
+    NavPage.user: _TabInfo(Icons.person_rounded, '我的', '账号、外观、小组件'),
+  };
+
+  /// 至少要留两个可见（含固定的「我的」），不然主界面只剩一页。
+  void _toggle(NavPage page) {
+    if (page == kPinnedNavPage) return;
+    final visibleCount = _order.where((p) => !_hidden.contains(p)).length;
+    if (!_hidden.contains(page) && visibleCount <= 1) {
+      // 再隐就没有了 —— 抖一下表示「不行」，比弹一句提示轻。
+      HapticFeedback.heavyImpact();
+      return;
+    }
+    setState(() {
+      if (_hidden.contains(page)) {
+        _hidden.remove(page);
+      } else {
+        _hidden.add(page);
+      }
+    });
+    HapticFeedback.selectionClick();
+    NavPrefs.setHidden(page, _hidden.contains(page));
+  }
+
+  void _reorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final page = _order.removeAt(oldIndex);
+      _order.insert(newIndex, page);
+    });
+    HapticFeedback.mediumImpact();
+    NavPrefs.setOrder(_order);
   }
 
   @override
   Widget build(BuildContext context) {
-    final info = _tabs[_index];
+    final visible = <NavPage>[
+      ..._order.where((p) => !_hidden.contains(p)),
+      kPinnedNavPage,
+    ];
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
       child: Column(
@@ -829,7 +917,7 @@ class _TabsStepState extends State<_TabsStep> {
             from: 0.00,
             to: 0.45,
             child: Text(
-              '五个标签，各管一块',
+              '五个标签，顺手排一下',
               style: TextStyle(
                 fontSize: AppTheme.fontDisplay,
                 fontWeight: FontWeight.w700,
@@ -837,90 +925,171 @@ class _TabsStepState extends State<_TabsStep> {
               ),
             ),
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 8),
           _Reveal(
             animation: widget.animation,
-            from: 0.15,
-            to: 0.60,
-            offset: const Offset(0, 20),
-            child: Container(
-              height: 196,
-              decoration: BoxDecoration(
-                color: context.isDark
-                    ? const Color(0xFF1E1E1E)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                border: Border.all(color: context.borderColor),
-              ),
-              child: Center(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 320),
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: ScaleTransition(
-                      scale: Tween<double>(begin: 0.92, end: 1).animate(
-                        CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
-                      ),
-                      child: child,
-                    ),
-                  ),
-                  child: Column(
-                    key: ValueKey<int>(_index),
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          color: AppTheme.primaryColor.withValues(alpha: 0.08),
-                          borderRadius:
-                              BorderRadius.circular(AppTheme.radiusMd),
-                        ),
-                        child: Icon(info.icon,
-                            size: 28, color: AppTheme.primaryColor),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        info.name,
-                        style: TextStyle(
-                          fontSize: AppTheme.fontHeading,
-                          fontWeight: FontWeight.w600,
-                          color: context.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        info.desc,
-                        style: TextStyle(
-                          fontSize: AppTheme.fontSmall,
-                          color: context.textTertiary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            from: 0.08,
+            to: 0.55,
+            child: Text(
+              '按住拖动换顺序，点眼睛可以藏起来',
+              style: TextStyle(
+                fontSize: AppTheme.fontSmall,
+                color: context.textTertiary,
               ),
             ),
           ),
-          const SizedBox(height: 26),
+          const SizedBox(height: 20),
           _Reveal(
             animation: widget.animation,
-            from: 0.30,
-            to: 0.80,
+            from: 0.16,
+            to: 0.70,
             offset: const Offset(0, 18),
-            child: _MockTabBar(tabs: _tabs, index: _index),
+            child: Container(
+              decoration: BoxDecoration(
+                color: context.isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                border: Border.all(color: context.borderColor),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                itemCount: _order.length,
+                onReorder: _reorder,
+                proxyDecorator: (child, index, animation) {
+                  return Material(
+                    color: Colors.transparent,
+                    child: ScaleTransition(
+                      scale: Tween<double>(begin: 1, end: 1.03).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOut,
+                        ),
+                      ),
+                      child: child,
+                    ),
+                  );
+                },
+                itemBuilder: (context, i) {
+                  final page = _order[i];
+                  final info = _info[page]!;
+                  final shown = !_hidden.contains(page);
+                  return Container(
+                    key: ValueKey<String>('tab-${page.id}'),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: context.borderColor, width: 0.5),
+                      ),
+                    ),
+                    child: ReorderableDelayedDragStartListener(
+                      index: i,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.drag_indicator_rounded,
+                              size: 18,
+                              color: context.textTertiary.withValues(alpha: 0.7),
+                            ),
+                            const SizedBox(width: 10),
+                            Opacity(
+                              opacity: shown ? 1 : 0.4,
+                              child: _tabIcon(page, info.icon, 30),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Opacity(
+                                opacity: shown ? 1 : 0.4,
+                                child: Text(
+                                  info.name,
+                                  style: TextStyle(
+                                    fontSize: AppTheme.fontBody,
+                                    fontWeight: FontWeight.w500,
+                                    color: context.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (page == kPinnedNavPage)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 10),
+                                child: Icon(Icons.lock_outline_rounded,
+                                    size: 17, color: context.textTertiary),
+                              )
+                            else
+                              IconButton(
+                                tooltip: shown ? '隐藏' : '显示',
+                                onPressed: () => _toggle(page),
+                                icon: Icon(
+                                  shown
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 19,
+                                  color: shown
+                                      ? context.textSecondary
+                                      : context.textTertiary,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            '长按标签可以调整顺序和显隐',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: AppTheme.fontSmall,
-              color: context.textTertiary,
+          const SizedBox(height: 18),
+          _Reveal(
+            animation: widget.animation,
+            from: 0.34,
+            to: 0.85,
+            offset: const Offset(0, 14),
+            child: _MockTabBar(pages: visible, order: _order, hidden: _hidden),
+          ),
+          const SizedBox(height: 10),
+          _Reveal(
+            animation: widget.animation,
+            from: 0.42,
+            to: 0.95,
+            child: Text(
+              '以后在「我的 → 页面设置」里还能改',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: AppTheme.fontCaption,
+                color: context.textTertiary,
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// 首页用 App 自己的图标，其余用界面里的图标 —— 参考图里也是这么做的。
+  Widget _tabIcon(NavPage page, IconData icon, double size) {
+    if (page == NavPage.home) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(size * 0.26),
+        child: Image.asset(
+          'assets/images/app_icon.png',
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Icon(icon, size: size * 0.8),
+        ),
+      );
+    }
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(size * 0.28),
+      ),
+      child: Icon(icon, size: size * 0.52, color: AppTheme.primaryColor),
     );
   }
 }
@@ -932,12 +1101,19 @@ class _TabInfo {
   final String desc;
 }
 
-/// 演示用的底部导航：选中项有淡底 + 上浮的小圆点。
+/// 演示用的底部导航：跟着上面的拖动 / 隐藏实时变化，选中项有淡底 + 上浮。
 class _MockTabBar extends StatelessWidget {
-  const _MockTabBar({required this.tabs, required this.index});
+  const _MockTabBar({
+    required this.pages,
+    required this.order,
+    required this.hidden,
+  });
 
-  final List<_TabInfo> tabs;
-  final int index;
+  final List<NavPage> pages;
+  final List<NavPage> order;
+  final Set<NavPage> hidden;
+
+  static const Map<NavPage, _TabInfo> _info = _TabsStepState._info;
 
   @override
   Widget build(BuildContext context) {
@@ -950,15 +1126,15 @@ class _MockTabBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          for (int i = 0; i < tabs.length; i++)
+          for (int i = 0; i < pages.length; i++)
             Expanded(
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 280),
+                duration: const Duration(milliseconds: 260),
                 curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.symmetric(vertical: 7),
                 margin: const EdgeInsets.symmetric(horizontal: 2),
                 decoration: BoxDecoration(
-                  color: i == index
+                  color: i == 0
                       ? AppTheme.primaryColor.withValues(alpha: 0.07)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(AppTheme.radiusSm),
@@ -967,26 +1143,18 @@ class _MockTabBar extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     AnimatedScale(
-                      duration: const Duration(milliseconds: 280),
-                      scale: i == index ? 1.12 : 1,
-                      child: Icon(
-                        tabs[i].icon,
-                        size: 21,
-                        color: i == index
-                            ? AppTheme.primaryColor
-                            : context.textTertiary,
-                      ),
+                      duration: const Duration(milliseconds: 260),
+                      scale: i == 0 ? 1.1 : 1,
+                      child: _icon(context, pages[i], i == 0),
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      tabs[i].name,
+                      _info[pages[i]]!.name,
                       style: TextStyle(
                         fontSize: AppTheme.fontCaption,
-                        fontWeight:
-                            i == index ? FontWeight.w600 : FontWeight.w400,
-                        color: i == index
-                            ? AppTheme.primaryColor
-                            : context.textTertiary,
+                        fontWeight: i == 0 ? FontWeight.w600 : FontWeight.w400,
+                        color:
+                            i == 0 ? AppTheme.primaryColor : context.textTertiary,
                       ),
                     ),
                   ],
@@ -996,6 +1164,24 @@ class _MockTabBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _icon(BuildContext context, NavPage page, bool active) {
+    final info = _info[page]!;
+    final color = active ? AppTheme.primaryColor : context.textTertiary;
+    if (page == NavPage.home) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: Image.asset(
+          'assets/images/app_icon.png',
+          width: 21,
+          height: 21,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Icon(info.icon, size: 21, color: color),
+        ),
+      );
+    }
+    return Icon(info.icon, size: 21, color: color);
   }
 }
 
