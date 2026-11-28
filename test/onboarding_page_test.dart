@@ -70,26 +70,23 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('第二步点眼睛能真的隐藏一个标签', (tester) async {
+  testWidgets('第二步直接点底部那个标签就能收起，再点放回来', (tester) async {
     await pumpOnboarding(tester);
     await tapText(tester, '开始');
 
-    // 「消息」那一行的眼睛
-    final eye = find.descendant(
-      of: find.byKey(const ValueKey<String>('tab-message')),
-      matching: find.byType(IconButton),
-    );
-    expect(eye, findsOneWidget);
+    // 调整就在底部那条导航上：点一下「消息」它就收起。
+    final tab = find.byKey(const ValueKey<String>('bar-message'));
+    expect(tab, findsOneWidget);
 
-    await tester.tap(eye);
+    await tester.tap(tab);
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(NavPrefs.layout.hidden.contains(NavPage.message), isTrue);
     // 模拟导航条上也真的没了
     expect(NavPrefs.visible.contains(NavPage.message), isFalse);
 
-    // 再点一次恢复
-    await tester.tap(eye);
+    // 再点一次放回来
+    await tester.tap(tab);
     await tester.pump(const Duration(milliseconds: 300));
     expect(NavPrefs.layout.hidden.contains(NavPage.message), isFalse);
 

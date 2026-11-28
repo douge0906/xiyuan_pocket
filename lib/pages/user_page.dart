@@ -1,3 +1,4 @@
+import 'onboarding_page.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -1137,6 +1138,22 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
                                   color: context.textTertiary)),
                         ),
 
+                        _divider(),
+                        // 引导页只有第一次会自己弹。想再看一遍、或者演示给别人看，
+                        // 从这里进去；不会重置任何设置。
+                        InkWell(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<bool>(
+                              builder: (_) => const OnboardingPage(),
+                            ),
+                          ),
+                          child: _listTile(
+                            icon: Icons.auto_awesome_rounded,
+                            title: '再看一遍快速开始',
+                            trailing: const Icon(Icons.chevron_right,
+                                color: Color(0xFF9CA3AF)),
+                          ),
+                        ),
                         _divider(),
                         InkWell(
                           onTap: _openSettings,
