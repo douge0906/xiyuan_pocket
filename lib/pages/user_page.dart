@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -18,6 +17,7 @@ import 'user/user_cards.dart';
 import 'settings_page.dart';
 import 'widget_hub_page.dart';
 import '../services/data_wipe.dart';
+import '../widgets/coach_tip.dart';
 import '../services/current_tab.dart';
 import '../services/auth_gate.dart';
 import 'invite/invite_page.dart';
@@ -62,6 +62,12 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
 
   /// 登录页顶部那张「友情提醒」是否已关掉。
   bool _loginTipHidden = false;
+  // 引导气泡要悬在「统一认证那一行」正上方，位置只能量出来：
+  // `_tipBottom` 是气泡下沿到 Stack 底部的距离，`_tipArrowInset` 让箭头水平对准那一行。
+  double? _tipBottom;
+  double _tipArrowInset = 60;
+  final GlobalKey _loginStackKey = GlobalKey();
+  final GlobalKey _loginLinkKey = GlobalKey();
 
   /// 学生姓名（来自教务成绩查询的学生信息；拿不到时为空）
   String _studentName = '';
@@ -189,6 +195,15 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _openInvite(context);
+    });
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 键盘弹起会把链接顶上去，气泡要跟着走，否则箭头指空。
+    if (_loginTipHidden || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _measureLoginTip();
     });
   }
 
@@ -690,85 +705,38 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   ///
   /// 只给还没登录过的人看：登录成功后这个页面本身就不再出现；
   /// 确实用不上的人点右上角 × 永久关掉。
-  /// 未登录时的引导卡：不放在页面顶上，而是紧贴在那行「新生需要进行统一认证
-  /// 登录账户激活 点击跳转」**上面**，底下带一个小箭头指着它 —— 用户要点的就是
-  /// 下面那一行，卡片得朝着它指，而不是飘在屏幕最上方。
-  Widget _loginTipCard(bool isDark) {
-    final tipBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final box = Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
-      decoration: BoxDecoration(
-        color: tipBg,
-        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        border: Border.all(color: context.borderColor),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline_rounded,
-              size: 16, color: AppTheme.primaryColor),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('友情提醒',
-                    style: TextStyle(
-                        fontSize: AppTheme.fontSmall,
-                        fontWeight: FontWeight.w600,
-                        color: context.textPrimary)),
-                const SizedBox(height: 4),
-                Text(
-                  '系统使用学校统一认证登录。忘记密码或账号还没激活，'
-                  '点登录按钮下方那行「新生需要进行统一认证登录账户激活」，'
-                  '去统一认证页面处理完再回来登录。',
-                  style: TextStyle(
-                      fontSize: AppTheme.fontSmall,
-                      height: 1.55,
-                      color: context.textSecondary),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: '不再提示',
-            visualDensity: VisualDensity.compact,
-            icon: Icon(Icons.close_rounded,
-                size: 18, color: context.textTertiary),
-            onPressed: _dismissLoginTip,
-          ),
-        ],
-      ),
-    );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        box,
-        // 指向下面那行可点的统一认证链接：菱形只画上、左两条边，
-        // 贴着卡片底边，看起来就是卡片伸出来的一个尖。
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 34, top: 1),
-            child: Transform.rotate(
-              angle: math.pi / 4,
-              child: Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: tipBg,
-                  border: Border(
-                    top: BorderSide(color: context.borderColor),
-                    left: BorderSide(color: context.borderColor),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
-    );
+  /// 量出「统一认证那一行」在页面里的位置，好把引导气泡悬在它正上方。
+  ///
+  /// 为什么不用固定数值：登录表单在可滚动区域里，不同机型、键盘弹起/收起都会变；
+  /// 写死一个 bottom 在某个屏幕上正好，在另一个屏幕上就指到别处了。
+  void _measureLoginTip() {
+    final stackCtx = _loginStackKey.currentContext;
+    final linkCtx = _loginLinkKey.currentContext;
+    if (stackCtx == null || linkCtx == null) return;
+    final stack = stackCtx.findRenderObject() as RenderBox?;
+    final link = linkCtx.findRenderObject() as RenderBox?;
+    if (stack == null || !stack.hasSize) return;
+    if (link == null || !link.hasSize) return;
+
+    final origin = link.localToGlobal(Offset.zero, ancestor: stack);
+    // 气泡底边离目标上方 12px；箭头 10px 见方，压住卡片下沿 5px。
+    // 上界是为了键盘弹起、链接被顶到顶部时不至于把气泡顶出屏幕（卡片约 190 高）。
+    final rawBottom = stack.size.height - origin.dy + 12;
+    final maxBottom = stack.size.height - 210;
+    final bottom = rawBottom.clamp(12.0, maxBottom < 12 ? 12.0 : maxBottom);
+    final centerX = origin.dx + link.size.width / 2;
+    // 气泡本身是 `right: 14` 贴右边摆的，所以箭头在**卡片内部**的偏移要再减 14；
+    // 箭头 10px 宽，取中心再减 5。
+    final inset = (stack.size.width - 14 - centerX - 5).clamp(12.0, 240.0);
+
+    if (_tipBottom == null ||
+        (bottom - _tipBottom!).abs() > 1 ||
+        (inset - _tipArrowInset).abs() > 1) {
+      setState(() {
+        _tipBottom = bottom;
+        _tipArrowInset = inset;
+      });
+    }
   }
 
   Future<void> _dismissLoginTip() async {
@@ -778,11 +746,20 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
   }
 
   Widget _buildLoginPage(bool isDark) {
+    if (!_loginTipHidden) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _measureLoginTip();
+      });
+    }
     return Scaffold(
       backgroundColor: context.scaffoldColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Stack(
+          key: _loginStackKey,
+          fit: StackFit.expand,
+          children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -945,14 +922,13 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
 
               const SizedBox(height: 16),
 
-              if (!_loginTipHidden) _loginTipCard(isDark),
-
               // v1.7.2：**替换**掉原来那句合规小字（“登录即表示已阅读并同意相关说明…
               // 密码仅保存在本机，不发送给任何服务器。”）—— 用户当时的原话是
               // 「统一认证登录页面下方小字修改 修改为 新生需要进行统一认证登录账户激活
               // 点击跳转（…）直接这样就行」，即只留这一行可点击指引，不再有两行小字。
               // v1.6.5：新生账户激活指引 + 同一跳转地址）
               GestureDetector(
+                key: _loginLinkKey,
                 onTap: () => launchUrl(
                   Uri.parse('https://wxcas.cwxu.edu.cn/lyuapServer/login'
                       '?service=https://my.cwxu.edu.cn/shiro-cas'),
@@ -977,6 +953,19 @@ class _UserPageState extends State<UserPage> with WidgetsBindingObserver {
               const SizedBox(height: 40),
             ],
           ),
+        ),
+            if (!_loginTipHidden && _tipBottom != null)
+              CoachTipOverlay(
+                bottom: _tipBottom!,
+                arrowDown: true,
+                arrowRightInset: _tipArrowInset,
+                title: '友情提醒',
+                message: '系统使用学校统一认证登录。忘记密码或账号还没激活，'
+                    '点下面那行「新生需要进行统一认证登录账户激活」，'
+                    '去统一认证页面处理完再回来登录。',
+                onDismissed: _dismissLoginTip,
+              ),
+          ],
         ),
       ),
     );
