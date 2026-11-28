@@ -100,7 +100,7 @@ class _OnboardingPageState extends State<OnboardingPage>
     final overlay = Overlay.of(context);
     final entry = OverlayEntry(builder: (_) => const _DoneFlash());
     overlay.insert(entry);
-    await Future<void>.delayed(const Duration(milliseconds: 640));
+    await Future<void>.delayed(const Duration(milliseconds: 980));
     entry.remove();
     if (!mounted) return;
     Navigator.of(context).pop(true);
@@ -602,41 +602,64 @@ class _OnboardingPageState extends State<OnboardingPage>
 
   Widget _buildBottom(BuildContext context) {
     final label = switch (_step) {
-      0 => '开始',
+      0 => '开始设置',
       1 => '继续',
       2 => '就这个',
       _ => '同意并去登录',
     };
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 6, 24, 18),
-      child: SizedBox(
-        width: double.infinity,
-        height: 52,
-        child: _PressScale(
-          child: FilledButton(
-          onPressed: _finishing ? null : _next,
-          style: FilledButton.styleFrom(
-            backgroundColor: AppTheme.primaryColor,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      padding: const EdgeInsets.fromLTRB(18, 4, 24, 16),
+      child: Row(
+        children: [
+          // 回退：一步一屏的流程，没有退路是不讲理的。
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            opacity: _step == 0 ? 0 : 1,
+            child: IgnorePointer(
+              ignoring: _step == 0,
+              child: TextButton.icon(
+                onPressed: _finishing ? null : () => _go(_step - 1),
+                icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                label: const Text('上一步'),
+                style: TextButton.styleFrom(
+                  foregroundColor: context.textSecondary,
+                  textStyle: const TextStyle(fontSize: AppTheme.fontSmall),
+                ),
+              ),
             ),
-            textStyle: const TextStyle(
-              fontSize: AppTheme.fontTitle,
-              fontWeight: FontWeight.w600,
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: _PressScale(
+                child: FilledButton(
+                  onPressed: _finishing ? null : _next,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: AppTheme.fontTitle,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(label),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.arrow_forward_rounded, size: 18),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(label),
-              const SizedBox(width: 6),
-              const Icon(Icons.arrow_forward_rounded, size: 18),
-            ],
-          ),
-          ),
-        ),
+        ],
       ),
     );
   }
@@ -761,8 +784,31 @@ class _Typewriter extends StatelessWidget {
 
 /// 应用标志：墨黑圆角方块 + 日历，右下角一枚水波小徽标（对应「一卡通 / 电费」）。
 /// 走完最后一步时的一下：一个放大的勾，然后才切到登录页。
-class _DoneFlash extends StatelessWidget {
+class _DoneFlash extends StatefulWidget {
   const _DoneFlash();
+
+  @override
+  State<_DoneFlash> createState() => _DoneFlashState();
+}
+
+class _DoneFlashState extends State<_DoneFlash>
+    with TickerProviderStateMixin {
+  late final AnimationController _pop = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  )..forward();
+
+  late final AnimationController _ring = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..forward();
+
+  @override
+  void dispose() {
+    _pop.dispose();
+    _ring.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -770,50 +816,129 @@ class _DoneFlash extends StatelessWidget {
       child: ColoredBox(
         color: context.scaffoldColor,
         child: Center(
-          child: TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 560),
-            curve: Curves.easeOutBack,
-            builder: (context, t, child) => Opacity(
-              opacity: t.clamp(0.0, 1.0),
-              child: Transform.scale(scale: 0.82 + 0.18 * t, child: child),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 76,
-                  height: 76,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryColor,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.primaryColor.withValues(alpha: 0.28),
-                        blurRadius: 28,
-                        offset: const Offset(0, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 132,
+                height: 132,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // 一圈向外扩散的光：很轻，只是让那个勾「落」下来。
+                    AnimatedBuilder(
+                      animation: _ring,
+                      builder: (context, _) {
+                        final p = Curves.easeOutCubic.transform(_ring.value);
+                        return Container(
+                          width: 76 + 56 * p,
+                          height: 76 + 56 * p,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppTheme.primaryColor
+                                .withValues(alpha: 0.16 * (1 - p)),
+                          ),
+                        );
+                      },
+                    ),
+                    ScaleTransition(
+                      scale: CurvedAnimation(
+                        parent: _pop,
+                        curve: Curves.elasticOut,
                       ),
-                    ],
-                  ),
-                  child: const Icon(Icons.check_rounded,
-                      color: Colors.white, size: 42),
+                      child: Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppTheme.primaryColor
+                                  .withValues(alpha: 0.30),
+                              blurRadius: 26,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: AnimatedBuilder(
+                          animation: _pop,
+                          builder: (context, _) => CustomPaint(
+                            painter: _CheckPainter(_pop.value),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 18),
-                Text(
-                  '准备好了',
-                  style: TextStyle(
-                    fontSize: AppTheme.fontBody,
-                    fontWeight: FontWeight.w600,
-                    color: context.textPrimary,
-                  ),
+              ),
+              const SizedBox(height: 20),
+              AnimatedBuilder(
+                animation: _pop,
+                builder: (context, child) => Opacity(
+                  opacity: (_pop.value * 1.6).clamp(0.0, 1.0),
+                  child: child,
                 ),
-              ],
-            ),
+                child: Column(
+                  children: [
+                    Text(
+                      '都准备好了',
+                      style: TextStyle(
+                        fontSize: AppTheme.fontTitle,
+                        fontWeight: FontWeight.w600,
+                        color: context.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '马上带你去登录',
+                      style: TextStyle(
+                        fontSize: AppTheme.fontSmall,
+                        color: context.textTertiary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+/// 勾是「画」出来的：两条线按进度描出来，比直接放一个图标有落点。
+class _CheckPainter extends CustomPainter {
+  _CheckPainter(this.progress);
+
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Curves.easeOutCubic.transform(progress.clamp(0.0, 1.0));
+    final paint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 4.2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final a = Offset(size.width * 0.30, size.height * 0.53);
+    final b = Offset(size.width * 0.45, size.height * 0.68);
+    final c = Offset(size.width * 0.72, size.height * 0.36);
+    final mid = p < 0.45 ? p / 0.45 : 1.0;
+    canvas.drawLine(a, Offset(a.dx + (b.dx - a.dx) * mid,
+        a.dy + (b.dy - a.dy) * mid), paint);
+    if (p > 0.45) {
+      final second = (p - 0.45) / 0.55;
+      canvas.drawLine(b, Offset(b.dx + (c.dx - b.dx) * second,
+          b.dy + (c.dy - b.dy) * second), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheckPainter old) =>
+      old.progress != progress;
 }
 
 /// 欢迎页的大标志：直接用 App 自己的图标，外面加一层会呼吸的投影。
@@ -892,11 +1017,22 @@ class _TabsStep extends StatefulWidget {
   State<_TabsStep> createState() => _TabsStepState();
 }
 
-class _TabsStepState extends State<_TabsStep> {
+class _TabsStepState extends State<_TabsStep>
+    with SingleTickerProviderStateMixin {
   /// 只放可自定义的四个；「我的」是固定页，永远排在最后、不参与拖动。
   late List<NavPage> _order;
   late Set<NavPage> _hidden;
   NavPage _active = NavPage.home;
+
+  /// 编辑态才允许「点一下收起」。平时点标签 = 看它管什么 ——
+  /// 上一版把点按直接做成隐藏，手感很糟：想看看介绍，反而把它关掉了。
+  bool _editing = false;
+
+  Timer? _cycle;
+  late final AnimationController _stage = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 820),
+  );
 
   static const Map<NavPage, _TabInfo> _info = <NavPage, _TabInfo>{
     NavPage.home: _TabInfo(Icons.home_rounded, '首页', '今天有什么，先看这里'),
@@ -923,11 +1059,50 @@ class _TabsStepState extends State<_TabsStep> {
       ];
     }
     _hidden = Set<NavPage>.from(layout.hidden);
-    for (final p in _order) {
-      if (!_hidden.contains(p)) {
-        _active = p;
-        break;
-      }
+    for (final p in _shown) {
+      _active = p;
+      break;
+    }
+    _stage.forward();
+    _startCycle();
+  }
+
+  @override
+  void dispose() {
+    _cycle?.cancel();
+    _stage.dispose();
+    super.dispose();
+  }
+
+  List<NavPage> get _shown =>
+      <NavPage>[for (final p in _order) if (!_hidden.contains(p)) p];
+
+  void _startCycle() {
+    _cycle?.cancel();
+    // 自动轮播：没人动手的时候，让它自己把五个标签讲一遍。
+    _cycle = Timer.periodic(const Duration(milliseconds: 3200), (_) {
+      if (!mounted || _editing) return;
+      final shown = _shown;
+      if (shown.length < 2) return;
+      final i = shown.indexOf(_active);
+      _select(shown[(i + 1) % shown.length], haptic: false);
+    });
+  }
+
+  void _select(NavPage page, {bool haptic = true}) {
+    if (page == _active) return;
+    if (haptic) HapticFeedback.selectionClick();
+    setState(() => _active = page);
+    _stage.forward(from: 0);
+  }
+
+  void _toggleEditing() {
+    HapticFeedback.selectionClick();
+    setState(() => _editing = !_editing);
+    if (_editing) {
+      _cycle?.cancel();
+    } else {
+      _startCycle();
     }
   }
 
@@ -936,12 +1111,17 @@ class _TabsStepState extends State<_TabsStep> {
     NavPrefs.setOrder(<NavPage>[...next, kPinnedNavPage]);
   }
 
-  void _onToggle(NavPage page) {
+  void _onTapTab(NavPage page) {
     if (page == kPinnedNavPage) {
-      HapticFeedback.heavyImpact();
+      if (_editing) HapticFeedback.heavyImpact();
+      _select(page);
       return;
     }
-    final shown = _order.where((p) => !_hidden.contains(p)).length;
+    if (!_editing) {
+      _select(page);
+      return;
+    }
+    final shown = _shown.length;
     if (!_hidden.contains(page) && shown <= 1) {
       // 再收就一页都不剩了 —— 重震一下表示「不行」，比弹一句提示轻。
       HapticFeedback.heavyImpact();
@@ -963,9 +1143,8 @@ class _TabsStepState extends State<_TabsStep> {
   @override
   Widget build(BuildContext context) {
     final info = _info[_active]!;
-    final isDark = context.isDark;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 10, 24, 6),
+      padding: const EdgeInsets.fromLTRB(24, 6, 24, 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -975,23 +1154,23 @@ class _TabsStepState extends State<_TabsStep> {
             to: 0.45,
             offset: const Offset(0, 14),
             child: Text(
-              '五个标签，顺手排一下',
+              '五个标签，各管一摊',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: AppTheme.fontHero - 6,
+                fontSize: AppTheme.fontHero - 8,
                 fontWeight: FontWeight.w700,
                 color: context.textPrimary,
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           _Reveal(
             animation: widget.animation,
             from: 0.18,
             to: 0.6,
             offset: const Offset(0, 10),
             child: Text(
-              '长按可以拖动换位置。不常用的，点一下收起来，再点放回来。',
+              '它们一直在屏幕底下。点一个，看看它替你管什么。',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: AppTheme.fontBody,
@@ -1000,81 +1179,77 @@ class _TabsStepState extends State<_TabsStep> {
               ),
             ),
           ),
-          const Spacer(),
-          // 说明跟着你点的那一页走，不用另起一页去读。
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 260),
-            switchInCurve: Curves.easeOutCubic,
-            transitionBuilder: (child, anim) => FadeTransition(
-              opacity: anim,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0, 0.25),
-                  end: Offset.zero,
-                ).animate(anim),
-                child: child,
-              ),
-            ),
-            child: Container(
-              key: ValueKey<String>('tab-desc-${_active.id}'),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-                border: Border.all(color: context.borderColor),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryColor.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                    ),
-                    child: _tabIcon(context, _active, info.icon, 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          info.name,
-                          style: TextStyle(
-                            fontSize: AppTheme.fontBody,
-                            fontWeight: FontWeight.w600,
-                            color: context.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          _hidden.contains(_active)
-                              ? '${info.desc}（已收起）'
-                              : info.desc,
-                          style: TextStyle(
-                            fontSize: AppTheme.fontSmall,
-                            height: 1.4,
-                            color: context.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(height: 14),
+          // 中间这一块不是留白，是让人「看见」每一页长什么样 ——
+          // 每个标签的示意都从它自己的内容里取（课程块、消息行、服务格）。
+          Expanded(
+            child: _PreviewStage(page: _active, animation: _stage),
           ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 240),
+                child: Text(
+                  _editing ? '拖动换位置，点标签收起' : info.desc,
+                  key: ValueKey<String>('hint-${_editing ? 1 : 0}-${_active.id}'),
+                  style: TextStyle(
+                    fontSize: AppTheme.fontSmall,
+                    color: context.textTertiary,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              // 编辑入口做成一个小小的胶囊，不跟主按钮抢注意力。
+              GestureDetector(
+                onTap: _toggleEditing,
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _editing
+                        ? AppTheme.primaryColor
+                        : AppTheme.primaryColor.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _editing
+                            ? Icons.check_rounded
+                            : Icons.tune_rounded,
+                        size: 13,
+                        color: _editing ? Colors.white : AppTheme.primaryColor,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _editing ? '完成' : '调整',
+                        style: TextStyle(
+                          fontSize: AppTheme.fontCaption,
+                          fontWeight: FontWeight.w600,
+                          color:
+                              _editing ? Colors.white : AppTheme.primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           _EditableTabBar(
             order: _order,
             hidden: _hidden,
             active: _active,
+            editing: _editing,
             onReorder: _onReorder,
-            onToggle: _onToggle,
+            onTap: _onTapTab,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Text(
             '以后在「我的 → 页面设置」里还能改',
             textAlign: TextAlign.center,
@@ -1089,22 +1264,650 @@ class _TabsStepState extends State<_TabsStep> {
   }
 }
 
-/// 底部那条导航本身可编辑：长按拖动换顺序，点一下收起/放回。
-/// 这里刻意不做成「上面一列列表 + 下面一个预览」——调整就该在它真正的位置上做。
+/// 中间那块「示意的手机」。每个标签的图画都从它自己的核心元素里长出来：
+/// 首页是几节今天要上的课，消息是几条新通知，课表是格子，服务是图标宫格，
+/// 我是头像加两行设置。都不用文字解释 —— 让人一眼看见它长什么样。
+class _PreviewStage extends StatelessWidget {
+  const _PreviewStage({required this.page, required this.animation});
+
+  final NavPage page;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final t = Curves.easeOutCubic
+            .transform(animation.value.clamp(0.0, 1.0).toDouble());
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF161616) : const Color(0xFFF7F7F8),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            border: Border.all(color: context.borderColor),
+          ),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          child: ClipRect(
+            // 小屏（或分屏）时整块示意图等比缩小，而不是撑破卡片。
+            child: LayoutBuilder(
+              builder: (context, cons) {
+                const designH = 300.0;
+                if (cons.maxHeight >= designH - 20) {
+                  return _body(context, t, isDark);
+                }
+                return FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                    width: cons.maxWidth,
+                    height: designH,
+                    child: _body(context, t, isDark),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _body(BuildContext context, double t, bool isDark) {
+    switch (page) {
+      case NavPage.home:
+        return _home(context, t, isDark);
+      case NavPage.message:
+        return _message(context, t, isDark);
+      case NavPage.course:
+        return _course(context, t);
+      case NavPage.service:
+        return _service(context, t, isDark);
+      case NavPage.user:
+        return _user(context, t, isDark);
+    }
+  }
+
+  /// 0 → 1 的进场：`delay` 之后才开始，走 0.42 的窗口。
+  Widget _in(
+    double t,
+    double delay,
+    Widget child, {
+    Offset from = const Offset(0, 20),
+    double scaleFrom = 1.0,
+  }) {
+    final local = ((t - delay) / 0.42).clamp(0.0, 1.0);
+    final c = Curves.easeOutCubic.transform(local);
+    return Opacity(
+      opacity: c,
+      child: Transform.translate(
+        offset: from * (1 - c),
+        child: Transform.scale(
+          scale: scaleFrom + (1 - scaleFrom) * c,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _card(BuildContext context, {required Widget child}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: context.isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        border: Border.all(color: context.borderColor),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _home(BuildContext context, double t, bool isDark) {
+    return Center(
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _in(
+          t,
+          0,
+          Row(
+            children: [
+              Text('第 12 周 · 周二',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      fontWeight: FontWeight.w600,
+                      color: context.textTertiary)),
+              const Spacer(),
+              Text('今天 4 节',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: context.textTertiary)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        _in(
+          t,
+          0.10,
+          _card(
+            context,
+            child: Row(
+              children: [
+                _timeColumn(context, '08:00', '09:40'),
+                const SizedBox(width: 10),
+                Container(
+                  width: 3,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4C6FFF),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('高等数学（下）',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              fontWeight: FontWeight.w600,
+                              color: context.textPrimary)),
+                      const SizedBox(height: 3),
+                      Text('思贤楼 A203 · 王老师',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontCaption,
+                              color: context.textTertiary)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _in(
+          t,
+          0.22,
+          _card(
+            context,
+            child: Row(
+              children: [
+                _timeColumn(context, '10:10', '11:50'),
+                const SizedBox(width: 10),
+                Container(
+                  width: 3,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF16A34A),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('大学物理实验',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              fontWeight: FontWeight.w600,
+                              color: context.textPrimary)),
+                      const SizedBox(height: 3),
+                      Text('实验楼 305 · 李老师',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontCaption,
+                              color: context.textTertiary)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _in(
+          t,
+          0.34,
+          _card(
+            context,
+            child: Row(
+              children: [
+                _timeColumn(context, '14:00', '15:40'),
+                const SizedBox(width: 10),
+                Container(
+                  width: 3,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('数字电路',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              fontWeight: FontWeight.w600,
+                              color: context.textPrimary)),
+                      const SizedBox(height: 3),
+                      Text('思贤楼 B108 · 周老师',
+                          style: TextStyle(
+                              fontSize: AppTheme.fontCaption,
+                              color: context.textTertiary)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _in(
+          t,
+          0.46,
+          Row(
+            children: [
+              Icon(Icons.notifications_none_rounded,
+                  size: 13, color: context.textTertiary),
+              const SizedBox(width: 6),
+              Text('下一节 14:00 · 数字电路',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: context.textTertiary)),
+            ],
+          ),
+        ),
+      ],
+    ),
+      ),
+    );
+  }
+
+  Widget _timeColumn(BuildContext context, String begin, String end) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(begin,
+            style: TextStyle(
+                fontSize: AppTheme.fontCaption,
+                fontWeight: FontWeight.w600,
+                color: context.textPrimary)),
+        Text(end,
+            style: TextStyle(
+                fontSize: AppTheme.fontCaption - 1,
+                color: context.textTertiary)),
+      ],
+    );
+  }
+
+  Widget _message(BuildContext context, double t, bool isDark) {
+    final rows = <List<String>>[
+      <String>['教务处', '关于 2026-2027 第一学期期末考试安排的通知'],
+      <String>['校园要闻', '图书馆延长开放时间，考试周通宵自习室开放'],
+      <String>['图书馆', '你借的三本书将在 3 天后到期'],
+    ];
+    final colors = <Color>[
+      const Color(0xFF4C6FFF),
+      const Color(0xFFF59E0B),
+      const Color(0xFF16A34A),
+    ];
+    return Column(
+      // 内容竖直居中：卡里下方不留一大块空白。
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _in(
+          t,
+          0,
+          Row(
+            children: [
+              Text('今天收到 3 条',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      fontWeight: FontWeight.w600,
+                      color: context.textTertiary)),
+              const Spacer(),
+              Text('来自 11 个栏目',
+                  style: TextStyle(
+                      fontSize: AppTheme.fontCaption,
+                      color: context.textTertiary)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        for (int i = 0; i < rows.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _in(
+              t,
+              0.10 + i * 0.12,
+              _card(
+                context,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: colors[i].withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(Icons.campaign_rounded,
+                          size: 14, color: colors[i]),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(rows[i][1],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontSmall,
+                                  color: context.textPrimary)),
+                          const SizedBox(height: 3),
+                          Text(rows[i][0],
+                              style: TextStyle(
+                                  fontSize: AppTheme.fontCaption,
+                                  color: context.textTertiary)),
+                        ],
+                      ),
+                    ),
+                    if (i == 0)
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEF4444),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              from: const Offset(26, 0),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _course(BuildContext context, double t) {
+    // 一周五列、四行的迷你课表：每一块按顺序淡入，像课表被「排」出来。
+    const blocks = <List<double>>[
+      [0, 0, 2, 1, 0xFF4C6FFF],
+      [2, 0, 1, 2, 0xFF16A34A],
+      [3, 1, 2, 1, 0xFFF59E0B],
+      [0, 2, 1, 2, 0xFF9333EA],
+      [1, 3, 3, 1, 0xFF0EA5E9],
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _in(
+          t,
+          0,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              for (final d in const ['一', '二', '三', '四', '五'])
+                Text('周$d',
+                    style: TextStyle(
+                        fontSize: AppTheme.fontCaption,
+                        color: context.textTertiary)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, cons) {
+              final cellW = cons.maxWidth / 5;
+              final cellH = cons.maxHeight / 4;
+              return Stack(
+                children: [
+                  for (int r = 0; r < 4; r++)
+                    for (int c = 0; c < 5; c++)
+                      Positioned(
+                        left: c * cellW,
+                        top: r * cellH,
+                        width: cellW,
+                        height: cellH,
+                        child: Container(
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: context.isDark
+                                ? const Color(0xFF1E1E1E)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: context.borderColor),
+                          ),
+                        ),
+                      ),
+                  for (int i = 0; i < blocks.length; i++)
+                    Positioned(
+                      left: blocks[i][0] * cellW,
+                      top: blocks[i][1] * cellH,
+                      width: blocks[i][2] * cellW,
+                      height: blocks[i][3] * cellH,
+                      child: _in(
+                        t,
+                        0.14 + i * 0.1,
+                        Container(
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Color(blocks[i][4].toInt()).withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                                color: Color(blocks[i][4].toInt())
+                                    .withValues(alpha: 0.55)),
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: 14,
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: Color(blocks[i][4].toInt()),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                        scaleFrom: 0.82,
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        _in(
+          t,
+          0.6,
+          Text('点格子看这周的课；考试和成绩也在这页下面',
+              style: TextStyle(
+                  fontSize: AppTheme.fontCaption, color: context.textTertiary)),
+        ),
+      ],
+    );
+  }
+
+  Widget _service(BuildContext context, double t, bool isDark) {
+    const tiles = <List<Object>>[
+      [Icons.grid_view_rounded, '空教室', 0xFF4C6FFF],
+      [Icons.print_rounded, '云打印', 0xFF16A34A],
+      [Icons.school_rounded, '成绩', 0xFFF59E0B],
+      [Icons.menu_book_rounded, '教材', 0xFF9333EA],
+      [Icons.credit_card_rounded, '一卡通', 0xFF0EA5E9],
+      [Icons.local_library_rounded, '资源', 0xFFEF4444],
+      [Icons.event_note_rounded, '考试', 0xFF14B8A6],
+      [Icons.bolt_rounded, '电费', 0xFFF97316],
+      [Icons.more_horiz_rounded, '更多', 0xFF6B7280],
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _in(
+          t,
+          0,
+          Text('常用的可以收藏，就会一直排在最前面',
+              style: TextStyle(
+                  fontSize: AppTheme.fontCaption, color: context.textTertiary)),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, cons) {
+              final w = cons.maxWidth / 3;
+              return Wrap(
+                children: [
+                  for (int i = 0; i < tiles.length; i++)
+                    SizedBox(
+                      width: w,
+                      height: cons.maxHeight / 3,
+                      child: _in(
+                        t,
+                        0.08 + i * 0.06,
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: Color(tiles[i][2] as int)
+                                    .withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(11),
+                              ),
+                              child: Icon(tiles[i][0] as IconData,
+                                  size: 18, color: Color(tiles[i][2] as int)),
+                            ),
+                            const SizedBox(height: 5),
+                            Text(tiles[i][1] as String,
+                                style: TextStyle(
+                                    fontSize: AppTheme.fontCaption - 1,
+                                    color: context.textSecondary)),
+                          ],
+                        ),
+                        from: const Offset(0, 14),
+                        scaleFrom: 0.7,
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _user(BuildContext context, double t, bool isDark) {
+    return Column(
+      // 内容竖直居中：卡里下方不留一大块空白。
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _in(
+          t,
+          0,
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: context.borderColor),
+                ),
+                child: Icon(Icons.person_rounded,
+                    size: 24, color: context.textTertiary),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('2023 级 · 电气工程',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontSmall,
+                          fontWeight: FontWeight.w600,
+                          color: context.textPrimary)),
+                  const SizedBox(height: 3),
+                  Text('登录后显示你的名字',
+                      style: TextStyle(
+                          fontSize: AppTheme.fontCaption,
+                          color: context.textTertiary)),
+                ],
+              ),
+            ],
+          ),
+          scaleFrom: 0.86,
+        ),
+        const SizedBox(height: 16),
+        for (final row in const <List<Object>>[
+          [Icons.person_outline_rounded, '账号与登录'],
+          [Icons.palette_outlined, '外观：配色、背景、圆角'],
+          [Icons.widgets_outlined, '桌面小组件'],
+          [Icons.tune_rounded, '页面设置：显隐与顺序'],
+        ])
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _in(
+              t,
+              0.12 + row[1].toString().length * 0.02,
+              _card(
+                context,
+                child: Row(
+                  children: [
+                    Icon(row[0] as IconData,
+                        size: 15, color: context.textSecondary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(row[1] as String,
+                          style: TextStyle(
+                              fontSize: AppTheme.fontSmall,
+                              color: context.textPrimary)),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 15, color: context.textTertiary),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 底部那条导航本身可编辑：长按拖动换顺序；「调整」态下点一下收起/放回。
+/// 平时点它只是切到那一页的介绍 —— 上一版把两者混在一起，手感很差。
 class _EditableTabBar extends StatefulWidget {
   const _EditableTabBar({
     required this.order,
     required this.hidden,
     required this.active,
+    required this.editing,
     required this.onReorder,
-    required this.onToggle,
+    required this.onTap,
   });
 
   final List<NavPage> order;
   final Set<NavPage> hidden;
   final NavPage active;
+  final bool editing;
   final ValueChanged<List<NavPage>> onReorder;
-  final ValueChanged<NavPage> onToggle;
+  final ValueChanged<NavPage> onTap;
 
   @override
   State<_EditableTabBar> createState() => _EditableTabBarState();
@@ -1124,15 +1927,18 @@ class _EditableTabBarState extends State<_EditableTabBar> {
 
   @override
   Widget build(BuildContext context) {
-    // 五个等分：整宽减去左右 padding 与两端的空隙。
     final itemW = (MediaQuery.sizeOf(context).width - 48 - 12) / 5;
-    return Container(
-      height: 86,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 240),
+      height: widget.editing ? 92 : 86,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
       decoration: BoxDecoration(
         color: context.isDark ? const Color(0xFF1E1E1E) : Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-        border: Border.all(color: context.borderColor),
+        border: Border.all(
+          color: widget.editing ? AppTheme.primaryColor : context.borderColor,
+          width: widget.editing ? 1.4 : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: context.isDark ? 0.32 : 0.05),
@@ -1182,10 +1988,7 @@ class _EditableTabBarState extends State<_EditableTabBar> {
     final isPinned = page == kPinnedNavPage;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => widget.onToggle(page),
-      onLongPress: () {
-        if (isPinned) HapticFeedback.heavyImpact();
-      },
+      onTap: () => widget.onTap(page),
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 220),
         opacity: hidden ? 0.34 : 1,
@@ -1208,18 +2011,30 @@ class _EditableTabBarState extends State<_EditableTabBar> {
                 clipBehavior: Clip.none,
                 children: [
                   AnimatedScale(
-                    duration: const Duration(milliseconds: 240),
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
                     scale: active ? 1.12 : 1,
                     child: _tabIcon(context, page, info.icon, 19),
                   ),
-                  if (hidden)
-                    const Positioned(
-                      right: -7,
-                      top: -5,
-                      child: Icon(
-                        Icons.visibility_off_rounded,
-                        size: 11,
-                        color: Color(0xFF9CA3AF),
+                  if (widget.editing && !isPinned)
+                    Positioned(
+                      right: -8,
+                      top: -6,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: hidden
+                              ? AppTheme.primaryColor
+                              : const Color(0xFF9CA3AF),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.4),
+                        ),
+                        child: Icon(
+                          hidden ? Icons.add_rounded : Icons.remove_rounded,
+                          size: 9,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   if (isPinned)

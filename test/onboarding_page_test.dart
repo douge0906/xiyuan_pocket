@@ -20,10 +20,13 @@ void main() {
 
   /// 点一下再走两帧：翻页用的是 420ms 动画，只 pump 一次长时长
   /// 只能把第一帧推到终点，动画控制器要到下一帧才真正开始计时。
+  ///
+  /// 1100ms 是给最后一步留的：点完「同意并去登录」会先停 980ms 播收尾动画
+  /// 再 pop，pump 不够就会留下 pending timer，测试直接判失败。
   Future<void> tapText(WidgetTester tester, String text) async {
     await tester.tap(find.text(text));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump(const Duration(milliseconds: 1100));
   }
 
   Future<void> pumpOnboarding(WidgetTester tester) async {
@@ -41,11 +44,11 @@ void main() {
 
   testWidgets('四步能走完，选极简模式会真正隐藏三页', (tester) async {
     await pumpOnboarding(tester);
-    expect(find.text('开始'), findsOneWidget);
+    expect(find.text('开始设置'), findsOneWidget);
 
-    await tapText(tester, '开始');
+    await tapText(tester, '开始设置');
     // 第二步：五个标签的介绍
-    expect(find.text('五个标签，顺手排一下'), findsOneWidget);
+    expect(find.text('五个标签，各管一摊'), findsOneWidget);
 
     await tapText(tester, '继续');
     // 第三步：两张模式卡片
@@ -70,14 +73,21 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('第二步直接点底部那个标签就能收起，再点放回来', (tester) async {
+  testWidgets('第二步点标签只看介绍，「调整」态下点才是收起', (tester) async {
     await pumpOnboarding(tester);
-    await tapText(tester, '开始');
+    await tapText(tester, '开始设置');
 
-    // 调整就在底部那条导航上：点一下「消息」它就收起。
+    // 平时点标签只是切介绍，不会把它关掉。
     final tab = find.byKey(const ValueKey<String>('bar-message'));
     expect(tab, findsOneWidget);
 
+    await tester.tap(tab);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(NavPrefs.layout.hidden.contains(NavPage.message), isFalse);
+
+    // 进「调整」态再点，才是收起。
+    await tester.tap(find.text('调整'));
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(tab);
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -95,7 +105,7 @@ void main() {
 
   testWidgets('没勾同意时点「同意并去登录」不前进，什么都不写', (tester) async {
     await pumpOnboarding(tester);
-    await tapText(tester, '开始');
+    await tapText(tester, '开始设置');
     await tapText(tester, '继续');
     await tapText(tester, '就这个');
 
@@ -111,7 +121,7 @@ void main() {
 
   testWidgets('默认模式 = 四页都显示', (tester) async {
     await pumpOnboarding(tester);
-    await tapText(tester, '开始');
+    await tapText(tester, '开始设置');
     await tapText(tester, '继续');
     await tapText(tester, '就这个');
     await tapText(tester, '我已阅读并同意');
